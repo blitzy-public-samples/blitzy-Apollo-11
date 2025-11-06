@@ -27,7 +27,33 @@
 #	This AGC program shall also be referred to as
 #			Colossus 2A
 
+; ============================================================================
+; FILE: LATITUDE_LONGITUDE_SUBROUTINES.agc
+; MODULE: CHIEFTAN Subsystem (Core OS)
+; MISSION PHASE: all-phases
+;
+; TL;DR: Geodetic coordinate transformation subroutines converting position
+;        vectors to latitude/longitude coordinates. Implements Earth and Moon
+;        surface coordinate computation for navigation displays and landing
+;        site targeting throughout Apollo 11 mission.
+;
+; COMMENT-ONLY READERS: This program converted spacecraft position into latitude
+;        and longitude coordinates for Earth or Moon locations.
+; CODE-ALONG READERS: Study geodetic coordinate transformation mathematics,
+;        Cartesian to spherical coordinate conversion, planetary surface mapping.
+; ============================================================================
+
 # Page 1236
+; ============================================================================
+; LAT-LONG SUBROUTINE: POSITION VECTOR TO GEODETIC COORDINATES
+;
+; This subroutine converts a three-dimensional position vector (Cartesian
+; coordinates in meters) into geodetic coordinates: latitude, longitude,
+; and altitude above the planetary surface. Used throughout the mission
+; for navigation displays showing spacecraft position relative to Earth
+; or Moon surface features.
+; ============================================================================
+#
 # SUBROUTINE TO CONVERT RAD VECTOR AT GIVEN TIME TO LAT,LONG AND ALT
 #
 # CALLING SEQUENCE
@@ -57,24 +83,38 @@
 		COUNT	13/LT-LG
 
 		EBANK=	ALPHAV
+; Beginning coordinate transformation from Cartesian position vector to
+; geodetic latitude, longitude, and altitude. Input position vector in
+; ALPHAV is in meters scaled by 2^-29 (B-29 notation).
 LAT-LONG	STQ	SETPD
 			INCORPEX
 			0D
 		STOVL	6D		# SAVE TIME IN 6-7D FOR R-TO-RP
 			ALPHAV
+; Load position vector and compute its magnitude. The absolute value
+; (magnitude) is saved for altitude calculation: ALT = |R| - Rplanet.
 		PUSH	ABVAL		# 0-5D= R FOR R-TO-RP
 		STODL	ALPHAM		# ABS. VALUE OF R FOR ALT FORMULA BELOW
 			ZEROVEC		# SET MPAC=0 FOR EARTH,NON-ZERO FOR MOON
+; The LUNAFLAG determines whether we're computing Earth or Moon coordinates.
+; For Earth (LUNAFLAG=0), MPAC=0. For Moon (LUNAFLAG=1), MPAC is non-zero.
+; This flag affects planetary radius and ellipsoid parameters used below.
 		BOFF	COS		# USE COS(0) TO GET NON-ZERO IN MPAC
 			LUNAFLAG	# 0=EARTH,1=MOON
 			CALLRTRP
 CALLRTRP	CALL
 			R-TO-RP		# RP VECTOR CONVERTED FROM R B-29
 		UNIT			# UNIT RP B-1
+; Convert position vector to unit vector. This normalized vector points
+; from planetary center toward spacecraft, removing distance information
+; and leaving only directional (angular) information for lat/long.
 		STCALL	ALPHAV		# U2= 1/2 SINL FOR SETRE SUBR BELOW
 			SETGAMMA	#	SET GAMMA=B2/A2 FOR EARTH,=1 FOR MOON
 		CALL			#	SCALED B-1
 			SETRE		# CALC RE METERS B-29
+; Compute latitude using spherical trigonometry. For Earth, account for
+; ellipsoidal shape (flattened at poles). GAMMA = B²/A² where A=equatorial
+; radius, B=polar radius. For Moon, GAMMA=1 (spherical approximation).
 		DLOAD	DSQ
 			ALPHAV
 		PDDL	DSQ
@@ -85,21 +125,40 @@ CALLRTRP	CALL
 			GAMRP
 		STODL	COSTH		# COS(LAT) B-1
 			ALPHAV +4
+; Compute latitude from sine and cosine components using ARCTAN subroutine.
+; Result in revolutions (1 revolution = 360 degrees), scaled B-0 (unscaled).
+; Range: -0.5 to +0.5 revolutions representing -90° to +90° latitude.
 		STCALL	SINTH		# SIN(LAT) B-1
 			ARCTAN
 		STODL	LAT		# LAT B0
 			ALPHAV
 		STODL	COSTH		# COS(LONG) B-1
 			ALPHAV +2
+; Compute longitude from X and Z components of position vector. Uses
+; same ARCTAN subroutine as latitude computation. Longitude measured
+; from prime meridian (Greenwich for Earth, reference meridian for Moon).
 		STCALL	SINTH		# SIN(LONG) B-1
 			ARCTAN
 		STODL	LONG		# LONG. REVS B-0 IN RANGE -1/2 TO 1/2
 			ALPHAM
+; Compute altitude above planetary surface: ALT = |R| - Rplanet.
+; For Earth ellipsoid, Rplanet varies with latitude (larger at equator).
+; Result in meters scaled by 2^-29 (B-29 notation).
 		DSU			# ALT= R-RE METERS B-29
 			ERADM
 		STCALL	ALT		# EXIT WITH ALT METERS B-29
 			INCORPEX
 # Page 1238
+; ============================================================================
+; LALOTORV SUBROUTINE: GEODETIC COORDINATES TO POSITION VECTOR
+;
+; This subroutine performs the inverse transformation of LAT-LONG, converting
+; geodetic coordinates (latitude, longitude, altitude) back into a three-
+; dimensional Cartesian position vector. Used for uplink updates from
+; Mission Control providing spacecraft state vector corrections based on
+; ground tracking data.
+; ============================================================================
+#
 # SUBROUTINE TO CONVERT LAT,LONG.ALT AT GIVEN TIME TO RADIUS VECTOR
 # CALLING SEQUENCE
 
@@ -119,11 +178,18 @@ CALLRTRP	CALL
 # OUTPUT
 
 # R-VECTOR IN ALPHAV (METERS B-29)
+; Convert geodetic coordinates to Cartesian position vector by computing
+; unit direction vector from latitude/longitude, then scaling by distance
+; (planetary radius + altitude).
 LALOTORV	STQ	SETPD		# LAT,LONG,ALT TO R VECTOR
 			INCORPEX
 			0D
 		STCALL	6D		# 6-7D= TIME FOR RP-TO-R
 			SETGAMMA	# GAMMA=B2/A2 FOR EARTH,1 FOR MOON B-1
+; Compute unit direction vector components from latitude and longitude
+; using spherical-to-Cartesian coordinate transformation formulas:
+; X = cos(lat)·cos(long), Y = cos(lat)·sin(long), Z = GAMMA·sin(lat).
+; GAMMA accounts for Earth's ellipsoidal shape (flattened poles).
 		DLOAD	SIN		# 		COS(LONG)COS(LAT) IN MPAC
 			LAT		#    UNIT RP= SIN(LONG)COS(LAT)    2-3D
 		DMPR	PDDL		# PD 2		GAMMA*SIN(LAT)	     0-1D
@@ -137,9 +203,14 @@ LALOTORV	STQ	SETPD		# LAT,LONG,ALT TO R VECTOR
 		PDDL	COS		# PD 6 4-5D=COS(LAT) B-1 TEMPORARILY
 			LONG
 		DMPR	VDEF		# PD4 MPAC= COS(LONG)COS(LAT) B-2
+; Construct complete unit vector, then normalize to ensure magnitude = 1.
+; This unit vector points from planetary center through the given lat/long.
 		UNIT	PUSH		# 0-5D= UNIT RP FOR RP-TO-R SUBR.
 		STCALL	ALPHAV		# ALPHAV +4= SINL FOR SETRE SUBR.
 			SETRE		# RE METERS B-29
+; Check which planetary body we're computing for and call RP-TO-R subroutine
+; to transform from rotating planet-fixed coordinates to inertial coordinates.
+; This accounts for planetary rotation since launch time.
 		DLOAD	BOFF		# SET MPAC=0 FOR EARTH,NON-ZERO FOR MOON
 			ZEROVEC
 			LUNAFLAG
@@ -150,12 +221,23 @@ CALLRPRT	CALL
 		STODL	ALPHAV
 			ERADM
 # Page 1239
+; Scale unit vector by total distance from planetary center: radius + altitude.
+; This produces final Cartesian position vector in ALPHAV (meters, scaled B-29).
 		DAD	VXSC		# (RE + ALT)(UNIT R) METERS B-30
 			ALT
 			ALPHAV
 		VSL1			# R METERS B-29
 		STCALL	ALPHAV		# EXIT WITH R IN METERS B-29
 			INCORPEX
+; ============================================================================
+; GETERAD SUBROUTINE: COMPUTE EARTH RADIUS AT GIVEN LATITUDE
+;
+; Earth is not perfectly spherical but slightly oblate (flattened at poles).
+; This subroutine computes local Earth radius as function of latitude using
+; ellipsoid model. Critical for accurate altitude determination during Apollo
+; 11's orbital phases around Earth before translunar injection.
+; ============================================================================
+#
 # SUBROUTINE TO COMPUTE EARTH RADIUS
 
 # INPUT
@@ -166,19 +248,37 @@ CALLRPRT	CALL
 
 #	EARTH RADIUS IN ERADM AND MPAC (METERS B-29)
 
+; Compute Earth's ellipsoidal radius at given latitude using formula:
+; R(lat) = sqrt[(a²cos²(lat) + b²sin²(lat)) / (a²cos²(lat) + b²sin²(lat))]
+; where a = equatorial radius, b = polar radius.
+; Input is 1/2 sin(lat) in ALPHAV+4. Computation evaluates Earth radius
+; using geodetic parameters: a=6378166m (equatorial), b=6356784m (polar).
+; Algorithm: R = b/sqrt(1 - e²cos²(lat)) where e² = 1 - b²/a² = 0.0066935116.
 GETERAD		DLOAD	DSQ
 			ALPHAV 	+4	# SIN**2(L)
 		SL1	BDSU
 			DP1/2		# COS**2(L)
+; Compute 1 - e²cos²(lat) where e² = 1 - b²/a² (Earth's eccentricity squared).
 		DMPR	BDSU
 			EE
 			DP1/2
+; Divide b² by [1 - e²cos²(lat)], take square root to get radius.
+; Result is Earth radius at given latitude (meters, scaled B-29).
 		BDDV	SQRT
 			B2XSC
 		SR4R
 		STORE	ERADM
 			RVQ
 
+; ============================================================================
+; GEODETIC CONSTANTS FOR EARTH ELLIPSOID MODEL
+;
+; Earth's shape is an oblate spheroid (flattened at poles) defined by:
+; - Equatorial radius (a) = 6,378,166 meters
+; - Polar radius (b) = 6,356,784 meters
+; - Flattening factor = (a-b)/a ≈ 1/298.25
+; These are 1960s reference values used for Apollo navigation computations.
+; ============================================================================
 # THE FOLLOWING CONSTANTS WERE COMPUTED WITH A=6378166,B=6356784 METERS
 # B2XSC= B**2 SCALED B-51
 # B2/A2= B**2/A**2 SCALED B-1
@@ -194,6 +294,15 @@ EE		2DEC	6.6935116 E-3	# (1-B**2/A**2) B-0
 ERAD		2DEC	6373338 B-29	# PAD RADIUS
 
 # Page 1240
+; ============================================================================
+; ARCTAN SUBROUTINE: COMPUTE ARCTANGENT FROM SIN AND COS
+;
+; Computes angle (in revolutions) from sine and cosine values, handling all
+; quadrants correctly. Essential for converting Cartesian coordinates back to
+; angular position (latitude/longitude). Returns angle in range -0.5 to +0.5
+; revolutions (-180° to +180°). Used throughout Apollo 11 for navigation
+; display updates showing spacecraft position over Earth or Moon.
+; ============================================================================
 # ARCTAN SUBROUTINE
 
 
@@ -206,34 +315,50 @@ ERAD		2DEC	6373338 B-29	# PAD RADIUS
 # OUTPUT
 #	ARCTAN THETA IN MPAC AND THETA B-0 IN RANGE -1/2 TO +1/2
 
+; Clear any overflow from previous operations before computing magnitude.
 ARCTAN		BOV
 			CLROVFLW
+; Algorithm: Compute sqrt(sin²θ + cos²θ) = 1 for normalization, then
+; compute θ = asin(sin(θ)/1) = asin(sin(θ)). Handle special cases where
+; sin and cos are both zero, or where cos(θ) is negative (2nd/3rd quadrants).
 CLROVFLW	DLOAD	DSQ
 			SINTH
 		PDDL	DSQ
 			COSTH
+; Compute sin²θ + cos²θ, which should equal 1 for normalized inputs.
 		DAD
 		BZE	SQRT
 			ARCTANXX	# ATAN=0/0  SET THETA=0
+; Divide sin(θ) by magnitude to normalize, then compute arcsine.
+; If overflow (magnitude near zero), branch to 90° case.
 		BDDV	BOV
 			SINTH
 			ATAN=90
+; Shift right 1 bit for proper scaling, then compute arcsine to get angle.
 		SR1	ASIN
 		STORE	THETA
+; Check sign of cos(θ) to determine correct quadrant.
+; If cos(θ) < 0, angle is in 2nd or 3rd quadrant and needs adjustment.
 		PDDL	BMN
 			COSTH
 			NEGCOS
 		DLOAD	RVQ
+; NEGCOS: cos(θ) is negative, so angle is in 2nd or 3rd quadrant.
+; Need to adjust by adding or subtracting 0.5 revolutions (180°).
 NEGCOS		DLOAD	DCOMP
 		BPL	DAD
 			NEGOUT
 			DP1/2
+; Store final angle in THETA and return.
 ARCTANXX	STORE	THETA
 		RVQ
 
+; NEGOUT: Subtract 0.5 revolutions instead of adding (for negative angles).
 NEGOUT		DSU	GOTO
 			DP1/2
 			ARCTANXX
+; ATAN=90: Special case where angle is ±90° (cos≈0, sin≈±1).
+; Load 0.25 revolutions (90°) and apply sign of sin(θ).
 ATAN=90		DLOAD	SIGN
 			LODP1/4
 			SINTH
@@ -243,6 +368,14 @@ ATAN=90		DLOAD	SIGN
 2DZERO		=	DPZERO
 
 # Page 1241
+; ============================================================================
+; SETGAMMA SUBROUTINE: SET ELLIPSOID FLATTENING PARAMETER
+;
+; Sets GAMMA (γ) = b²/a² parameter used in geodetic coordinate conversions.
+; For Earth: γ = 0.9933064884 (accounts for oblate spheroid shape)
+; For Moon: γ = 1.0 (assumes perfect sphere - lunar oblateness negligible)
+; This parameter adjusts latitude/longitude computations for planetary shape.
+; ============================================================================
 # ***** SETGAMMA SUBROUTINE *****
 # SUBROUTINE TO SET GAMMA FOR THE LAT-LONG AND LALOTORV SUBROUTINES
 
@@ -259,17 +392,30 @@ ATAN=90		DLOAD	SIGN
 # OUTPUT
 # 	GAMMA IN GAMRP (B-1)
 
+; Check LUNAFLAG to determine which celestial body coordinate system to use.
 SETGAMMA	DLOAD	BOFF		# BRANCH FOR EARTH
 			B2/A2		# EARTH GAMMA
 			LUNAFLAG
 			SETGMEX
+; LUNAFLAG=1: Moon coordinates. Load γ=1.0 (sphere).
 		SLOAD
 			1B1		# MOON GAMMA
+; Store gamma value and return.
 SETGMEX		STORE	GAMRP
 		RVQ
 GAMRP		=	8D
 
 # Page 1242
+; ============================================================================
+; SETRE SUBROUTINE: SET PLANETARY RADIUS FOR COORDINATE CONVERSIONS
+;
+; Determines appropriate reference radius based on celestial body and mode:
+; - Moon: Uses landing site radius (504RM from Apollo Landing Site) or mean 
+;   radius (RM=1,738,090m) depending on ERADFLAG for altitude measurements.
+; - Earth: Uses fixed reference radius (ERAD=6,373,338m) or computes local
+;   geodetic radius accounting for latitude-dependent ellipsoid shape.
+; Critical for accurate altitude determination during all mission phases.
+; ============================================================================
 # ***** SETRE SUBROUTINE *****
 # SUBROUTINE TO SET RE (EARTH OR MOON RADIUS)
 
@@ -292,23 +438,34 @@ GAMRP		=	8D
 #	ERADM= 504RM FOR MOON (METERS B-29)
 #	ERADM= ERAD OR COMPUTED RF FOR EARTH (METERS B-29)
 
+; Save return address and load default value (Moon landing site radius).
 SETRE		STQ	DLOAD
 			SETREX
 			504RM
+; Check LUNAFLAG: If =1 (Moon), branch to TSTRLSRM for lunar radius logic.
+; If =0 (Earth), continue to load Earth radius.
 		BON	DLOAD		# BRANCH FOR MOON
 			LUNAFLAG
 			TSTRLSRM
 			ERAD
+; For Earth: Check ERADFLAG to decide fixed vs computed radius.
+; ERADFLAG=0: Use fixed reference radius ERAD (skip GETERAD call).
+; ERADFLAG=1: Call GETERAD to compute latitude-dependent ellipsoidal radius.
 		BOFF	CALL		# ERADFLAG=0 FOR FIXED RE,1 FOR COMPUTED
 			ERADFLAG
 			SETRXX
 			GETERAD
+; Store final radius in ERADM and return via saved address.
 SETRXX		STCALL	ERADM		# EXIT WITH RE OR RM METERS B-29
 			SETREX
+; TSTRLSRM: Lunar radius selection logic.
+; ERADFLAG=0: Use landing site position vector RLS (Apollo 11 landing site).
+; ERADFLAG=1: Use default Moon radius RM already loaded (mean lunar radius).
 TSTRLSRM	BON	VLOAD		# ERADFLAG=0,SET R0=RLS
 			ERADFLAG	#         =1      R0=RM
 			SETRXX
 			RLS
+; Compute magnitude of RLS vector and scale from B-27 to B-29 for consistency.
 		ABVAL	SR2R		# SCALE FROM B-27 TO B-29
 		GOTO
 			SETRXX
