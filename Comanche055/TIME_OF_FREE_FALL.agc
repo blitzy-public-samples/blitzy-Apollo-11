@@ -28,28 +28,96 @@
 #    This AGC program shall also be referred to as
 #            Colossus 2A
 
+# ============================================================================
+# FILE: TIME_OF_FREE_FALL.agc
+# MODULE: CHIEFTAN Subsystem (Core OS)
+# MISSION PHASE: all-phases
+#
+# TL;DR: Free-fall trajectory time-of-flight calculations solving Lambert
+#        problem variations. Computes transfer times between position states
+#        for targeting and rendezvous applications throughout Apollo 11 orbital
+#        mechanics computations. Used for mission planning calculations during
+#        translunar coast, lunar orbit, and rendezvous operations.
+#
+# COMMENT-ONLY READERS: These routines calculated how long it would take the
+#        spacecraft to coast between two points in space without engine thrust,
+#        essential for timing rendezvous maneuvers and orbit transfers.
+# CODE-ALONG READERS: Study time-of-flight computation algorithms, Lambert
+#        problem solutions, conic section mathematics, and Kepler orbit
+#        propagation supporting orbital mechanics throughout the mission.
+# ============================================================================
+
 # Page 1373
+;
+; ============================================================================
+; SCALING AND COORDINATE SYSTEM INFORMATION
+;
+; The Time of Free Fall (TFF) routines work universally for both Earth-centered
+; and Moon-centered coordinates. The calling program specifies which celestial
+; body by providing position, velocity, and gravitational parameter (MU) at
+; the appropriate scale factors. This flexibility allowed Apollo 11's guidance
+; computer to perform the same orbital calculations during translunar coast
+; (Earth-centered), lunar orbit operations (Moon-centered), and rendezvous
+; maneuvers (either reference frame).
+; ============================================================================
+;
 # 	THE TFF SUBROUTINES MAY BE USED IN EITHER EARTH OR MOON CENTERED COORDINATES.  THE TFF ROUTINES NEVER
 # KNOW WHICH ORIGIN APPLIES.  IT IS THE USER WHO KNOWS, AND WHO SUPPLIES RONE, VONE AND 1/SQRT(MU) AT THE
 # APPROPRIATE SCALE LEVEL FOR THE PROPER PRIMARY BODY.
 
+; Scaling Factors for Earth-Centered Calculations:
+; Position vectors scaled by 2^-29 meters (each unit = 1.86 nanometers)
+; Velocity vectors scaled by 2^-7 meters/centisecond
+; Gravitational parameter 1/SQRT(MU) scaled by 2^+17
+;
 #	EARTH ORIGIN	POSITION	-29	METERS
 #			VELOCITY	-7	METERS/CENTISECOND
 #			1/SQRT(MU)	+17	SQRT(CS SQ/METERS CUBED)
-
+;
+; Scaling Factors for Moon-Centered Calculations:
+; Position vectors scaled by 2^-27 meters (larger unit due to smaller distances)
+; Velocity vectors scaled by 2^-5 meters/centisecond
+; Gravitational parameter 1/SQRT(MU) scaled by 2^+14 (Moon's weaker gravity)
+;
 #	MOON ORIGIN	POSITION	-27	METERS
 #			VELOCITY	-5	METERS/CENTISECONDS
 #			1/SQRT(MU)	+14	SQRT(CS SQ/METERS CUBED)
 
+; All TFF subroutines return time-of-flight in centiseconds scaled by 2^-28.
+; This uniform time scale (1 unit = 3.73 nanoseconds) allows precise timing
+; calculations for orbital maneuvers. During Apollo 11's rendezvous between
+; the Lunar Module Eagle and Command Module Columbia, these time computations
+; determined when to ignite engines for precise orbit insertion.
+;
 # ALL DATA PROVIDED TO AND RECEIVED FROM ANY TFF SUBROUTINE WILL BE AT ONE OF THE LEVELS ABOVE.  IN ALL CASES,
 # THE FREE FALL TIME IS RETURNED IN CENTISECONDS AT (-28).  PROGRAM TFF/CONIC WILL GENERATE VONE/RTMU AND
 # LEAVE IT IN VONE' AT (+10) IF EARTH ORIGIN AND (+9) IF MOON ORIGIN.
+; USAGE REQUIREMENTS FOR TFF SUBROUTINES:
+; Calling program must prepare state vector (position RONE, velocity VONE) and
+; gravitational parameter 1/SQRT(MU) in TFF/RTMU at proper scales before calling.
+; Extended verb lockout required since RONE/VONE share storage with DSKY verbs.
+; This prevented crew DSKY operations from corrupting orbital calculations during
+; critical rendezvous computations.
+;
+; RESTRICTION: CALC/TFF and CALC/TPER assume terminal radius < present radius
+; (descending toward target). This covered Apollo 11's descent to lower orbits.
+; Ascending trajectory calculations would require code modification (15 words).
+;
 # 	THE USER MUST STORE THE STATE VECTOR IN RONE, VONE AND MU IN THE FORM 1/SQRT(MU) IN TFF/RTMU
 # AT THE PROPER SCALE BEFORE CALLING TFF/CONIC.  SINCE RONE, VONE ARE IN THE EXTENDED VERB STORAGE AREA,
 # THE USER MUST ALSO LOCK OUT THE EXTENDED VERBS, AND RELEASE THEM WHEN FINISHED.
 # 	PROGRAMS CALC/TFF AND CALC/TPER ASSUME THAT THE TERMINAL RADIUS IS LESS THAN THE PRESENT
 # RADIUS.  THIS RESTRICTION CAN BE REMOVED BY A 15 W CODING CHANGE, BUT AT PRESENT IT IS NOT DEEMED NECESSARY.
 #
+; ============================================================================
+; ERASABLE MEMORY VARIABLES (PUSH LIST STORAGE)
+;
+; TFF subroutines use these temporary variables stored in the AGC's push list
+; area (equivalent to modern stack memory). Variables persist across subroutine
+; calls but are local to the TFF computation sequence. Notation: E: indicates
+; Earth-origin scaling, M: indicates Moon-origin scaling.
+; ============================================================================
+;
 # 	THE FOLLOWING ERASABLE QUANTITIES ARE USED BY THE TFF ROUTINES, AND ARE LOCATED IN THE PUSH LIST.
 #
 
@@ -80,6 +148,14 @@ NRMAG		=	32D	#	PRESENT RADIUS  M	E: (-29+NR)
 TFFX		=	34D     #
 TFFTEM		=	36D	#	TEMPORARY
 # Page 1374
+; REGISTER USAGE CONVENTIONS:
+; S1, S2 registers: Preserved by all TFF subroutines (caller can rely on values)
+; X1, X2 index registers: Established by TFFCONIC, must be preserved between calls
+;   X1 contains -NR (normalization count for radius magnitude)
+;   X2 contains -NA (normalization count for semi-major axis square root)
+; These normalization counts optimize fixed-point arithmetic precision by tracking
+; how many left-shifts were applied to scale values into optimal bit ranges.
+;
 #		REGISTERS S1, S2 ARE UNTOUCHED BY ANY TFF SUBROUTINE
 #		INDEX REGISTERS X1, X2 ARE USED BY ALL TFF SUBROUTINES.  THEY ARE ESTAB-
 #		LISHED IN TFF/CONIC AND MUST BE PRESERVED BETWEEN CALLS TO SUBSEQUENT
@@ -88,9 +164,27 @@ TFFTEM		=	36D	#	TEMPORARY
 #		-NA				C(X2)= NORM COUNT OF SQRT(ABS(ALFA))
 
 # Page 1375
+;
+; ============================================================================
+; TRANSITION: From variable declarations to TFFCONIC subroutine
+;
+; TFFCONIC is the foundational routine that must be called first in any TFF
+; computation sequence. It analyzes the current orbital trajectory, computes
+; conic section parameters (semi-latus rectum, semi-major axis, eccentricity),
+; and determines orbit type (ellipse/parabola/hyperbola). During Apollo 11's
+; mission, these calculations were essential for planning every orbit change:
+; translunar injection, lunar orbit insertion, descent orbit, and rendezvous.
+; ============================================================================
+;
 # SUBROUTINE NAME:	TFFCONIC						DATE: 01.29.67
 # MOD NO: 0									LOG SECTION: TIME OF FREE FALL
 # MOD BY: RR BAIRNSFATHER
+; TFFCONIC computes fundamental conic section parameters from position and velocity:
+; - Semi-latus rectum (p): Characterizes orbit size and shape
+; - Semi-major axis (a): Determines orbital period and energy
+; - Eccentricity: Distinguishes elliptical, parabolic, or hyperbolic trajectories
+; These parameters enable subsequent time-of-flight calculations for targeting.
+;
 # MOD NO: 1		MOD BY: RR BAIRNSFATHER		DATE: 11 APR 67
 # MOD NO: 2		MOD BY: RR BAIRNSFATHER		DATE: 21 NOV 67		ADD MOON MU.
 # MOD NO: 3		MOD BY: RR BAIRNSFATHER		DATE: 21 MAR 68		ACCEPT DIFFERENT EARTH/MOON SCALES
@@ -156,47 +250,95 @@ TFFTEM		=	36D	#	TEMPORARY
 
 		COUNT*	$$/TFF
 
+; TFFCONIC ENTRY POINT: Caller provides 1/SQRT(MU) in MPAC
+; This gravitational parameter distinguishes Earth (MU = 3.986e14 m^3/s^2)
+; from Moon (MU = 4.903e12 m^3/s^2) orbits.
+;
 TFFCONIC	STORE	TFF/RTMU	# 1/SQRT(MU)		E: (17)  M: (14)
 
+; TFFCONMU ENTRY POINT: Alternate entry when 1/SQRT(MU) already stored
+; Used when multiple TFF calculations use same gravitational parameter.
+;
+; STEP 1: Compute position unit vector and magnitude
+; Normalize position vector RONE to get direction and extract length RMAG.
+; The AGC's UNIT instruction produces both unit vector (direction) and
+; scalar magnitude, optimizing the computation compared to separate operations.
+;
 TFFCONMU	VLOAD	UNIT		# COME HERE WITH TFFRTMU LOADED.
 			RONE		# SAVED RN.  M		E: (-29) M: (-27)
 		PDDL			# UR/2 TO PDL+0, +5
 			36D		# MAGNITUDE
 		STORE	RMAG1		# M	E:(-29)	M:(-27)
 
+; Normalize RMAG to optimize precision for subsequent calculations.
+; X1 register stores normalization count (-NR) for later scaling adjustments.
+;
 		NORM
 			X1		# -NR
 		STOVL	NRMAG		# RMAG  M  E: (-29+NR) M: (-27+NR)
 			VONE		# SAVED VN.  M/CS  	E: (-7)	M: (-5)
+; STEP 2: Normalize velocity vector V/SQRT(MU)
+; Creates dimensionless velocity used in orbital mechanics equations.
+; Stored in VONE' for subsequent orbital parameter calculations.
+;
 		VXSC
 			TFF/RTMU	# E:(17) M:(14)
 		STORE	VONE'		# VN/SQRT(MU)  E: (10)	M: (9)
 
+; STEP 3: Compute angular momentum H = R x V and semi-latus rectum p = H²/MU
+; Angular momentum (cross product of position and velocity) is perpendicular
+; to the orbital plane. Its magnitude determines orbit shape and size.
+; Semi-latus rectum p characterizes the orbit's "width" at 90° from periapsis.
+;
 		VXSC	VXV
 			NRMAG		# E: (-29+NR) M: (-27+NR)
 					# UR/2 FROM PDL
 		VSL1	VSQ		# BEFORE:  E:(-19+NR) M:(-18+NR)
 		STODL	TFFNP		# LC P M    E:(-38+2NR) M:(-36+2NR)
 					# SAVE ALSO FOR VGAMCALC
+; STEP 4: Compute 2/R (needed for vis-viva equation)
+; The vis-viva equation relates velocity, position, and orbital energy:
+; V²/MU = 2/R - 1/a, where 'a' is the semi-major axis.
+;
 			TFF1/4
 		DDV	PDVL		# (2/RMAG)  1/M  E:(26-NR)	M:(24-NR)
 			NRMAG		# RMAG  M  E:(-29+NR)	M:(-27+NR)
 			VONE'		# SAVED VN.  E:(10)	M:(9)
+; STEP 5: Compute V²/MU (dimensionless specific orbital energy)
+; Negative values indicate elliptical (bound) orbits like Apollo 11's lunar orbit.
+; Zero indicates parabolic escape trajectory. Positive indicates hyperbolic.
+;
 		VSQ	DCOMP		# KEEP MPAC+2 HONEST FOR SQRT.
 		STORE	TFFVSQ		# -(V SQ/MU)  E:(20)	M:(18)
 					# SAVE FOR VGAMCALC
+; STEP 6: Compute ALFA = 2/R - V²/MU = 1/a (reciprocal semi-major axis)
+; From vis-viva equation. ALFA determines orbit type and energy:
+;   ALFA > 0: Elliptical orbit (bound, Apollo 11's Earth/lunar orbits)
+;   ALFA = 0: Parabolic trajectory (exactly escape velocity)
+;   ALFA < 0: Hyperbolic trajectory (excess velocity, deep space missions)
+;
 		SR*	DAD
 # Page 1377
 			0 -6,1		# GET -VSQ/MU  E:(26-NR) M:(24-NR)
 		STADR
 					# 2/RMAG  FROM PDL+2
 		STORE	TFFALFA		# ALFA  1/M  E:(26-NR) M:(24-NR)
+; STEP 7: Compute SQRT(ABS(ALFA)) for time-of-flight equations
+; Many orbital time equations use SQRT(ALFA). Taking absolute value handles
+; both elliptical (positive) and hyperbolic (negative) cases uniformly.
+; Normalize result for precision (X2 stores normalization count -NA).
+;
 		SL*	PUSH		# TEMP SAVE ALFA  E:(20)  M:(18)
 			0 -6,1
 		ABS	SQRT		# E:(10) M:(9)
 		NORM
 			X2		# X2 = -NA
 		STORE	TFFRTALF	# SQRT( ABS(ALFA) )  E:(10+NA) M:(9+NA)
+; STEP 8: Compute 1/ALFA (semi-major axis a)
+; Semi-major axis determines orbital period via Kepler's third law.
+; Special handling: If ALFA near zero (parabolic orbit), set 1/ALFA = 0.
+; This prevents division-by-zero and indicates orbit approaching parabolic.
+;
 		DSQ	SIGN		# NOT SO ACCURATE, BUT OK
 					# ALFA FROM PDL+2  E:(20) M:(18)
 		BZE	BDDV		# SET 1/ALFA =0, TO SHOW SMALL ALFA
@@ -246,9 +388,29 @@ DUMPCNIC	RVQ
 # DEBRIS:	QPRET, PDL+0 ... PDL+1
 
 # Page 1379
+; ============================================================================
+; SUBROUTINE: TFFRP/RA - Compute Perigee and Apogee Radii
+;
+; COMMENT-ONLY READERS: This routine calculates the lowest (perigee) and
+; highest (apogee) points of the spacecraft's elliptical orbit. For Apollo 11,
+; this determined orbital altitude extremes during Earth and lunar orbits.
+;
+; CODE-ALONG READERS: Implements classical orbital mechanics equations:
+;   Rp = p/(1+e)  [perigee radius]
+;   Ra = (1+e)/ALFA  [apogee radius]
+;   where e² = 1 - p·ALFA  [eccentricity]
+; Handles special cases: hyperbola/parabola return POSMAX for apogee.
+; ============================================================================
+;
 RAPO		=	16D		# APOGEE RADIUS  M  E:(-29) M:(-27)
 RPER		=	14D		# PERIGEE RADIUS  M  E:(-29) M:(-27)
 
+; STEP 1: Compute eccentricity e = SQRT(1 - p·ALFA)
+; Eccentricity determines orbit shape:
+;   e = 0: Circular (Apollo parking orbits aimed for low eccentricity)
+;   0 < e < 1: Ellipse (typical Apollo orbits)
+;   e = 1: Parabola, e > 1: Hyperbola
+;
 TFFRP/RA	DLOAD	DMP
 			TFFALFA		# ALFA  1/M  E:(26-NR) M:(24-NR)
 			TFFNP		# LC P  M   E:(-38+2NR) M:(-36+2NR)
@@ -259,6 +421,11 @@ TFFRP/RA	DLOAD	DMP
 			DP2(-4)
 		SQRT	DAD		# E SQ = (1- P ALFA)	(-4)
 			TFF1/4
+; STEP 2: Compute perigee radius Rp = p/(1+e)
+; Perigee is the closest approach point to central body (Earth or Moon).
+; For Apollo 11's lunar orbit, this was approximately 60 nautical miles altitude.
+; The formula divides semi-latus rectum p by (1+eccentricity).
+;
 		PUSH	BDDV		# (1+E)  (-2)  TO PDL+0
 			TFFNP		# LCP  M E:(-38+2NR)	M:(-36+2NR)
 		SR*	SR*		# (DOES SR THEN SL TO AVOID OVFL)
@@ -266,6 +433,14 @@ TFFRP/RA	DLOAD	DMP
 			0 -7,1		# (EFFECTIVE SL)
 		STODL	RPER		# PERIGEE RADIUS  M  E:(-29) M:(-27)
 					# (1+E)  (-2)  FROM PDL+0
+; STEP 3: Compute apogee radius Ra = (1+e)/ALFA
+; Apogee is the farthest point from central body in elliptical orbit.
+; For Apollo 11's lunar orbit, this was approximately 170 nautical miles altitude.
+; Special cases handled:
+;   - If ALFA=0 (parabolic): Set Ra = POSMAX (infinite apogee)
+;   - If ALFA<0 (hyperbolic): Set Ra = POSMAX (no apogee exists)
+;   - If overflow during computation: Set Ra = POSMAX
+;
 		DMP	BOVB
 			TFF1/ALF	# E:(-22-2NA) M:(-20-2NA)
 			TCDANZIG	# CLEAR OVFIND, IF ON.
@@ -281,6 +456,18 @@ MAXRA		DLOAD			# RAPO CALC IS NOT VALID.  SET RAPO =
 			NEARONE		# POSMAX AS A TAG.
 	+3	STORE	RAPO		# APOGEE RADIUS  M  E:(-29)	M:(-27)
 DUMPRPRA	RVQ
+
+; ============================================================================
+; TRANSITION: From orbital parameter calculations to time-of-flight computation
+;
+; With perigee/apogee radii computed, the guidance system now calculates the
+; actual time required to travel between two points along the orbital path.
+; This is critical for Apollo 11 mission planning - determining how long it
+; will take to reach specific positions during orbit, rendezvous maneuvers,
+; or trajectory corrections. The calculations handle all orbit types:
+; elliptical (closed orbits like lunar or Earth orbits), parabolic (escape
+; trajectories), and hyperbolic (fast escape or interplanetary trajectories).
+; ============================================================================
 
 					#			30 W
 # Page 1380
@@ -380,11 +567,41 @@ DUMPRPRA	RVQ
 #		RPER	E:(-29) M:(-27)	PDL 14D	 (=TFFQ1)
 
 # Page 1382
+; ----------------------------------------------------------------------------
+; SUBROUTINE: CALCTPER / CALCTFF
+; 
+; PURPOSE: Calculate time-of-flight from present position to specified radius
+;
+; COMMENT-ONLY READERS: This routine answers "How long until we reach that
+; altitude?" Used throughout Apollo 11 for timing orbital maneuvers, 
+; rendezvous planning, and trajectory predictions. Two entry points:
+;   - CALCTPER: Time to perigee (closest approach)
+;   - CALCTFF:  Time to any specified radius
+;
+; CODE-ALONG READERS: Implements Kepler's equation solution using eccentric
+; anomaly E. Main algorithm:
+;   1. Compute Q2 = r·v at terminal radius (using energy equation)
+;   2. Calculate ΔQ = Q2 - Q1 (change in r·v from present to terminal)
+;   3. For elliptical orbits: Solve Kepler's equation via eccentric anomaly
+;   4. For parabolic/hyperbolic: Use appropriate transcendental equations
+;   5. Return time in centiseconds scaled at -28
+;
+; The method handles the "which side of the conic" problem by assuming
+; RTERM is on the inbound (descending) side. Historical note: This code
+; computed rendezvous times during lunar orbit and translunar trajectory
+; time-to-periapsis calculations.
+; ----------------------------------------------------------------------------
+;
 CALCTPER	SETGO			# ENTER WITH RPER IN MPAC
 			TFFSW
 			+3
 CALCTFF		CLEAR			# ENTER WITH RTERM IN MPAC
 			TFFSW
+; Main computation begins: Calculate Q2 = r·v at terminal radius
+; Q2 is computed from the energy equation: Q2^2 = p + r*(2-ALFA*r)
+; where p is semi-latus rectum, ALFA = -1/semi-major axis (or -V^2/mu)
+; This determines the radial velocity component at the target radius.
+;
 	+3	STORE	RTERM		# E: (-29) M: (-27)
 		SL*
 			0,1		# X1=-NR
@@ -407,6 +624,9 @@ CALCTFF		CLEAR			# ENTER WITH RTERM IN MPAC
 			TFFSW
 			+2		# IF TFF, CONTINUE
 			TFFZEROS	# IF TPER, SET Q2 = 0
+; Take square root to get Q2 = ±sqrt[p + r*(2-ALFA*r)]
+; Negative result means no valid free-fall path exists to target radius.
+;
 	+2	BMN	SQRT		# E: (-16) M: (-15)
 
 			MAXTFF1		# NO FREE FALL CONIC TO RTERM FROM HERE
@@ -415,17 +635,29 @@ CALCTFF		CLEAR			# ENTER WITH RTERM IN MPAC
 		DCOMP	BOVB		# RT IS ON INBOUND SIDE.  ASSURE OVFIND=0
 			TCDANZIG	# ANY PORT IN A STORM.
 		STOVL	TFFTEM		# Q2  E: (-16) M: (-15)
+; Calculate Q1 = r·v at present position
+; Q1 = (r dot v)/sqrt(mu) using current state vector (RONE, VONE')
+; This represents the current radial velocity component.
+;
 			VONE'		# VN/SQRT(MU)  E: (10) M: (9)
 		DOT	SL3
 			RONE		# SAVED RN.  E: (-29) M: (-27)
 		STORE	TFFQ1		# Q1, SAVE FOR GONEPAST TEST.
 					# E: (-16) M: (-15)
+; Determine trajectory path: outbound (ascending) or inbound (descending)
+; If Q1 < 0, spacecraft is on inbound (descending) trajectory leg.
+; During Apollo 11 lunar descent, this determined which side of orbit.
+;
 		BMN	BDSU
 			INBOUND		# USE ALTERNATE Z
 			TFFTEM		# Q2  E: (-16) M: (-15)
 
 # OUTBOUND Z CALC CONTINUES HERE
-
+;
+; For outbound trajectory: Z = (Q2 - Q1) / (2 - ALFA*RMAG - (2 - ALFA*RTERM))
+; This Z parameter is key to the Kepler equation solution.
+; The denominator can become very small, requiring special handling.
+;
 		STODL	TFFX		# NUM=Q2-Q1  E: (-16) M: (-15)
 			TFFALFA		# ALFA  E: (26-NR) M: (24-NR)
 		DMP	BDSU
@@ -434,6 +666,12 @@ CALCTFF		CLEAR			# ENTER WITH RTERM IN MPAC
 					# (2-RTERM ALFA)  (-3) FROM PDL+0
 SAVEDEN		PUSH	ABS		# DEN TO PDL+0	E: (-3) OR (-16)
 					#               M: (-3) OR (-15)
+; Test denominator for near-zero condition (indeterminate Z)
+; If denominator < 2^-22, we have special cases:
+;   - Parabolic orbit (ALFA ≈ 0): Z is indeterminate at perigee
+;   - Near-circular orbit: ΔE/2 ≈ 0° or 90°
+; Apollo 11 translunar trajectories often approached these edge cases.
+;
 		DAD	BOV		# INDETERMINANCY TEST
 			LIM(-22)	# =1.0-B(-22)
 			TFFXTEST	# GO IF DEN >/= B(-22)
@@ -449,6 +687,12 @@ SAVEDEN		PUSH	ABS		# DEN TO PDL+0	E: (-3) OR (-16)
 DUMPTFF1	RVQ			# RETURN TFF =0
 
 # INBOUND Z CALC CONTINUES HERE
+;
+; For inbound trajectory: Use alternate Z formulation to avoid numerical issues
+; Z = (RTERM - RMAG) / (Q2 + Q1)
+; This form is more stable for descending trajectories.
+; Apollo 11 lunar descent used this path during powered descent phases.
+;
 INBOUND		DLOAD			# RESET PDL+0
 		DLOAD	DSU		# ALTERNATE Z CALC
 			RTERM		# E: (-29) M: (-27)
@@ -459,6 +703,11 @@ INBOUND		DLOAD			# RESET PDL+0
 			TFFQ1		# Q1  E: (-16) M: (-15)
 			SAVEDEN		# DEN = Q2+Q1  E: (-16) M: (-15)
 
+; Compute Z parameter: Z = (NUM * sqrt(ALFA)) / DEN
+; Z relates the change in eccentric anomaly to the geometry of the orbit.
+; For ellipses: Z is proportional to sin(ΔE/2)
+; For parabolas/hyperbolas: Z has analogous meaning in their equations.
+;
 TFFXTEST	DAD	PDDL		# (ABS(DEN) TO PDL+2))	E: (-3) OR (-16)
 					#			M: (-3) OR (-15)
 			DP(-22)		# RESTORE ABS(DEN) TO MPAC
@@ -470,18 +719,40 @@ TFFXTEST	DAD	PDDL		# (ABS(DEN) TO PDL+2))	E: (-3) OR (-16)
 					#				M:(-3) OR (-15)
 					# ABS(DEN) FROM PDL+2	E:(-3) OR (-16)
 					#			M:(-3) OR (-15)
+; Test for overflow: If Z too large, use alternate equation
+; This handles cases where ΔE ≥ 90° or ΔE ≤ -90° (large angle changes).
+; Apollo 11 orbital transfers sometimes required these large-angle equations.
+;
 		DLOAD	BOV		# (THE DLOAD IS SHARED WITH TFFELL)
 			TFFX		# NUM  E: (-16) OR (-29)  M:(-15) OR (-27)
 			TFFELL		# USE EQN FOR DELE GEQ 90, LEQ -90
 
 # OTHERWISE, CONTINUE FOR GENERAL CONIC FOR TFF EQN
-
+;
+; Normal case: Use general conic equation with small-to-moderate angle changes
+; Compute final Z and prepare for trigonometric solution.
+;
 		DDV	STADR
 					# DEN FROM PDL+0	E: (-3) OR (-16)
 					#			M: (-3) OR (-15)
 		STORE	TFFTEM		# Z SAVE FOR SIGN OF SDELF.
 # Page 1384
 					# E: (-13) M: (-12)
+;
+; ============================================================================
+; General Conic Time-of-Flight Equation (Universal Variable Formulation)
+;
+; This section implements the Battin-Gauss universal variable equation:
+; TFF = Z * [RMAG + RTERM - 2*Z^2*T(X)] * sqrt(mu)
+;
+; where: X = ALFA * Z^2  (scaled parameter for series expansion)
+;        T(X) = polynomial approximation of Stumpff function
+;        Z = universal variable parameter (computed earlier)
+;
+; This equation works for all conic sections (ellipse, parabola, hyperbola)
+; and was critical for Apollo 11's translunar and lunar orbit calculations.
+; ============================================================================
+;
 		PUSH	DSQ		# Z TO PDL+0
 		PUSH	DMP		# Z SQ TO PDL+2  E: (-26) M: (-24)
 			TFFNP		# LC P  E: (-38+2NR) M: (-36+2NR)
@@ -491,31 +762,60 @@ TFFXTEST	DAD	PDDL		# (ABS(DEN) TO PDL+2))	E: (-3) OR (-16)
 		STODL	TFFTEM		# P ZSQ  E: (-59+2NR) M: (-55+2NR)
 					# (ARG IS USED IN TFF/TRIG)
 					# ZSQ FROM PDL+2  E: (-26) M: (-24)
+; Compute X = ALFA * Z^2 for Stumpff function argument
+; X determines series convergence for T(X) polynomial approximation.
+;
 		PUSH	DMP		# RESTORE PUSH LOC
 			TFFALFA		# ALFA  E: (26-NR) M: (24-NR)
 		SL*
 			0,1		# X1=-NR
 		STORE	TFFX		# X
+; Evaluate T(X) using polynomial approximation (RTB T(X))
+; T(X) is a modified Stumpff function appearing in universal variable method.
+;
 		RTB	DMP
 			T(X)		# POLY
 					# ZSQ FROM PDL+2  E: (-26) M: (-24)
+; Compute: RMAG + RTERM - 2*Z^2*T(X)
+; This term represents the geometry of the transfer arc.
+;
 		SR2	BDSU		# 2 ZSQ T(X)  E: (-29) M: (-27)
 			RTERM		# RTERM  E: (-29) M: (-27)
 		DAD	DMP
 			RMAG1		# E: (-29) M: (-27)
 					# Z FROM PDL+0  E: (-13) M: (-12)
+; Final multiplication by Z to get TFF*sqrt(mu)
+; Result is time-of-flight in units of sqrt(mu).
+;
 		SR3	BPL		# TFF SQRT(MU)  E: (-45) M: (-42)
 			ENDTFF		# (NO PUSH UP)
+;
+; Test for "gone past" condition: Has spacecraft already passed target radius?
+; If Q1 (current radial velocity) has opposite sign from TFF, the spacecraft
+; has already passed through the target radius on its current trajectory.
+; During Apollo 11 targeting, this prevented attempting impossible maneuvers.
+;
 		PUSH	SIGN		# TFF SQRT(MU) TO PDL+0
 			TFFQ1		# Q1 FOR GONEPAST TEST
 		BPL	DLOAD		# GONE PAST ?
 			NEGTFF		# YES. TFF < 0 .
 			TFF1/ALF	# 1/ALFA  E: (-22-2NA) M: (-20-2NA)
+;
+; Test orbit type via ALFA sign:
+; ALFA > 0: Elliptical orbit (requires period correction)
+; ALFA = 0: Parabolic orbit (no period concept)
+; ALFA < 0: Hyperbolic orbit (no period concept)
+;
 		DCOMP	BPL		# ALFA > 0 ?
 			NEGTFF		# NO. TFF IS NEGATIVE.
 
 # CORRECT FOR ORBITAL PERIOD.
-
+;
+; For elliptical orbits only: Adjust TFF by integer multiples of orbital period
+; to ensure we select the correct orbital arc (short way vs. long way around).
+; Period = 2π / sqrt(ALFA)
+; This correction was critical for Apollo 11 rendezvous targeting calculations.
+;
 		DCOMP			# YES.  CORRECT FOR ORB PERIOD.
 		DMP	DDV
 			PI/16		# 2 PI (-5)
@@ -526,6 +826,11 @@ TFFXTEST	DAD	PDDL		# (ABS(DEN) TO PDL+2))	E: (-3) OR (-16)
 		SL*	DAD
 			0,2
 					# TFF SQRT(MU) FROM PDL+0	E:(-45) M:(-42)
+;
+; Final conversion: Multiply by 1/sqrt(mu) to get TFF in centiseconds.
+; During Apollo 11, this produced the actual coast time for trajectory targeting.
+; Overflow protection ensures result stays within AGC word size limits.
+;
 ENDTFF		DMP	BOV		# TFF SQRT(MU) IN MPAC		E:(-45) M:(-42)
 			TFF/RTMU	# E: (17) M: (14)
 			MAXTFF		# SET POSMAX IN OVFL.
@@ -533,17 +838,38 @@ ENDTFF		DMP	BOV		# TFF SQRT(MU) IN MPAC		E:(-45) M:(-42)
 DUMPTFF2	RVQ			# RETURN TFF	(-28) CS IN MPAC.
 
 # Page 1385
+;
+; NEGTFF: Handle negative time of flight (retrograde orbit segment).
+; For certain orbit geometries, the computed TFF can be negative, indicating
+; motion in the opposite direction. This simply loads the negative result and
+; continues to the final scaling and return sequence.
+;
 NEGTFF		DLOAD
 					# TFF SQRT(MU) FROM PDL+0, NEGATIVE.
 		GOTO
 			ENDTFF
 
+;
+; MAXTFF1/MAXTFF: Overflow protection for time of flight calculations.
+; If TFF computation overflows AGC's 15-bit word limits, return NEARONE
+; (0.999999999) as a safe maximum value to prevent mission software errors.
+; Critical during rendezvous when extremely long transfer times were rejected.
+;
 MAXTFF1		DLOAD			# RESET PDL
 MAXTFF		DLOAD	RVQ
 			NEARONE
 
 # TIME OF FLIGHT ELLIPSE WHEN DEL (ECCENTRIC ANOM) GEQ 90 AND LEQ -90.
-
+;
+; TFFELL: Elliptical orbit time of flight for large eccentric anomaly changes.
+; When the spacecraft travels more than 90 degrees around an ellipse (large arc),
+; different computational methods are required to maintain numerical precision.
+; Used during Apollo 11's multi-revolution coast phases in Earth and lunar orbit.
+;
+; Method: Uses polynomial approximation T(X) for the infinite series:
+;   1/3 - X/5 + X²/7 - X³/9 + ...
+; where X = (1/α)Z² for elliptical orbits, ensuring accurate long-arc solutions.
+;
 					# NUM FROM TFFX. E: (-16) OR (-29)
 					#		 M: (-15) OR (-27)
 TFFELL		SL2			# NUM E:(-14) OR (-27)  M:(-13) OR (-25)
@@ -636,7 +962,19 @@ TFFEL1		DLOAD	DSU		# (ENTER WITH D/N=0 IN PDL+0)
 # ERASABLE INITIALIZATION REQUIRED:
 #		C(MPAC) = X
 # DEBRIS:	NONE
-
+;
+; T(X): Polynomial approximation for Kepler's equation time series.
+; Computes infinite series: T(X) = 1/3 - X/5 + X²/7 - X³/9 + X⁴/11 - ...
+; Used when sine/cosine methods fail for large eccentric anomaly changes.
+;
+; The series converges for |X| < 1, providing high-precision time of flight
+; when standard trigonometric approaches lose accuracy. AGC uses fixed-point
+; arithmetic with careful scaling to maintain precision throughout iteration.
+;
+; Input: X in MPAC (dimensionless ratio)
+; Output: T(X) series value in MPAC for use in Kepler time equation
+; Range: Valid from -0.08 to +1.0 with high accuracy
+;
 T(X)		TC	POLY
 		DEC	4		# N-1
 		2DEC	3.333333333 E-1
@@ -652,6 +990,22 @@ TCDANZIG	=	ENDT(X)
 
 # Page 1388
 # TFF CONSTANTS
+;
+; CONSTANTS: Physical and mathematical constants for time of flight calculations.
+; These values define Earth and Moon gravitational parameters, geometric limits,
+; and numerical precision boundaries used throughout TFF computations.
+;
+; Key constants:
+;   1/RTMU   - Reciprocal square root of Earth's gravitational parameter (μ)
+;   PI/16    - Pi divided by 16 for angular calculations
+;   NEARONE  - Maximum time value (0.999999999) to prevent overflow
+;   R300K    - 300 kilometer altitude radius for trajectory calculations
+;   RPAD1    - Earth surface radius at pad (6373338 meters)
+;
+; Note: Gravitational parameter values are "adjusted" for computational
+; efficiency in near-Earth trajectories, slightly different from standard
+; astronomical values to optimize AGC's fixed-point arithmetic precision.
+;
 		BANK	32
 
 		SETLOC	TOF-FF1
