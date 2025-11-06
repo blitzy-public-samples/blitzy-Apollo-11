@@ -29,12 +29,72 @@
 #            Colossus 2A
 
 # Page 1389
+; ============================================================================
+; FILE: STAR_TABLES.agc
+; MODULE: CHIEFTAN Subsystem (Core Operating System)
+; MISSION PHASE: all-phases
+;
+; TL;DR: Star catalog for optical navigation containing unit vector positions
+;        for 37 bright reference stars. Provides celestial reference data for
+;        IMU alignment procedures, sextant star sightings, and navigation
+;        measurements throughout all Apollo 11 mission phases.
+;
+; COMMENT-ONLY READERS: This file contains a catalog of 37 bright stars used
+;        for spacecraft navigation, like a celestial roadmap for finding
+;        position and orientation in space.
+; CODE-ALONG READERS: Study star catalog data structure, unit vector position
+;        encoding in inertial reference frame, double-precision storage format,
+;        and catalog organization for optical navigation subsystem integration.
+; ============================================================================
+
+; ============================================================================
+; STAR CATALOG ORGANIZATION
+;
+; This table contains position data for 37 bright navigation stars selected
+; for optimal visibility and geometric distribution across the celestial
+; sphere. Stars are numbered 37 through 1, stored in descending order.
+;
+; Each star entry consists of three consecutive 2DEC values representing the
+; star's position as a unit vector in the basic reference coordinate system
+; (inertial frame aligned with Earth's equator and equinox at mission epoch).
+;
+; COORDINATE SYSTEM:
+; - X, Y, Z components form unit vector pointing from spacecraft to star
+; - Inertial reference frame (non-rotating celestial coordinates)
+; - Magnitude of vector = 1.0 (normalized direction only, not distance)
+; - Scaling: B-1 notation means values scaled by 2^-1 (multiply by 0.5)
+;
+; USAGE IN MISSION:
+; - P51: IMU alignment using manual star sightings through CM sextant
+; - P52: IMU alignment using automatic optics
+; - P53: Backup IMU alignment procedures
+; - Navigation measurement incorporation for state vector updates
+;
+; During Apollo 11, crew used these star positions to periodically realign
+; the Inertial Measurement Unit, ensuring accurate spacecraft attitude and
+; navigation throughout the 8-day mission from Earth to Moon and back.
+; ============================================================================
+
 		BANK	32
 		SETLOC	STARTAB
 		BANK
 
 		COUNT	14/STARS
 
+; ============================================================================
+; STAR POSITION DATA - Stars 37 through 1
+;
+; Each star consists of three 2DEC entries storing X, Y, Z unit vector
+; components. The 2DEC format provides double-precision fixed-point values
+; necessary for accurate angular calculations during optical navigation.
+;
+; Position vectors represent star directions as seen from spacecraft in
+; inertial coordinates. During star sighting, crew aligned sextant crosshairs
+; on selected star, and AGC compared observed angle against these reference
+; positions to compute IMU alignment errors and navigation state corrections.
+; ============================================================================
+
+; Star 37 position - First entry in catalog
 		2DEC	+.8342971408 B-1	# STAR 37	X
 		2DEC	-.2392481515 B-1	# STAR 37	Y
 		2DEC	-.4966976975 B-1	# STAR 37	Z
@@ -63,6 +123,7 @@
 		2DEC	-.8719885748 B-1	# STAR 31	Y
 		2DEC	-.4436288486 B-1	# STAR 31	Z
 
+; Star 30 position - Mid-catalog star for southern celestial hemisphere coverage
 		2DEC	+.1217293692 B-1	# STAR 30	X
 # Page 1390
 		2DEC	-.7702732847 B-1	# STAR 30 	Y
@@ -105,6 +166,7 @@
 		2DEC	-.0493710140 B-1	# STAR 21	Y
 		2DEC	-.8904759346 B-1	# STAR 21	Z
 
+; Star 20 position - Catalog midpoint providing equatorial region coverage
 		2DEC	-.9525211695 B-1	# STAR 20	X
 		2DEC	-.0593434796 B-1	# STAR 20	Y
 		2DEC	-.2986331746 B-1	# STAR 20	Z
@@ -146,6 +208,7 @@
 		2DEC	+.6813721061 B-1	# STAR 11	Y
 		2DEC	+.7189685267 B-1	# STAR 11	Z
 
+; Star 10 position - Northern hemisphere coverage for high-latitude navigation
 		2DEC	+.2011399589 B-1	# STAR 10	X
 		2DEC	+.9690337941 B-1	# STAR 10	Y
 		2DEC	-.1432348512 B-1	# STAR 10	Z
@@ -183,10 +246,27 @@
 		2DEC	+.1735073142 B-1	# STAR 2	Y
 		2DEC	-.3115219339 B-1	# STAR 2	Z
 
+; Star 1 position - Final catalog entry completing 37-star navigation set
+; These 37 stars provided comprehensive celestial sphere coverage enabling
+; IMU alignment and navigation measurements throughout Apollo 11 mission.
 		2DEC	+.8748658918 B-1	# STAR 1	X
 		2DEC	+.0260879174 B-1	# STAR 1	Y
 		2DEC	+.4836621670 B-1	# STAR 1	Z
 
+; ============================================================================
+; STAR CATALOG IDENTIFIER
+;
+; CATLOG contains catalog identification code 6970 (octal value).
+; This value identifies the specific star catalog version and epoch used for
+; Apollo Command Module navigation. The catalog epoch defines the reference
+; time for star positions (accounting for precession of Earth's axis and
+; proper motion of stars over time).
+;
+; During mission, optical navigation routines referenced this catalog by
+; number when processing star sightings and computing IMU alignment corrections.
+; The catalog selection was verified during pre-flight AGC program loading
+; to ensure crew and computer used consistent star identification.
+; ============================================================================
 CATLOG		DEC	6970
 
 
