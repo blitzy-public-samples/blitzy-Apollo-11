@@ -857,6 +857,11 @@ INTEGRVS	SET	SSP
 			ZEROVEC
 		STORE	TDELTAV
 		STCALL	TNUV
+; Calls RECTIFY subroutine (defined in ORBITAL_INTEGRATION.agc) to initialize
+; the rectified conic state vector and zero out perturbation tracking variables.
+; RECTIFY establishes the reference trajectory for Encke method integration by
+; computing the two-body conic solution that serves as the baseline from which
+; perturbations will be calculated during subsequent integration steps.
 			RECTIFY
 		CLEAR	SET
 			DIM0FLAG
@@ -945,6 +950,10 @@ PHEXIT		CALL
 			GRP2PC
 RECTOUT		SETPD	CALL
 			0
+; RECTIFY (ORBITAL_INTEGRATION.agc) recomputes the reference conic trajectory
+; when accumulated perturbations exceed threshold. This rectification process
+; prevents numerical error growth by periodically resetting the Encke method
+; baseline, maintaining integration accuracy over extended mission durations.
 			RECTIFY
 		VLOAD	VSL*
 			RRECT
@@ -986,6 +995,10 @@ RVCON		DLOAD	DSU
 			TDEC
 			TET
 		STCALL	TAU.
+; RECTIFY (ORBITAL_INTEGRATION.agc) computes two-body conic trajectory solution
+; for the interval (TET-TDEC). This provides position and velocity via Kepler
+; solution without perturbations, used for trajectory prediction during mission
+; planning and rendezvous computations when full precision is not required.
 			RECTIFY
 		CALL
 			KEPPREP
@@ -1418,6 +1431,10 @@ INTWAKEU	RELINT
 			RRECT		#      RCV(6)   AND VCV(6)   RESPECTIVELY.
 		STOVL	RCV
 			VRECT		# NOW GO TO 'RECTIFY +13D' TO
+; Calls entry point within RECTIFY subroutine (ORBITAL_INTEGRATION.agc) that
+; completes CSM/LEM permanent state vector update by storing VRECT into VCV
+; and resetting Encke method tracking variables (TDELTAV, TNUV, TC, XKEP) to
+; zero, establishing fresh baseline for subsequent integration computations.
 		CALL			# STORE VRECT INTO VCV  AND ZERO OUT
 			RECTIFY +13D	# TDELTAV(6),TNUV(6),TC(2) AND XKEP(2)
 		SLOAD	ABS		# COMPARE ABSOLUTE VALUE OF 'UPSVFLAG'
