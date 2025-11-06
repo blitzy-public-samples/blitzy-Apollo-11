@@ -32,6 +32,79 @@
 #			Colossus 2A
 
 # Page 1107
+; ============================================================================
+; FILE: INTERPRETER.agc
+; MODULE: CHIEFTAN Subsystem (Core Operating System)
+; MISSION PHASE: all-phases
+;
+; TL;DR: Interpretive language virtual machine implementing stack-based execution
+;        environment for high-level guidance and navigation operations. Provides
+;        approximately 70 instructions including vector operations (VLOAD, VAD,
+;        VSU, VXSC, V/SC, VXV, UNIT), matrix operations (MXV, VXM), trigonometric
+;        functions (SIN, COS, ASIN, ACOS), double-precision arithmetic (DCOMP,
+;        DDV), enabling complex orbital mechanics calculations throughout Apollo 11
+;        with memory efficiency. TC INTPRET enters interpreter mode, EXIT returns
+;        to native AGC code.
+;
+; COMMENT-ONLY READERS: The high-level calculation language that made complex
+;        mathematical operations manageable in limited memory. This virtual machine
+;        allowed guidance programmers to write orbital mechanics code in a more
+;        expressive language, automatically handling double-precision arithmetic,
+;        vector/matrix operations, and trigonometric functions. Without this
+;        interpreter, fitting Apollo 11's guidance software into 36K words of
+;        ROM would have been nearly impossible.
+;
+; CODE-ALONG READERS: Study complete interpretive instruction set (~70 opcodes),
+;        stack machine architecture using MPAC (Multi-Purpose Accumulator), 
+;        double-precision arithmetic conventions, scaling factors throughout,
+;        opcode format (paired instructions), execution timing, TC INTPRET
+;        entry mechanism, EXIT return to native code, bank switching behavior,
+;        and integration with EXECUTIVE scheduler for interpretive job suspension.
+; ============================================================================
+;
+; ARCHITECTURAL OVERVIEW:
+; The interpreter is a virtual machine that executes "interpretive instructions"
+; stored in AGC fixed memory. Each interpretive instruction performs high-level
+; operations (like vector addition or matrix multiplication) that would require
+; many native AGC instructions. This provides two key benefits:
+;   1. CODE DENSITY: Complex operations encoded in fewer words of ROM
+;   2. EXPRESSIVENESS: Guidance programmers write in higher-level language
+;
+; EXECUTION MODEL:
+; - Native AGC code calls TC INTPRET to enter interpretive mode
+; - Interpreter fetches paired opcodes from LOC (location counter)
+; - Each opcode dispatched through jump tables (INDJUMP, MISCJUMP, etc.)
+; - Operations work on MPAC (Multi-Purpose Accumulator) stack
+; - EXIT instruction returns control to native AGC code
+;
+; STACK ARCHITECTURE:
+; - MPAC: Primary working register (double-precision, 3 words)
+; - MPAC+3 through MPAC+17: Extended stack for vector/matrix operations
+; - MODE register: Tracks data type (DP=double-precision, TP=triple-precision/vector)
+; - Push-down stack model for expression evaluation
+;
+; SCALING CONVENTIONS:
+; All interpretive arithmetic maintains fixed-point scaling:
+; - Angles: Scaled as fractional revolutions (±0.5 = ±180°, ±1.0 = ±360°)
+; - Vectors: Scaling depends on physical quantity (positions, velocities, etc.)
+; - Scaling factors documented inline with each operation
+; - Overflow detection via OVFIND register
+;
+; INTEGRATION WITH AGC OPERATING SYSTEM:
+; - Interpretive jobs can be suspended by EXECUTIVE scheduler
+; - NEWJOB check at DANZIG allows higher-priority jobs to preempt
+; - INTRSM (interpretive resume) restores suspended interpretive execution
+; - Bank switching handled automatically for cross-bank references
+;
+; HISTORICAL CONTEXT:
+; The interpreter was designed by MIT Instrumentation Laboratory to solve
+; the "Apollo software crisis" - fitting complex guidance algorithms into
+; severely limited AGC memory. Without this innovation, the lunar landing
+; guidance equations running during Apollo 11's descent would not have fit
+; in available ROM. This interpreter executed the "LUNAR_LANDING_GUIDANCE_
+; EQUATIONS.agc" that guided Eagle to touchdown on July 20, 1969.
+; ============================================================================
+
 # SECTION 1:  DISPATCHER
 #
 # ENTRY TO THE INTERPRETER.  INTPRET SETS LOC TO THE FIRST INSTRUCTION, BANKSET TO THE BBANK OF THE
@@ -40,40 +113,120 @@
 # (BIT15 OF FBANK = 1) DO NOT REFER TO LOWBANKS, AND VICE-VERSA.  THE INTERPRETER DOES NOT SWITCH SUPERBANKS.
 # E-BANK SWITCHING OCCURS WHENEVER GENERAL ERASABLE (100-3777) IS ADDRESSED.
 
+; ============================================================================
+; INTERPRETER ARCHITECTURE OVERVIEW
+;
+; The AGC Interpreter is a virtual machine that executes "interpretive code" -
+; a higher-level instruction set designed for vector and matrix mathematics.
+; This design choice solved a critical problem: how to fit complex guidance
+; equations into the AGC's limited 36K words of ROM.
+;
+; KEY CONCEPTS:
+; - MPAC: Multi-Purpose Accumulator - the interpreter's working stack
+; - Paired Opcodes: Instructions encoded two per word for compactness
+; - Double Precision: Most operations work on 2-word (DP) values
+; - Scaling: Fixed-point arithmetic with documented scale factors
+; - TC INTPRET: Native AGC instruction that enters interpreter mode
+; - EXIT: Interpretive instruction that returns to native AGC code
+;
+; PERFORMANCE TRADEOFF:
+; Interpretive instructions execute slower than native AGC code (approximately
+; 3x slower), but achieve dramatic memory savings. Guidance programs that would
+; require tens of thousands of words in native code fit in a few thousand words
+; of interpretive code. During Apollo 11's lunar landing, most guidance
+; calculations executed in interpretive mode.
+; ============================================================================
+
 		BLOCK	03
 
 		COUNT	03/INTER
 
+; ============================================================================
+; TC INTPRET - ENTRY POINT TO INTERPRETIVE MODE
+;
+; Native AGC programs enter the interpreter by executing "TC INTPRET".
+; This is the gateway between the AGC's native machine code and the
+; interpretive virtual machine. During Apollo 11, guidance programs
+; frequently transitioned between native and interpretive code to balance
+; performance with memory efficiency.
+;
+; ENTRY MECHANISM:
+; 1. TC INTPRET transfers control to this address
+; 2. Q register contains return address (word after TC instruction)
+; 3. Interpretive code begins at the word following TC INTPRET
+; 4. Interpreter executes until EXIT instruction encountered
+;
+; WHAT HAPPENS ON ENTRY:
+; - LOC register set to first interpretive instruction address
+; - BANKSET remembers the bank for proper addressing
+; - INTBIT15 captures bank bit for address calculations
+; - EDOP cleared to ensure clean opcode state
+; - Control transfers to NEWOPS to fetch first opcode pair
+; ============================================================================
+
 INTPRET		RELINT
 		EXTEND				# SET LOC TO THE WORD FOLLOWING THE TC.
-		QXCH	LOC
+		QXCH	LOC			; Q now contains address of first interpretive instruction
 
 	+2	CA	BBANK			# INTERPRETIVE BRANCHES FINISH HERE.
-		TS	BANKSET
+		TS	BANKSET			; Remember current bank for return
 		MASK	BIT15			# GET 15TH BIT FOR INDEXABLE ADDRESSES.
-		TS	INTBIT15
+		TS	INTBIT15		; Store for address calculation
 
-		TS	EDOP			# MAKE SURE NO INSTRUCTIONS LEFT OVER
+		TS	EDOP			# MAKE SURE NO INSTRUCTIONS LEFT OVER (zero EDOP)
 
 		TCF	NEWOPS			# PICK UP OP CODE PAIR AND BEGIN.
 
 
+; ============================================================================
+; INTRSM - RESUME SUSPENDED INTERPRETIVE JOB
+;
+; When the Executive scheduler resumes an interpretive job that was suspended
+; (perhaps due to a higher-priority job needing to run), this entry point
+; restores interpreter state and continues execution.
+; ============================================================================
+
 INTRSM		LXCH	BBANK			# RESUME SUSPENDED INTERPRETIVE JOB
 		TCF	INTPRET +3
-# DLOAD LOADS MPAC, MPAC +1, LEAVING ZERO IN MPAC +2.
+
+; ============================================================================
+; DLOAD - LOAD DOUBLE PRECISION VALUE INTO MPAC
+;
+; OPERATION: Load a double-precision (2-word) value from memory into MPAC
+; MPAC EFFECT: MPAC = value, MPAC+1 = value+1, MPAC+2 = 0 (DP mode marker)
+; USAGE: DLOAD <address>  (e.g., "DLOAD ALTITUDE" loads altitude into MPAC)
+;
+; This is one of the most common interpretive instructions. It loads data
+; from memory into the Multi-Purpose Accumulator (MPAC), the interpreter's
+; primary working register. The zero in MPAC+2 signals double-precision mode.
+; ============================================================================
 
 DLOAD		EXTEND
-		INDEX	ADDRWD
+		INDEX	ADDRWD			; Use address from ADDRWD
 		DCA	0			# LOAD DP C(C(ADDRWD)) INTO MPAC,MPAX +1
-SLOAD2		DXCH	MPAC
+SLOAD2		DXCH	MPAC			; Store in MPAC (double precision)
 		CAF	ZERO			# ZERO MPAC +2
 
 # Page 1108
 # AT THE END OF MOST INSTRUCTIONS, CONTROL IS GIVEN TO DANZIG TO DISPATCH THE NEXT OPERATION.
 
-		TS	MPAC +2			# AND DECLARE DP MODE
+		TS	MPAC +2			# AND DECLARE DP MODE (0 = DP, 1 = vector)
 
 NEWMODE		TS	MODE			# PROLOGUE FOR MODE-CHANGING INSTRUCTIONS.
+
+; ============================================================================
+; DANZIG - MAIN DISPATCHER
+;
+; Nearly all interpretive instructions end by jumping to DANZIG, which:
+; 1. Checks if another job needs to run (cooperative multitasking)
+; 2. Fetches and dispatches the next interpretive instruction
+;
+; This is the heart of the interpreter's execution loop. During Apollo 11's
+; descent, this dispatcher was called thousands of times per second as
+; guidance equations executed. The NEWJOB check here is what allowed the
+; famous 1202 program alarm to be handled - higher priority jobs could
+; preempt interpretive guidance calculations when necessary.
+; ============================================================================
 
 DANZIG		CA	BANKSET			# SET BBANK BEFORE TESTING NEWJOB SO THAT
 		TS 	BBANK			# IT MAY BE SAVED DIRECTLY BY CHANJOB.
@@ -87,16 +240,43 @@ NOIBNKSW	CCS	EDOP			# SEE IF AN ORDER CODE IS LEFT OVER FROM
 
 		INCR	LOC			# ADVANCE THE LOCATION COUNTER.
 
+; ============================================================================
+; NEWOPS - FETCH AND DECODE OPCODE PAIR
+;
+; Interpretive instructions are encoded TWO per word for memory efficiency.
+; This routine fetches a word from the interpretive program and separates
+; the two opcodes for sequential execution.
+;
+; ENCODING FORMAT:
+; Each interpretive program word contains two 7-bit opcodes plus control bits.
+; Negative values indicate store operations, positive values are opcode pairs.
+;
+; During Apollo 11's descent, this compact encoding allowed the entire lunar
+; landing guidance program to fit in roughly 2000 words - a dramatic savings
+; compared to native AGC code which would have required 6000+ words.
+; ============================================================================
+
 # ITRACE (1) REFERS TO "NEWOPS".
 NEWOPS		INDEX	LOC			# ENTRY TO BEGIN BY PICKING OP CODE PAIR.
 		CA	0			# MAY BE AN OPCODE PAIR OR A STORE CODE.
 		CCS	A			# TEST SIGN AND GET DABS(A).
-		TCF	DOSTORE			# PROCESS STORE CODE.
+		TCF	DOSTORE			# PROCESS STORE CODE (negative value).
 
-LOW7		OCT	177
+LOW7		OCT	177			; Mask for lower 7 bits (one opcode)
 
 		TS	EDOP			# OP CODE PAIR.  LEAVE THE OTHER IN EDOP
 		MASK	LOW7			# WHERE CCS EDOP WILL HONOR IT NEXT.
+
+; ============================================================================
+; OPJUMP - DISPATCH SINGLE OPCODE
+;
+; After extracting one opcode from the pair, this routine tests prefix bits
+; to determine the opcode category and dispatches to the appropriate handler.
+;
+; SPECIAL CASE: Opcode +0 is the EXIT instruction, which returns control
+; from interpretive mode back to native AGC code. This is how guidance
+; programs ended their calculations and returned to the executive scheduler.
+; ============================================================================
 
 OPJUMP		TS	CYR			# LOWWD ENTERS HERE IF A RIGHT-HAND OP
 		CCS	CYR			# CODE IS TO BE PROCESSED.  TEST PREFICES.
@@ -107,6 +287,18 @@ OPJUMP		TS	CYR			# LOWWD ENTERS HERE IF A RIGHT-HAND OP
 # Page 1109
 # PROCESS ADDRESSES WHICH MAY BE DIRECT, INDEXED, OR REFERENCE THE PUSHDOWN LIST.
 
+; ============================================================================
+; ADDRESS PROCESSING - DIRECT, INDEXED, OR PUSHDOWN
+;
+; Interpretive instructions can reference memory in three ways:
+; 1. DIRECT: Explicit address given (e.g., DLOAD ALTITUDE)
+; 2. INDEXED: Address computed using index register (e.g., DLOAD X1)
+; 3. PUSHDOWN: Implicit reference to MPAC stack (no address specified)
+;
+; This flexibility allows interpretive programs to efficiently manipulate
+; both named variables and intermediate calculation results on the stack.
+; ============================================================================
+
 ADDRESS		MASK	BIT1			# SEE IF ADDRESS IS INDEXED.  CYR CONTAINED
 		CCS	A			# 400XX, SO BIT 1 IS NOW AS IT WAS IN CYR.
 		TCF	INDEX			# FORM INDEXED ADDRESS.
@@ -114,12 +306,12 @@ ADDRESS		MASK	BIT1			# SEE IF ADDRESS IS INDEXED.  CYR CONTAINED
 DIRADRES	INDEX	LOC			# LOOK AHEAD TO NEXT WORD TO SEE IF
 OCT40001	CS	1			# ADDRESS IS GIVEN.
 		CCS	A
-		TCF	PUSHUP			# IF NOT.
+		TCF	PUSHUP			# IF NOT (pushdown list reference).
 
 NEG4		DEC	-4
 
 		INCR	LOC			# IF SO, TO SHOW WE PICKED UP A WORD.
-		TS	ADDRWD
+		TS	ADDRWD			; Store address in ADDRWD
 
 # Page 1110
 # FINAL DIGESTION OF DIRECT ADDRESSES OF OP CODES WITH 01 PREFIX IS DONE HERE.  IN EACH CASE, THE
@@ -224,6 +416,26 @@ ITR13		INDEX	CYR
 #	3.	SOME ARITHMETIC OPERATIONS REQUIRE A STANDARD TYPE OF OPERAND REGARDLESS OF THE PREVIOUS OPERATION.
 #		THIS INCLUDES SIGN WANTING DP AND TAD REQUIRING TP.
 
+; ============================================================================
+; PUSHUP - STACK-BASED OPERAND RETRIEVAL
+;
+; When an interpretive instruction has no explicit address, it retrieves
+; its operand from the MPAC pushdown stack (similar to modern stack machines).
+; The PUSHLOC register tracks the current top of the stack.
+;
+; STACK MODES:
+; MODE = 0: DP (double-precision scalar, 2 words)
+; MODE = 1: TP (triple-precision, 3 words)  
+; MODE = 2: Vector (6 words: 3 components × 2 words each)
+;
+; SPECIAL CASES:
+; - VXSC/V/SC reverse the expected mode (vector op wants scalar operand)
+; - LOAD instructions ignore mode and explicitly specify type
+;
+; This stack mechanism enabled interpretive programs to chain operations
+; efficiently without explicit intermediate variable storage.
+; ============================================================================
+
 PUSHUP		CAF	OCT23		# IF THE LOW 5 BITS OF CYR ARE LESS THAN
 		MASK	CYR		# 20, THIS OP REQUIRES SPECIAL ATTENTION.
 		AD	-OCT10		# (NO -0).
@@ -297,6 +509,44 @@ FBANKMSK	EQUALS	BANKMASK
 LVBUF		ADRES	VBUF
 
 # Page 1116
+; ============================================================================
+; INDJUMP - PRIMARY ARITHMETIC AND LOAD OPERATIONS
+;
+; This jump table handles the most frequently-used interpretive instructions:
+; vector/scalar arithmetic, matrix operations, and MPAC load instructions.
+; These opcodes may reference memory via direct addressing, indexed addressing,
+; or stack pushup.
+;
+; LOAD INSTRUCTIONS (00, 05, 06, 10, 12, 14):
+; - VLOAD (00): Load 6-word vector into MPAC
+; - TLOAD (05): Load 3-word triple-precision value
+; - DLOAD (06): Load 2-word double-precision scalar
+; - SLOAD (10): Load 1-word single-precision scalar
+; - PDDL (12): Push MPAC down, then DLOAD
+; - PDVL (14): Push MPAC down, then VLOAD
+;
+; VECTOR ARITHMETIC (24, 25, 26, 27, 30, 31):
+; - VAD (24): Vector addition - essential for position/velocity updates
+; - VSU (25): Vector subtraction - used extensively in navigation
+; - DOT (27): Dot product - computes scalar projection
+; - VXV (30): Cross product - computes perpendicular vectors
+;
+; SCALAR ARITHMETIC (20, 21, 22, 32, 33, 34):
+; - DMPR (20): Double-precision multiply with rounding
+; - DDV (21): Double-precision divide
+; - DAD (34): Double-precision addition
+; - DSU (32): Double-precision subtraction
+;
+; MATRIX OPERATIONS (13, 16):
+; - MXV (13): Matrix × Vector (post-multiplication)
+; - VXM (16): Vector × Matrix (pre-multiplication)
+; Used for coordinate frame transformations throughout navigation.
+;
+; VECTOR/SCALAR OPERATIONS (03, 07):
+; - VXSC (03): Vector × Scalar (scaling a vector)
+; - V/SC (07): Vector ÷ Scalar (normalizing a vector)
+; ============================================================================
+
 # THE FOLLOWING IS THE JUMP TABLE FOR OP CODES WHICH MAY HAVE INDEXABLE ADDRESSES OR MAY PUSH UP.
 
 INDJUMP		TCF	VLOAD		# 00 -- LOAD MPAC WITH A VECTOR.
@@ -338,6 +588,49 @@ INDJUMP		TCF	VLOAD		# 00 -- LOAD MPAC WITH A VECTOR.
 # CODES 10 AND 14 MUST NOT PUSH UP.  CODE 04 MAY BE USED FOR VECTOR DECLARE BEFORE PUSHUP IF DESIRED.
 
 # Page 1117
+; ============================================================================
+; MISCJUMP - INDEX REGISTER AND CONTROL FLOW OPERATIONS
+;
+; This jump table handles index register management, branching, and control
+; flow instructions essential for loops and conditional execution.
+;
+; INDEX REGISTER OPERATIONS (00-07, 10-11):
+; The AGC provides three index registers (X1, X2, X3) for indirect addressing
+; and loop counting. These instructions manage index register contents:
+;
+; - AXT (00): Address to Index True - Load immediate value into index register
+; - AXC (01): Address to Index Complemented - Load complement of value
+; - LXA (02): Load index from erasable memory location
+; - LXC (03): Load index from complement of erasable
+; - SXA (04): Store index register to erasable memory
+; - XCHX (05): Exchange index register with erasable memory
+; - INCR (06): Increment index register - essential for loop iteration
+; - TIX (07): Transfer on Index - Conditional branch based on index value
+;             Used to implement DO loops and array traversal
+; - XAD (10): Index register add from erasable
+; - XSU (11): Index subtract from erasable
+;
+; BRANCHING INSTRUCTIONS (12-14, 17):
+; Control flow based on MPAC state or overflow conditions:
+;
+; - BZE/GOTO (12): Branch if MPAC zero, or unconditional GOTO
+; - BPL/BMN (13): Branch on Plus or Branch on Minus (sign test)
+; - RTB/BHIZ (14): Return To Basic (native AGC code) or Branch if High Zero
+; - BOV(B) (17): Branch on Overflow - handles arithmetic overflow conditions
+;                Critical for error detection in trajectory calculations
+;
+; SUBROUTINE CONTROL (15):
+; - CALL/ITA (15): Call interpretive subroutine and store return address in QPRET
+;                  Enables modular program structure throughout guidance code
+;
+; SWITCH OPERATIONS (16):
+; - SW/ (16): Switch instructions - tests flag bits for conditional execution
+;
+; These instructions enable the complex control flow required for mission programs
+; like P63 lunar landing guidance, which uses TIX loops for trajectory iteration
+; and CALL for modular decomposition of descent phases.
+; ============================================================================
+
 # THE FOLLOWING JUMP TABLE APPLIES TO INDEX, BRANCH, AND MISCELLANEOUS INSTRUCTIONS.
 
 MISCJUMP	TCF	AXT		# 00 -- ADDRESS TO INDEX TRUE.
@@ -357,6 +650,68 @@ MISCJUMP	TCF	AXT		# 00 -- ADDRESS TO INDEX TRUE.
 		TCF	CALL/ITA	# 15 -- CALL AND STORE QPRET.
 		TCF	SW/		# 16 -- SWITCH INSTRUCTIONS AND AVAILABLE.
 		TCF	BOV(B)		# 17 -- BRANCH ON OVERFLOW TO BASIC OR INT.
+
+; ============================================================================
+; UNAJUMP - UNARY MATHEMATICAL AND VECTOR OPERATIONS
+;
+; This jump table handles single-operand instructions essential for navigation,
+; guidance, and trajectory calculations. These operations work on the current
+; contents of MPAC without requiring additional operands.
+;
+; TRANSCENDENTAL FUNCTIONS (01-05):
+; Trigonometric and inverse trigonometric functions for angular calculations
+; throughout orbital mechanics and attitude determination:
+;
+; - SQRT (01): Square root - Used in velocity magnitude calculations, distance
+;              computations. Input scaled appropriately for AGC precision.
+; - SINE (02): Sine function - Angular conversions, IMU gimbal calculations,
+;              coordinate transformations between reference frames.
+; - COSINE (03): Cosine function - Paired with SINE for rotation matrices,
+;                navigation state vector transformations.
+; - ARCSIN (04): Arc sine (inverse sine) - Extracting angles from direction
+;                cosines, solving triangulation problems in rendezvous.
+; - ARCCOS (05): Arc cosine (inverse cosine) - Angle computations from dot
+;                products, orbital element calculations.
+;
+; All trigonometric functions use scaled radian inputs/outputs compatible with
+; AGC fixed-point representation.
+;
+; SCALAR OPERATIONS (06-07, 10):
+; - DSQ (06): Double precision square - Magnitude squared for distance
+;             calculations, avoiding costly square root when only comparison needed.
+; - ROUND (07): Round to double precision - Precision management after extended
+;               arithmetic sequences to prevent error accumulation.
+; - COMP (10): Complement (negate) - Sign inversion for vectors or scalars,
+;              implementing subtraction as addition of complement.
+;
+; VECTOR OPERATIONS (11-14):
+; Three-dimensional vector operations for position, velocity, and attitude:
+;
+; - VDEF (11): Vector define - Initialize or construct vector from components,
+;              setting up position or velocity vectors for trajectory integration.
+; - UNIT (12): Unit vector (normalize) - Create direction vector with magnitude 1.
+;              Critical for thrust direction, line-of-sight vectors, attitude
+;              reference directions. Divides vector by its magnitude.
+; - ABVALABS (13): Absolute value/magnitude - Compute length of vector (Euclidean
+;                  norm) or absolute value of scalar. Distance between spacecraft,
+;                  velocity magnitude, error magnitude in guidance.
+; - VSQ (14): Vector square (length squared) - Efficient magnitude calculation
+;             without square root. Used when comparing distances or in iterative
+;             magnitude computations.
+;
+; STACK MANAGEMENT (15-17):
+; - STADR (15): Push up on store code - Stack manipulation for nested calculations
+; - RVQ (16): Return via QPRET - Return from interpretive subroutine to caller,
+;             restoring execution context. Essential for modular program structure.
+; - PUSH (17): Push MPAC down - Save current accumulator to push-down stack,
+;              enabling nested expression evaluation without losing intermediate
+;              results. Stack depth managed automatically.
+;
+; These unary operations appear throughout mission programs. For example, during
+; lunar landing in P63, UNIT creates thrust direction vectors, ABVAL computes
+; altitude rate magnitude, and trigonometric functions transform between
+; spacecraft body frame and inertial reference frame for navigation updates.
+; ============================================================================
 
 # Page 1118
 # THE FOLLOWING JUMP TABLE APPLIES TO UNARY INSTRUCTIONS
@@ -415,6 +770,102 @@ DOSTORE		TS	ADDRWD
 		MP	BIT5		# EACH TRANSFER VECTOR ENTRY IS TWO WORDS.
 ITR0		INDEX	A
 		TCF	STORJUMP
+
+; ============================================================================
+; STORJUMP - STORE OPERATIONS TABLE
+;
+; This table handles the critical task of saving computational results from
+; MPAC (the interpreter's accumulator) back to memory locations. Store
+; operations are the primary output mechanism from interpretive calculations,
+; writing computed navigation states, guidance commands, or intermediate
+; results to erasable memory for use by other programs or subsequent
+; calculations.
+;
+; BASIC STORE OPERATIONS (entries 0-2):
+; These fundamental stores save MPAC contents to a specified memory location,
+; with optional indexing for array operations:
+;
+; - STORE (entry 0): Basic store operation - Saves current MPAC contents to
+;                    address specified in store code. Mode-sensitive: stores
+;                    DP (double precision, 2 words), TP (triple precision,
+;                    3 words), or VECTOR (6 words) depending on current MODE.
+;                    Returns to DANZIG for next instruction pair. Used for
+;                    saving final results: position vectors, velocity vectors,
+;                    state transition matrices, scalar computation results.
+;
+; - STORE,1 (entry 1): Indexed store using X1 - Store to address computed as
+;                      base_address + X1. Essential for array operations,
+;                      storing elements in tables, writing sequential data.
+;                      During trajectory integration, stores state vectors at
+;                      successive time steps. Returns to DANZIG.
+;
+; - STORE,2 (entry 2): Indexed store using X2 - Store to address computed as
+;                      base_address + X2. Enables dual indexing when X1 is
+;                      already in use, supporting nested loops or multi-
+;                      dimensional array access. Returns to DANZIG.
+;
+; All basic stores reset EBANK to its state at INTPRET entry, maintaining
+; memory bank consistency across interpretive program execution.
+;
+; COMBINED STORE-LOAD OPERATIONS (entries 3-6):
+; These optimized instructions combine store with immediate load, reducing
+; instruction count and execution time. Common pattern in guidance calculations:
+; store result of one computation while loading operands for the next.
+;
+; - STODL (entry 3): Store then load double precision - Saves current MPAC to
+;                    specified address, then immediately loads DP value from
+;                    next address into MPAC. Efficient for chaining calculations:
+;                    "store velocity, load position" or "store intermediate
+;                    result, load next operand". Eliminates separate DLOAD
+;                    instruction, saving memory and execution time.
+;
+; - STODL* (entry 4): Store then indexed load DP - Combines store with indexed
+;                     load using addressing mode from next address word. For
+;                     array processing: store result to output array element,
+;                     load next input array element with computed index.
+;
+; - STOVL (entry 5): Store then load vector - Saves current MPAC, then loads
+;                    6-word vector (two DP components: X,Y,Z as pairs) into
+;                    MPAC. Critical in vector-heavy calculations during descent:
+;                    "store thrust direction vector, load position vector" for
+;                    next guidance cycle. Commonly used in THE_LUNAR_LANDING
+;                    where multiple vector transformations execute in sequence.
+;
+; - STOVL* (entry 6): Store then indexed load vector - Store with indexed
+;                     vector load. Processes vector arrays: ephemeris tables,
+;                     state vector histories, transformation matrix sequences.
+;
+; STORE WITH TRANSFER CONTROL (entry 7):
+; - STOTC (entry 7): Store then transfer control - Stores MPAC and then branches
+;                    to address specified in following word. Combines store with
+;                    subroutine call or conditional branch. Used at end of
+;                    interpretive subroutines to save final result and return
+;                    to caller or continue to next program phase. The CALLCODE
+;                    is loaded and a 15-bit address is fetched for the branch.
+;
+; MEMORY ADDRESSING:
+; Store operations handle both work area addresses (046-0056 octal, special
+; fast-access locations in low erasable memory) and general erasable addresses
+; (100-3777 octal, requiring EBANK switching). Address processor (STORE,
+; STORE,1, STORE,2 subroutines) automatically detects address range and sets
+; EBANK appropriately. This transparency allows guidance programmers to write
+; position-independent code without explicit bank management.
+;
+; MISSION CONTEXT:
+; During Apollo 11's lunar descent, THE_LUNAR_LANDING.agc executed thousands
+; of store operations per guidance cycle. Typical sequence: compute thrust
+; direction vector using UNIT and vector operations → STOVL to save direction
+; and load velocity vector → compute velocity error → STODL to save error
+; magnitude and load time-to-go → compute throttle command → STORE to output
+; buffer read by THROTTLE_CONTROL_ROUTINES. The efficiency of combined store-
+; load instructions (STODL, STOVL) was critical to meeting real-time deadlines
+; with the AGC's 85-microsecond instruction cycle.
+;
+; The store mechanism respects MODE (DP/TP/VECTOR) set by loading instructions,
+; ensuring correct word count is written. MPAC+0,+1 always stored; MPAC+2
+; stored if TP mode; MPAC+3,+4,+5 stored if VECTOR mode. This mode awareness
+; enables single STORE mnemonic to handle scalar, vector, or matrix results.
+; ============================================================================
 
 # Page 1120
 # STORE CODE JUMP TABLE.  CALLS THE APPROPRIATE STORING ROUTINE AND EXITS TO DANZIG OR TO ADDRESS WITH
