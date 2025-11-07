@@ -28,7 +28,46 @@
 # Refer directly to the online document mentioned above for further
 # information.  Please report any errors to info@sandroid.org.
 
+; ============================================================================
+; FILE: ENTRY_LEXICON.agc
+; MODULE: TROUBLE Subsystem (Mission Programs)
+; MISSION PHASE: re-entry
+;
+; TL;DR: Entry program constant definitions and data structures for atmospheric
+;        reentry. Defines atmospheric model parameters, entry corridor constraints,
+;        lift-to-drag ratios, bank angle limits, and g-load boundaries used by
+;        P61-P67 entry guidance programs during Command Module return from the Moon.
+;
+; COMMENT-ONLY READERS: This file contained the numbers defining how steeply
+;        the spacecraft could safely dive into Earth's atmosphere without burning
+;        up or skipping back into space. These parameters guided Apollo 11's return.
+; CODE-ALONG READERS: Study atmospheric model constants, entry constraint
+;        definitions, guidance parameter specifications, and scaling factors that
+;        enabled the CM's precision splashdown in the Pacific Ocean.
+; ============================================================================
+
+; ============================================================================
+; VARIABLE DEFINITIONS AND DATA STRUCTURES
+;
+; This lexicon documents all variables, constants, and parameters used during
+; atmospheric entry. The entry guidance system (P61-P67 programs) maintained
+; the Command Module within a narrow entry corridor - too steep risked excessive
+; g-forces and heat, too shallow caused skip-out back to space.
+;
+; Apollo 11's entry on July 24, 1969 successfully targeted splashdown in the
+; Pacific Ocean using these parameters, achieving precision landing within
+; visual range of the recovery carrier USS Hornet.
+; ============================================================================
+
 # Page 837
+; ============================================================================
+; SECTION 1: PRIMARY STATE VECTORS AND NAVIGATION VARIABLES
+;
+; These variables track the spacecraft's position, velocity, and orientation
+; during entry. The guidance computer continuously updated these values from
+; IMU (Inertial Measurement Unit) data and computed the trajectory adjustments
+; needed to reach the target splashdown point.
+; ============================================================================
 # VARIABLE	DESCRIPTION				MAXIMUM VALUE *		COMPUTER NAME
 # --------	-----------				------- -------		-------- ----
 #
@@ -92,6 +131,10 @@
 # KA		DRAG TO LIFT UP IF DOWN			805 FPSS		= KAT
 # KLAT		LATERAL SWITCH GAIN			1		(NOM = .0125)
 # K2ROLL	INDICATOR FOR ROLL SWITCH
+; Lift-to-drag ratio (L/D) parameters control entry guidance steering:
+; The CM's blunt shape generated lift through offset center-of-gravity, creating
+; an L/D of approximately 0.3 (much lower than typical aircraft). By rolling
+; the spacecraft, guidance could vector this lift left/right for lateral control.
 # LAD		MAX L/D (MIN ACTUAL VEHICLE L/D)	1
 # LADPAD	NOMINAL VEHICLE L/D, SP PAD LOAD	1		(NOM = 0.3)
 # LATANG	LATERAL RANGE				4 RADIANS
@@ -178,6 +221,19 @@
 # GONEBY	INDICATES GONE PAST TARGET (SET)	SELF-INITIALIZING	112D, BIT 8
 
 # Page 841
+; ============================================================================
+; SECTION 2: CONSTANTS AND CONTROL GAINS
+;
+; These constants define the entry guidance control law behavior. The gains
+; determine how aggressively the computer commanded bank angle changes to
+; correct range errors. Conservative gains ensured smooth, predictable entry
+; trajectories while still achieving splashdown accuracy.
+;
+; Values were derived from extensive pre-flight simulation and wind tunnel
+; testing of the Command Module's aerodynamic characteristics. The lift-to-drag
+; ratios (L/D) reflect the CM's blunt body design - optimized for heat shield
+; protection rather than aerodynamic efficiency.
+; ============================================================================
 # CONSTANTS AND GAINS							VALUE
 # -------------------							-----
 #
@@ -185,6 +241,7 @@
 # C16		CONSTD GAIN ON DRAG					.01
 # C17		CONSTD GAIN ON RDOT					.001
 # C18		BIAS VEL. FOR FINAL PHASE START				500	FPS
+; Entry corridor constraint parameters - these define the safe boundaries:
 # C20		MAX DRAG FOR DOWN-LIFT					175	FPSS
 # CHOOK		FACTOR IN AHOOK COMPUTATION				.25
 # CH1		FACTOR IN GAMMAL COMPUTATION				1.0
@@ -192,6 +249,9 @@
 # DLEWD0	INITIAL VARIATION IN LEWD				-.05
 # D2		DRAG TO CHANGE LEWD					175	FPSS
 # DT		COMPUTATION CYCLE TIME INTERVAL				2	SEC.
+; GMAX defines crew g-load limit: 8 Earth gravities maximum. Entry guidance
+; maintained accelerations well below this limit for crew comfort and safety.
+; Apollo 11's peak entry deceleration was approximately 6.5 g's.
 # GMAX		MAXIMUM ACCELERATION					257.6	FPSS	(8 G-S)
 # KA1		FACTOR IN KA CALC					1.3 GS
 # KA2		FACTOR IN KA CALC					.2  GS
@@ -225,9 +285,39 @@
 # VQUIT		VELOCITY TO STOP STEERING				1000	FPS
 
 # Page 842
+; ============================================================================
+; SECTION 3: CONVERSION FACTORS AND SCALING CONSTANTS
+;
+; These fundamental constants enable unit conversions and coordinate system
+; transformations. The AGC's fixed-point arithmetic required careful scaling
+; to maintain precision while representing quantities spanning many orders of
+; magnitude - from Earth's radius (20+ million feet) to velocity increments
+; (fractions of feet per second).
+;
+; Physical constants like Earth's gravitational parameter (MUE) and rotation
+; rate (WIE) were determined from pre-Apollo geodetic surveys and refined
+; through orbital tracking data from earlier missions.
+; ============================================================================
 # CONVERSION FACTORS AND SCALING CONSTANTS
 # ---------- ------- --- ------- ---------
 #
+; Atmospheric model constants used in entry guidance calculations:
+;
+; H5 (28,500 ft) = Exponential atmosphere scale height. The atmosphere density
+; decreases by factor e (2.718) for each 28,500 feet of altitude increase.
+; This simplified model was sufficient for entry guidance accuracy requirements.
+;
+; Earth physical constants determined from geodetic surveys and tracking data:
+;
+; MUE = Earth's gravitational parameter (mass × gravitational constant)
+; RE = Mean Earth radius used for trajectory computations
+; REQ = Equatorial radius accounting for Earth's oblate shape (J coefficient)
+; WIE/KWE = Earth rotation rate, critical for computing relative velocity with
+;           respect to the rotating atmosphere during entry
+;
+; ATK converts angular measurements (radians) to ground-track distance (nautical
+; miles), essential for computing cross-range and downrange errors.
+;
 # ATK	ANGLE IN RAD TO NM						3437.7468	NM/RAD
 # G5	NOMINAL G VALUE FOR SCALING					32.2		FPSS
 # H5	ATMOSPHERE SCALE HEIGHT						28500		FT
@@ -241,7 +331,24 @@
 #
 #						(END GSOP AS-278, VOL 1, FIG. 5.6-3 	CONSTANTS,GAINS, ETC.)
 #
-#
+;
+; ============================================================================
+; SECTION 4: DISPLAY QUANTITIES (CREW INTERFACE)
+;
+; These variables were displayed to the crew on the DSKY during entry, allowing
+; astronauts to monitor the computer's guidance performance. Armstrong, Aldrin,
+; and Collins could observe drag acceleration, velocity, range-to-go, and roll
+; commands in real-time.
+;
+; During Apollo 11's entry, the crew used these displays to verify the automatic
+; guidance was steering toward the planned Pacific splashdown point. If necessary,
+; the crew could have taken manual control, but the automatic system performed
+; flawlessly throughout the entire entry sequence.
+;
+; Display nouns referenced: N60 (entry prediction), N63 (splash parameters),
+; N64 (current state), N66 (range errors), N67 (present position), N68 (velocity
+; and attitude), N69 (upcontrol parameters).
+; ============================================================================
 # DISPLAY QUANTITIES
 # ------------------
 #
@@ -275,6 +382,22 @@
 # VL		EXIT VELOCITY FOR UP-CONTROL		2 VSAT		N 69
 
 # Page 843
+; ============================================================================
+; SECTION 5: BODY ATTITUDE QUANTITIES (SPACECRAFT ORIENTATION)
+;
+; These unit vector triads define the Command Module's orientation relative to
+; the trajectory and velocity. The guidance computer maintained proper attitude
+; throughout entry to ensure the heat shield faced the direction of atmospheric
+; heating while controlling lift direction through roll maneuvers.
+;
+; UXA/UYA/UZA: Trajectory-based coordinate frame aligned with velocity vector.
+; UBX/UBY/UBZ: Body-fixed frame attached to the spacecraft structure.
+;
+; The computer commanded roll angle changes to rotate the lift vector (generated
+; by the CM's offset center-of-gravity) left or right, enabling lateral steering
+; toward the target without requiring pitch or yaw maneuvers that would expose
+; the crew compartment to excessive heating.
+; ============================================================================
 # BODY ATTITUDE QUANTITIES (CM/POSE)
 # ----------------------------------
 #
