@@ -2509,7 +2509,7 @@ VREFER		DEC	.019288		# 994 fps (low-speed terminal phase)
 ; Constants are carefully scaled to fit within AGC's 15-bit signed arithmetic
 ; while maintaining numerical precision throughout the 2700 NM entry trajectory.
 
-; --- Symbolic Constants (defined by EQUALS directive) ---
+# DEFINED BY EQUALS
 
 DEC15		=	LOW4		# Decimal 15 for bit masking operations
 #GAMMAL1	=	22D		# (Commented out) Flight path angle limit
@@ -2539,13 +2539,15 @@ BARELY1		=	NEARONE		# 1.0 - 1bit (shared with DISK, DANCE routines)
 
 1/16TH		=	DP2(-4)		# 1/16 = 2^(-4) double-precision
 
-; --- Fundamental Physical Constants ---
-; VS = VSAT = 25766.1973 ft/sec (satellite/circular orbital velocity at entry altitude)
-; RE = 21,202,900 feet (Earth radius to entry interface, ~400,000 ft altitude)
-;
-; These reference values are used throughout entry guidance for velocity and
-; range normalization. Entry velocities are scaled relative to 2×VS (≈51532 fps),
-; and ranges are scaled relative to half Earth's circumference (2700 NM).
+# BELOW:  VS = VSAT = 25766.1973 FT/SEC
+
+#	  RE = 21,202,900 FEET
+
+; These fundamental physical constants are used throughout entry guidance:
+; - VS (VSAT) = satellite/circular orbital velocity at entry altitude
+; - RE = Earth radius to entry interface (~400,000 ft altitude above surface)
+; Entry velocities are scaled relative to 2×VS (≈51532 fps), and ranges are
+; scaled relative to half Earth's circumference (2700 NM).
 
 ; --- Lift-to-Drag Ratio Bounds and Increments ---
 
