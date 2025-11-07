@@ -2512,7 +2512,7 @@ VREFER		DEC	.019288		# 994 fps (low-speed terminal phase)
 # DEFINED BY EQUALS
 
 DEC15		=	LOW4		# Decimal 15 for bit masking operations
-#GAMMAL1	=	22D		# (Commented out) Flight path angle limit
+#GAMMAL1	=	22D
 
 ; --- Range Error Saturation ---
 ; Maximum range error value used when spacecraft has passed the target (GONEPAST=1).
@@ -2530,7 +2530,7 @@ MAXRNG		2OCT	1663106755	# DNRNGERR = 9999.9 NM if GONEPAST=1
 ; --- Common Mathematical Constants ---
 
 BARELY1		=	NEARONE		# 1.0 - 1bit (shared with DISK, DANCE routines)
-#1BITDP					# (Commented) 1-bit DP value (defined in VECPOINT)
+#1BITDP					# COMMON TO BOTH DISK AND DANCE. DEFND IN VECPOINT.
 
 ; --- Fractional Constants ---
 
