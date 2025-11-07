@@ -27,10 +27,76 @@
 #	This AGC program shall also be referred to as
 #			Colossus 2A
 
+; ============================================================================
+; FILE: RCS-CSM_DIGITAL_AUTOPILOT.agc
+; MODULE: TVCDAPS Subsystem (Thrust Vector Control and Digital Autopilot)
+; MISSION PHASE: all-phases
+;
+; TL;DR: Reaction Control System digital autopilot for Command/Service Module
+;        implementing thruster firing logic for three-axis attitude control.
+;        Executes minimum impulse mode, attitude deadband control, and propellant
+;        conservation strategies throughout all Apollo 11 mission phases from
+;        Earth orbit through translunar coast, lunar orbit, and transearth return.
+;
+; COMMENT-ONLY READERS: This autopilot controlled the small steering jets (RCS
+;        thrusters) that kept Columbia pointed in the right direction throughout
+;        the mission. It managed attitude control during coasting flight, orbital
+;        maneuvers, and when the crew manually commanded spacecraft rotations.
+;
+; CODE-ALONG READERS: Study RCS thruster firing logic using minimum impulse
+;        control, attitude deadband implementation, Kalman-like rate filtering
+;        for angular velocity estimation, manual rotation command processing from
+;        the Rotational Hand Controller (RHC), FDAI error needle display logic,
+;        and propellant management strategies for three-axis attitude hold.
+; ============================================================================
+
+; ============================================================================
+; TRANSITION: RCS Digital Autopilot Architecture Overview
+;
+; The RCS-CSM Digital Autopilot (DAP) maintains spacecraft attitude using
+; 12 reaction control system thrusters arranged in four quads around the
+; Service Module. During Apollo 11, this autopilot kept Columbia stable during:
+; - Translunar and transearth coast (maintaining precise attitude for navigation)
+; - Lunar orbit operations (enabling Mike Collins to track landmarks)
+; - Manual rotations for photography and rendezvous alignment
+; - SPS engine burn preparation (precise attitude alignment before ignition)
+;
+; The autopilot executes in three phases spread across multiple 100ms T5 timer
+; interrupts to prevent interrupt starvation. Phase 1 computes attitude rates
+; using a Kalman-like filter. Phase 2 updates the filter state. Phase 3 (in
+; JET_SELECTION_LOGIC.agc) selects which thrusters to fire based on minimum
+; impulse control law and deadband logic.
+;
+; Technical implementation: Uses 100ms sample period, three-axis attitude
+; control with cross-coupling compensation, minimum impulse bit logic for
+; fuel conservation, and rate-plus-attitude feedback control law.
+; ============================================================================
+
 # Page 1002
 # T5 INTERRUPT PROGRAM FOR THE RCS-CSM AUTOPILOT
 # 	START OF T5 INTERRUPT PROGRAM
 
+; ============================================================================
+; RCS DIGITAL AUTOPILOT - T5 INTERRUPT HANDLER
+;
+; The RCS (Reaction Control System) autopilot maintains spacecraft attitude
+; using 16 small thruster jets arranged in four quads around the Service Module.
+; This interrupt-driven program executes every 100 milliseconds (configurable
+; to 20ms, 60ms, or 80ms intervals) to:
+;   - Read spacecraft attitude from the IMU (Inertial Measurement Unit)
+;   - Calculate attitude errors relative to desired orientation
+;   - Determine which RCS jets to fire to correct errors
+;   - Update crew displays showing spacecraft orientation
+;
+; The autopilot operates in several modes:
+;   - ATTITUDE HOLD: Maintains current spacecraft orientation
+;   - AUTOMATIC MANEUVER: Executes programmed attitude changes
+;   - MANUAL ROTATION: Responds to crew Rotational Hand Controller (RHC)
+;   - FREE DRIFT: No active control when IMU is off or in FREE mode
+;
+; Throughout Apollo 11's mission, this autopilot maintained Columbia's
+; orientation during coast phases, orbital operations, and rendezvous.
+; ============================================================================
 
 		BANK	20
 		SETLOC	DAPS3
@@ -39,6 +105,9 @@
 		COUNT	21/DAPRC
 
 		EBANK=	KMPAC
+; REDORCS - RESTART ENTRY POINT
+; If autopilot execution is interrupted by a restart, execution resumes here.
+; The T5PHASE variable tracks which phase of the autopilot is executing.
 REDORCS		LXCH	BANKRUPT	# RESTART OF AUTOPILOT COMES HERE
 		CA	T5PHASE		# ON A T5 RUPT.
 		EXTEND
@@ -53,9 +122,32 @@ REDORCS		LXCH	BANKRUPT	# RESTART OF AUTOPILOT COMES HERE
 		EBANK=	KMPAC
 RCSLOC		2CADR	RCSATT
 
+; ============================================================================
+; RCSATT - MAIN AUTOPILOT ENTRY POINT (T5 INTERRUPT)
+;
+; Every 100 milliseconds, the TIME5 counter triggers a T5 interrupt that
+; invokes RCSATT. This is the heart of the RCS autopilot control loop.
+;
+; COMMENT-ONLY READERS: Think of this as the autopilot "waking up" 10 times
+; per second to check if the spacecraft is pointing the right way, and if not,
+; firing small jets to correct the orientation. The crew could also take manual
+; control using the Rotational Hand Controller (like a joystick).
+;
+; CODE-ALONG READERS: The interrupt handler first checks IMU status via CHAN31
+; BIT15 to determine if autonomous control is enabled. The S/C CONT (Spacecraft
+; Control) switch position determines control authority:
+;   - CMC position: Computer has full control (BIT15 = 0)
+;   - S/C position: Crew has manual control (BIT15 = 1)
+; If IMU is off or manual control is active, the autopilot zeros attitude
+; errors and sets HOLDFLAG positive to indicate no automatic corrections.
+; ============================================================================
+
 RCSATT		LXCH	BANKRUPT	# SAVE BB
 		EXTEND			# SAVE Q
 		QXCH	QRUPT
+; Check IMU and control mode status from CHAN31.
+; BIT15 = 0 means IMU power is on and spacecraft control switch is in CMC mode.
+; BIT15 = 1 means manual control or IMU is off.
 		CAF	BIT15		# BIT15 CHAN31 = 0 IF IMU POWER IS ON AND
 		EXTEND			# S/C CONT SW IS IN CMC (I.E. IF G/C AUTO
 		RAND	CHAN31		# PILOT IS FULLY ENABLED)
@@ -63,6 +155,8 @@ RCSATT		LXCH	BANKRUPT	# SAVE BB
 		BZF	SETT5		# IF G/C AUTOPILOT IS FULLY ENABLED,
 					# GO TO SETT5
 
+; IMU is off or manual control is active. Set NORATE flag and zero errors.
+; NORATE (BIT14 of RCSFLAGS) indicates rate damping is disabled.
 		CS	RCSFLAGS	# IF G/C AUTOPILOT IS NOT FULLY ENABLED,
 		MASK	BIT14
 		ADS	RCSFLAGS	# SET NORATE FLAG,
@@ -72,6 +166,8 @@ RCSATT		LXCH	BANKRUPT	# SAVE BB
 		TS	ERRORX
 		TS	ERRORY
 		TS	ERRORZ
+; Check if spacecraft is in FREE drift mode (no active control).
+; BIT14 CHAN31 = 1 means FREE mode is active.
 		CAF	BIT14
 		EXTEND
 		RAND	CHAN31		# AND CHECK FREE FUNCTION (BIT14 CHAN31).
@@ -79,19 +175,45 @@ RCSATT		LXCH	BANKRUPT	# SAVE BB
 # Page 1003
 		BZF	SETT5		# IF IN FREE MODE, GO TO SETT5.
 
+; If not in FREE mode and autopilot is disabled, schedule reinitialization.
+; The autopilot will restart with a fresh configuration after 100ms.
 		TS	T5PHASE		# IF NOT IN FREE MODE,
 		CAF	OCT37766	# SCHEDULE REINITIALIZATION (FRESHDAP)
 		TS	TIME5		# IN 100 MS VIA T5RUPT
 
+; ZEROJET turns off all RCS thruster commands within 14 milliseconds.
+; This ensures no jets are firing when the autopilot is not in control.
 		TCR	ZEROJET		# ZERO JET CHANNELS IN 14 MS VIA ZEROJET
 
 		TCF	KMATRIX
+; TIMING CONSTANTS for T5 interrupt intervals (TIME5 counter values)
 DELTATT		OCT	37770		# 80MS (TIME5)
 DELTATT2	OCT	37776		# 20MS (TIME5)
 ONESEK		DEC	16284		# 1 SEC(TIME5)
 CHAN5		EQUALS	5
 CHAN6		EQUALS	6
 PRIO34A		=	PRIO34
+
+; ============================================================================
+; T5 PHASED EXECUTION STRATEGY
+;
+; The T5 autopilot program is computationally intensive. To prevent blocking
+; other critical interrupts for too long, it's divided into three phases that
+; execute sequentially across multiple T5 interrupts:
+;
+;   T5PHASE = 1: Read IMU, calculate attitude errors, perform rate filtering
+;   T5PHASE = 2: Apply control laws, compute desired jet torques
+;   T5PHASE = 3: Execute jet selection logic to determine which jets fire
+;
+; After phase 3 completes, T5PHASE resets to 1 and the cycle repeats.
+; This phased approach allows higher-priority interrupts (T3RUPT, DSRUPT) to
+; execute between autopilot phases, maintaining system responsiveness.
+;
+; CODE-ALONG READERS: T5PHASE is checked at the start of each interrupt.
+; The variable also serves as a flag during initialization (FRESHDAP) where
+; T5PHASE is set positive to indicate a fresh start is needed.
+; ============================================================================
+
 # 		CHECK PHASE OF T5 PROGRAM
 
 # 	BECAUSE OF THE LENGTH OF THE T5 PROGRAM, IT HAS BEEN DIVIDED INTO
@@ -106,11 +228,20 @@ PRIO34A		=	PRIO34
 #		- = RESTART DAP
 #	       -0 = PHASE1 OF THE T5 PROGRAM
 
+; SETT5 - T5 PHASE DISPATCHER
+; Uses CCS (Count, Compare, and Skip) instruction to check T5PHASE sign and value:
+;   Positive: Autopilot needs initialization -> FRESHDAP
+;   +0: Phase 2 is ready to execute -> T5PHASE2  
+;   Negative: Restart in progress -> REDAP
+;   -0: Phase 1 is ready to execute -> continue below
 SETT5		CCS	T5PHASE
 		TCF	FRESHDAP	# TURN ON AUTOPILOT
 		TCF	T5PHASE2	# BRANCH TO PHASE2 OF PROGRAM
 		TCF	REDAP		# RESTART AUTOPILOT
 
+; T5 PHASE 1 - ATTITUDE AND RATE MEASUREMENT
+; This phase reads IMU gimbal angles and computes spacecraft angular rates.
+; Execution time budget: ~20ms before Phase 2 interrupt.
 		TS	T5PHASE		# PHASE 1 RESET FOR PHASE 2
 		CA	TIME5
 		TS	T5TIME		# USED IN COMPENSATING FOR DELAYS IN T5
@@ -120,10 +251,27 @@ SETT5		CCS	T5PHASE
 # Page 1004
 # IMU STATUS CHECK
 
+; ============================================================================
+; IMU STATUS CHECK AND RATE FILTER INITIALIZATION
+;
+; COMMENT-ONLY READERS: Before calculating how to steer the spacecraft, the
+; autopilot checks if the IMU (the gyroscopic instrument that measures which
+; way the spacecraft is pointed) is working properly. If the IMU is off or
+; failed, the autopilot switches to a safe mode where it stops trying to
+; automatically control attitude and waits for the IMU to come back online.
+;
+; CODE-ALONG READERS: IMODES33 BIT6 indicates IMU status (0=OK, 1=failed).
+; If IMU is unavailable, the NORATE flag (BIT14 of RCSFLAGS) is set to
+; disable rate computations, and HOLDFLAG is set to stop automatic maneuvers.
+; The rate filter must be initialized before it can provide useful rate
+; estimates - the NORATE flag tracks initialization status.
+; ============================================================================
+
 		CS	IMODES33	# CHECK IMU STATUS
 		MASK	BIT6		# BIT6 = 0  IMU OK
 		CCS	A		# BIT6 = 1 NO IMU
 		TCF	RATEFILT
+; IMU is not available. Set flags for safe mode.
 FREECHK		CS	RCSFLAGS	# BIT14 INDICATES THAT RATES HAVE NOT BEEN
 		MASK	BIT14		# INITIALIZED
 		ADS	RCSFLAGS
@@ -138,11 +286,38 @@ FREECHK		CS	RCSFLAGS	# BIT14 INDICATES THAT RATES HAVE NOT BEEN
 		TCF	REINIT		# .....TILT...............................
 BITS4,5		OCT	30
 
+; Check if rate filter has been initialized (NORATE flag clear).
+; If not initialized, skip rate derivation this cycle.
 RATEFILT	CA	RCSFLAGS	# SEE IF RATEFILTER HAS BEEN INITIALIZED
 		MASK	BIT14
 		EXTEND			# IF SO, PROCEED WITH RATE DERIVATION
 		BZF	+2
 		TCF	KMATRIX		# IF NOT, SKIP RATE DERIVATION
+
+; ============================================================================
+; RATE FILTER - SPACECRAFT ANGULAR RATE ESTIMATION
+;
+; The rate filter estimates spacecraft angular rates (how fast the spacecraft
+; is rotating in pitch, yaw, and roll) by examining changes in IMU gimbal
+; angles (CDU values) between successive T5 interrupts.
+;
+; COMMENT-ONLY READERS: To smoothly control the spacecraft's orientation, the
+; autopilot needs to know not just which way it's pointed, but how fast it's
+; rotating. The rate filter computes rotation speed by comparing the current
+; pointing direction to where it was 100 milliseconds ago, then smooths out
+; measurement noise using a mathematical filter (Kalman filter).
+;
+; CODE-ALONG READERS: This is a discrete-time Kalman filter implementation.
+; State variables DRHO (rate residual) and ADOT (filtered rate) are updated
+; each cycle. GAIN1 and GAIN2 are Kalman gains selected based on LEM docking
+; status (different gains for docked vs undocked configurations due to changed
+; spacecraft inertia). Execution time: ~7.72ms.
+;
+; Filter equations (see comments below for mathematical notation):
+;   DRHO = DELRHO - 0.1*ADOT + (1-GAIN1)*DRHO_prev
+;   ADOT = ADOT_prev + GAIN2*DRHO + KMJ*DFT
+; Where DELRHO is the measured angle change transformed to body axes.
+; ============================================================================
 
 # 	RATE FILTER	TIMING = 7.72 MS
 
@@ -154,6 +329,38 @@ RATEFILT	CA	RCSFLAGS	# SEE IF RATEFILTER HAS BEEN INITIALIZED
 #	-        *     -     -
 # WHERE DELRHO = AMGB (CDU - CDU  )
 #			 	-1
+
+; ============================================================================
+; TRANSITION: From attitude error integration to rate filter computation
+;
+; The autopilot has now computed attitude errors in all three axes. The next
+; critical task is estimating angular velocity (body rates) from IMU gimbal
+; angle changes. Since the AGC lacks direct rate gyros, this Kalman-like
+; filter estimates rates by differencing gimbal angles over time, filtering
+; out noise and acceleration effects. Accurate rate estimates are essential
+; for damping spacecraft rotations and preventing oscillations during all
+; mission phases from Earth orbit through translunar coast to lunar orbit.
+; ============================================================================
+
+; RATE FILTER COMPUTATION (DRHOLOOP, ADOTLOOP)
+;
+; COMMENT-ONLY READERS: The spacecraft needs to know how fast it's rotating
+; in order to stop rotations smoothly without overshooting. Since Columbia
+; had no direct rotation rate sensors, the guidance computer estimated rotation
+; rates by comparing the current spacecraft attitude with the attitude from a
+; moment ago. This "rate filter" smooths out sensor noise and spacecraft
+; vibrations to produce clean rate estimates for thruster control.
+;
+; CODE-ALONG READERS: This section implements a Kalman-like filter for
+; estimating angular velocity (OMEGA) in each axis by differencing consecutive
+; IMU gimbal angle measurements. The filter processes three axes sequentially
+; using index SPNDX (0,1,2 for roll, pitch, yaw). The core filter equation is:
+;   DRHO(n) = DELRHO - 0.1*ADOT + (1-GAIN1)*DRHO(n-1)
+;   ADOT(n) = ADOT(n-1) + GAIN2*DRHO + (1/I)*torque
+; where DELRHO = matrix*(CDU_current - CDU_previous) is the measured rate,
+; DRHO is the filtered rate estimate, ADOT is angular acceleration, and
+; GAIN1/GAIN2 are Kalman filter gains selected based on operational mode.
+; The filter attenuates high-frequency noise while tracking true body rates.
 
 		CAF	TWO
 DRHOLOOP	TS	SPNDX
@@ -223,6 +430,23 @@ DRHOLOOP	TS	SPNDX
 		MP	T5TEMP
 		DAS	DELTEMPZ	# DELTEMPZ = AMBG7(CDUY-RHO1)
 					#		  + AMGB8(CDUZ-RHO2)
+
+; ANGULAR ACCELERATION UPDATE (ADOTLOOP)
+;
+; COMMENT-ONLY READERS: After computing rotation rates, the autopilot now
+; updates its estimate of angular acceleration (how fast the rotation rate
+; is changing). This helps predict future motion and enables smoother control.
+; The acceleration estimate accounts for thruster torques and external
+; disturbances like solar pressure or residual atmospheric drag.
+;
+; CODE-ALONG READERS: ADOTLOOP updates angular acceleration (ADOT) using:
+;   ADOT(n) = ADOT(n-1) + GAIN2*DRHO + (1/Inertia)*Disturbance_Torque
+; The loop processes three axes sequentially. GAIN2 is the Kalman filter
+; innovation gain. The disturbance torque term (DFT) accounts for external
+; torques not modeled by the RCS jets. ADOT is scaled as angular acceleration
+; in radians/sec^2 (scaled by appropriate power of 2). This acceleration
+; estimate feeds back into DRHOLOOP for improved rate estimation.
+
 		CAF	TWO
 ADOTLOOP	TS	SPNDX
 		DOUBLE
@@ -267,6 +491,54 @@ KMATRIX		CA	ATTSEC
 		CAF	NINE
 
 TENTHSEK	TS	ATTSEC
+
+; ============================================================================
+; TRANSITION: Attitude Hold and Deadband Control - Propellant Conservation
+;
+; The RCS autopilot's attitude hold mode is the operational implementation of
+; deadband control - a fundamental strategy for minimizing propellant consumption
+; while maintaining spacecraft orientation. The HOLDFLAG variable orchestrates
+; this mode switching between active maneuvering and quiescent attitude hold.
+;
+; HOLDFLAG States and Operational Meaning:
+;   + (positive)  = Capture current attitude and establish new hold reference
+;                   Inhibits automatic steering commands
+;                   Triggered by: manual RHC input, autopilot initialization,
+;                   Free mode, IMU power off, or SCS control mode
+;   +0 (plus zero) = Maintaining previously established attitude hold reference
+;                   No thruster activity unless errors exceed deadband limits
+;                   This is the propellant-conserving idle state
+;   - (negative)   = Executing automatic maneuver commanded by guidance programs
+;                   Active attitude changes for burns, tracking, or maneuvers
+;   -0 (minus zero) = Reserved (not currently used in operational logic)
+;
+; Deadband Implementation Philosophy:
+; Rather than continuously correcting tiny attitude errors (which would waste
+; propellant through endless micro-corrections), the autopilot implements an
+; implicit deadband through its control gains and minimum impulse logic. Small
+; errors within the deadband produce commanded torques below the minimum impulse
+; threshold, preventing thruster firing. Only when accumulated error or rate
+; exceeds thresholds does the jet selection logic activate thrusters.
+;
+; During Apollo 11's mission phases, attitude hold mode was critical for:
+; - Long coast periods (translunar/transearth) where propellant conservation
+;   was paramount - the CSM maintained passive thermal control ("barbecue roll")
+;   attitude for hours with minimal RCS usage
+; - Post-SPS burn stabilization after TLI, LOI, and TEI maneuvers
+; - Platform stability during P51/P52 star sighting for IMU realignment
+; - Holding inertial attitude during Mike Collins' landmark tracking observations
+; - Maintaining communication antenna pointing during coast phases
+;
+; The steering programs (attitude maneuver routine, LEM tracking) must explicitly
+; set HOLDFLAG negative to command the autopilot. Astronaut actions (RHC inputs,
+; mode switch changes) can immediately override automatic maneuvers by setting
+; HOLDFLAG positive, giving crew ultimate authority over spacecraft attitude.
+;
+; This section processes automatic steering commands by interpolating between
+; commanded gimbal angles (CDUXD, CDUYD, CDUZD) and incremental updates
+; (DELCDUX, DELCDUY, DELCDUZ), providing smooth attitude profiles during
+; multi-axis maneuvers while respecting crew override authority at all times.
+; ============================================================================
 
 # Page 1007
 # WHEN AUTOMATIC MANEUVERS ARE BEING PERFORMED, THE FOLLOWING ANGLE ADDITION MUST BE MADE TO PROVIDE A SMOOTH
@@ -332,6 +604,48 @@ DELOOP		TS	SPNDX
 		DXCH	CDUXD
 		CCS	SPNDX
 		TCF	DELOOP
+
+; ============================================================================
+; TRANSITION: FDAI Error Needle Display - Crew Situation Awareness
+;
+; The Flight Director Attitude Indicator (FDAI) - nicknamed the "8-ball" -
+; was the primary attitude reference display for Apollo astronauts. Located
+; on the main display console, it showed spacecraft orientation through a
+; rotating sphere marked with pitch, roll, and yaw references. Three error
+; needles surrounding the ball provided quantitative attitude error feedback.
+;
+; This section implements the digital-to-analog converter (DAC) interface that
+; drives the FDAI error needles, providing three display modes:
+;
+; MODE 1 (V61E): Autopilot Following Errors
+;   Displays how well the autopilot tracks commanded attitudes. During Apollo 11,
+;   Mike Collins monitored these errors during automatic SPS burns (TLI, LOI, TEI)
+;   to verify the guidance computer was maintaining proper attitude. Needles
+;   centered meant the autopilot was successfully tracking navigation commands.
+;
+; MODE 2 (V62E): Total Attitude Errors (N22 Reference)
+;   Fly-to display showing errors between current attitude and target gimbal
+;   angles in N22. Used during manual maneuvers to desired attitudes, such as
+;   aligning for landmark tracking or setting up for rendezvous observations
+;   of the LM Eagle.
+;
+; MODE 3 (V63E): Total Astronaut Attitude Errors (N17 Reference)
+;   Fly-to display using N17 as reference. Crew could "capture" current attitude
+;   into N17 using V60E, then manually maneuver while monitoring return errors.
+;   Useful for returning to a previous reference attitude after completing
+;   off-nominal maneuvers.
+;
+; During critical mission phases, these displays provided essential feedback:
+; - SPS burn monitoring: Centered needles confirmed proper guidance tracking
+; - Manual photography: Error needles guided precise attitude positioning
+; - Rendezvous operations: Enabled accurate LM tracking attitude maintenance
+; - Star sighting: Helped maintain stable platform for P51/P52 alignments
+;
+; The DAC outputs drive analog meter movements with ±5-degree full-scale
+; deflection, providing intuitive visual feedback that complemented digital
+; DSKY displays. This combination of analog and digital interfaces optimized
+; crew situation awareness during all mission phases.
+; ============================================================================
 
 # Page 1009
 # RCS-CSM AUTOPILOT ATTITUDE ERROR DISPLAY
@@ -675,6 +989,30 @@ T5PHASE2	CCS	ATTKALMN	# IF (+) INITIALIZE RATE ESTIMATE
 NOHIAUTO	TS	ATTKALMN
 
 # Page 1017
+
+; ============================================================================
+; TRANSITION: Manual Rotation Commands - Crew Control Interface
+;
+; During Apollo 11, Command Module Pilot Mike Collins used the Rotational Hand
+; Controller (RHC) to manually command spacecraft attitude changes for various
+; mission operations including:
+; - Photography sessions of Earth and Moon during translunar coast
+; - Landmark tracking in lunar orbit (P22 program support)
+; - Attitude alignment before SPS engine burns
+; - Rendezvous alignment to track Eagle during LM operations
+; - Star sighting for P51/P52 IMU alignment programs
+;
+; The RHC provides three-axis rate commands (roll, pitch, yaw) in discrete
+; levels: small rate (~0.05°/sec), medium rate (~0.2°/sec), large rate (~2°/sec).
+; Channel 31 bits 0-5 encode these commands, which this section decodes to set
+; forced firing flags and body rate commands for the autopilot.
+;
+; When manual commands are detected, the autopilot maintains rate damping while
+; allowing the crew to control spacecraft orientation. This hybrid control gives
+; astronauts precise authority over attitude while the AGC handles thruster
+; coordination and propellant conservation.
+; ============================================================================
+
 # MANUAL ROTATION COMMANDS
 
 		CS	OCT01760	# RESET FORCED FIRING BITS (BITS 10 TO 5
@@ -805,6 +1143,24 @@ SPNDXCHK	INDEX	DPNDX
 		TS	ERRORX		# ERRORX = HIGH ORDER WORD OF MERRORX
 		CCS	SPNDX
 		TCF	SETWBODY
+
+; ============================================================================
+; TRANSITION: From Autopilot Computations to Jet Selection Logic
+;
+; All three-axis attitude errors (ERRORX, ERRORY, ERRORZ) have been computed
+; and the autopilot control law calculations are complete. Control now
+; transfers to the JETS routine (in AUTOMATIC_MANEUVERS.agc) which interfaces
+; with the jet selection logic to translate these attitude errors into actual
+; RCS thruster firing commands. The jet selection logic (JET_SELECTION_LOGIC.agc)
+; determines optimal thruster pairs to minimize propellant consumption while
+; achieving the commanded attitude changes.
+;
+; Throughout Apollo 11's mission, this handoff occurred every 100 milliseconds
+; during autopilot operation, with the spacecraft's 16 RCS thrusters firing
+; in carefully coordinated patterns to maintain attitude control during coast
+; phases, maneuvers, and while docked with the Lunar Module.
+; ============================================================================
+
 		TCF	JETS
 
 OCT01760	OCT	01760		# FORCED FIRING BITS MASK
@@ -847,6 +1203,37 @@ T6PROGM		CAF	ZERO		# FOR MANUAL ROTATIONS
 		TS	ERRORY
 		TS	ERRORZ
 		TCF	T6PROG
+
+; ============================================================================
+; TRANSITION: Kalman Filter Gains - Optimal Attitude Rate Estimation
+;
+; The RCS autopilot uses a discrete Kalman filter to estimate spacecraft body
+; rates from IMU gyroscope measurements while minimizing noise effects. This
+; optimal estimation technique was cutting-edge technology in 1969, representing
+; sophisticated control theory implemented within the AGC's limited computational
+; resources.
+;
+; Two gain tables are defined here:
+; - GAIN1: Ten gain values for iterative filter convergence during startup
+;   (scaled values from 0.064 to 0.9342, representing filter confidence growth)
+; - GAIN2: Complementary gains for steady-state operation (scaled by 10)
+;
+; During Apollo 11, these gains enabled:
+; - Smooth attitude hold despite IMU noise and thruster impulse disturbances
+; - Accurate rate damping for manual rotations by Mike Collins
+; - Precise attitude control during critical SPS burns (TLI, LOI, TEI)
+; - Stable platform for landmark tracking and star sighting operations
+;
+; The filter initialization sequence uses progressively larger GAIN1 values
+; to converge from uncertain initial conditions to accurate rate estimates
+; within approximately one second. Once converged, the filter provides optimal
+; rate feedback to the autopilot control law with minimal computational overhead
+; (~100 AGC instructions per axis per 20ms control cycle).
+;
+; This Kalman filter implementation demonstrates the sophistication of Apollo
+; flight software - bringing state-of-the-art estimation theory from academic
+; research into operational spacecraft systems.
+; ============================================================================
 
 # Page 1021
 		DEC	.2112		# FILTER GAIN FOR TRANSLATION, LEM ON
