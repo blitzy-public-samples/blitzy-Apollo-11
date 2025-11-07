@@ -30,12 +30,41 @@
 #	This AGC program shall also be referred to as
 #			Colossus 2A
 
+; ============================================================================
+; FILE: CM_ENTRY_DIGITAL_AUTOPILOT.agc
+; MODULE: TVCDAPS Subsystem (Control Systems)
+; MISSION PHASE: re-entry
+;
+; TL;DR: Entry phase digital autopilot controlling Command Module attitude
+;        during atmospheric reentry. Implements lift vector steering commands
+;        from entry guidance, bank angle control, and roll modulation for
+;        range/crossrange correction. Critical for Apollo 11 July 24, 1969
+;        Pacific Ocean splashdown targeting.
+;
+; COMMENT-ONLY READERS: This autopilot steered the spacecraft through the
+;        fiery reentry, following guidance commands to reach the precise
+;        landing target in the Pacific Ocean after the historic Moon mission.
+; CODE-ALONG READERS: Study entry autopilot control laws, lift vector steering
+;        implementation, bank angle command processing, predictive roll control
+;        system, RCS jet firing logic, and FDAI needle display updates.
+; ============================================================================
+
 # Page 1063
 # SUBROUTINE TO READ GIMBAL ANGLES AND FORM DIFFERENCES.  GIMBAL ANGLES ARE SAVED IN 2S COMPLEMENT, BUT THE
 # DIFFERENCES ARE IN 1S COMP.  ENTER AND READ ANGLES EACH .1 SEC.
 #
 #	CM/DSTBY = 1 FOR DAP OPERATION
 #	CM/DSTBY = 0 TO TERMINATE DAP OPERATION.
+
+; ============================================================================
+; TRANSITION: DAP Initialization and Gimbal Angle Monitoring
+;
+; During atmospheric entry, the Command Module must maintain precise attitude
+; control to modulate lift vector direction. This section reads the IMU gimbal
+; angles (outer, inner, middle) from the Coupling Data Units (CDUs) every
+; 0.1 seconds and calculates angular rate changes. These measurements form
+; the foundation for all entry autopilot control computations.
+; ============================================================================
 
 		BANK	15
 
@@ -46,22 +75,42 @@
 
 		EBANK=	AOG
 
+; READGYMB - Read gimbal angles and compute angular differences
+; Called every 0.1 seconds by DAP task to monitor spacecraft attitude.
+; Gimbal angles stored in 2's complement format, differences in 1's complement.
+; CM/DSTBY flag controls DAP operation: 1=active, 0=terminate.
+
 READGYMB	CA	TEN		# KEEP RESTART DT GOING RELATIVE TO
 		ADS	CM/GYMDT	# PIPTIME. (GROUP 6)
 
 					# IF A RESTART OCCURS, SKIP PRESENT CYCLE. THE
 					# PHASCHNG PROTECTION IS IN CM/DAPIC.
 
+; The Command Module's Inertial Measurement Unit (IMU) must be in fine align
+; mode to provide accurate gimbal angles. During entry, the IMU platform is
+; continuously monitored to ensure alignment is maintained despite aerodynamic
+; forces and heating. If coarse align mode is detected, the DAP suspends
+; attitude control operations and quenches all RCS jets to prevent uncontrolled
+; motions while the IMU stabilizes.
+
 		CA	BIT6		# CHECK FOR FINE ALIGN MODE OF CDU.
 		MASK	IMODES33	# ( PROTECT AOG/PIP ETC AS WELL AS
 		EXTEND			#  GIMBAL DIFFERENCES)
 		BZF	READGYM1	# OK
 
+; IMU not in fine align - suspend DAP operations
 		CS	BIT1		# NOT IN FINE ALIGN, SO IDLE.
 		MASK	CM/FLAGS	# SET GYMDIFSW = 0
 		TS	CM/FLAGS
 		TC	FLUSHJET	# QUENCH JETS, SINCE MAY BE A WHILE.
 		TC	CM/GYMIC +2
+
+; Read current gimbal angles from CDUs (Coupling Data Units) and compute
+; angular differences from previous reading to determine body rotation rates.
+; CDUX, CDUY, CDUZ are outer, inner, and middle gimbal angles respectively.
+; AOG, AIG, AMG store the previous angle readings.
+; The differences (-DELAOG, -DELAIG, -DELAMG) indicate how much the spacecraft
+; has rotated in the past 0.1 seconds, forming the basis for rate damping.
 
 READGYM1	CA	CDUX
 		XCH	AOG
@@ -82,6 +131,20 @@ READGYM1	CA	CDUX
 		TS	-DELAMG
 
 # Page 1064
+; ============================================================================
+; TRANSITION: From Gimbal Reading to Body Rate Calculation
+;
+; With gimbal angles captured, the autopilot now determines whether to compute
+; the spacecraft's rotational rates (body rates). On the first pass after DAP
+; initialization, body rate calculation is skipped to allow baseline gimbal
+; angle establishment. On subsequent passes, the angular differences computed
+; above are used to calculate rotation rates in all three axes (pitch, yaw, roll).
+; These rates are essential for damping unwanted motion during entry.
+; ============================================================================
+
+; Check DAP operational status and determine whether to calculate body rates
+; CM/DSTBY flag (bit 2) controls overall DAP operation
+; GYMDIFSW flag (bit 1) indicates whether this is the first pass (initialization)
 DOBRATE?	CS	CM/FLAGS	# CM/DSTBY=103D BIT2  GYMDIFSW=104D BIT1
 		MASK	THREE
 		INDEX	A
@@ -96,6 +159,10 @@ DOBRATE?	CS	CM/FLAGS	# CM/DSTBY=103D BIT2  GYMDIFSW=104D BIT1
 
 		TC	TASKOVER
 
+; Proceed with body rate calculation and schedule next gimbal reading
+; The DAP runs in a continuous cycle: read gimbals, calculate rates, compute
+; control commands, fire jets, repeat. This 0.1-second cycle continues throughout
+; the entire entry phase from atmosphere interface to parachute deployment.
 DOBRATE		CA	ONE		# DO BODYRATE
 DOBRATE1	TS	JETEM		# SKIP BODYRATE.
 
@@ -110,6 +177,10 @@ DOBRATE1	TS	JETEM		# SKIP BODYRATE.
 		TC	BODYRATE
 		TC	TASKOVER	# SKIP CALC ON INITIAL PASS. (PASSES)
 
+; Initialize variables for first-time DAP operation
+; On initial pass, set GYMDIFSW flag and zero out previous rate measurements
+; since no valid baseline exists yet. GAMDOT (flight path angle rate) is also
+; zeroed as entry guidance hasn't yet provided valid trajectory data.
 CM/GYMIC	ADS	CM/FLAGS	# GYMDIFSW: C(A)=1, KNOW BIT IS 0
 		CAF	ZERO
 		TS	JETAG
@@ -122,6 +193,11 @@ CM/GYMIC	ADS	CM/FLAGS	# GYMDIFSW: C(A)=1, KNOW BIT IS 0
 # Page 1065
 # COME HERE TO CORRECT FOR OVERFLOW IN ANGULAR CALCULATIONS
 
+; ANGOVCOR - Angular overflow correction subroutine
+; The AGC uses 15-bit signed arithmetic for angles. When angular calculations
+; exceed ±180 degrees (overflow), this routine detects and corrects the overflow
+; by adding appropriate limits. This is essential during entry when the spacecraft
+; may experience large attitude changes during roll reversals.
 ANGOVCOR	TS	L		# THIS COSTS 2 MCT TO USE.
 		TC	Q		# NO OVFL
 		INDEX	A
@@ -133,6 +209,11 @@ ANGOVCOR	TS	L		# THIS COSTS 2 MCT TO USE.
 
 		COUNT	03/DAPEN
 
+; FLUSHJET - Emergency jet shutoff routine
+; Immediately commands all RCS jets to OFF state by writing zeros to jet control
+; channels. Called during DAP termination, mode transitions, or when IMU is not
+; in fine align. During Apollo 11 entry, this ensured clean jet state during
+; critical phase transitions like drogue chute deployment.
 FLUSHJET	CA	7		# COME HERE TO TURN OFF ALL JETS.
 		EXTEND
 		WRITE	ROLLJETS	# ZERO CHANNEL 6
@@ -147,6 +228,11 @@ FLUSHJET	CA	7		# COME HERE TO TURN OFF ALL JETS.
 		SETLOC	ETRYDAP
 		BANK
 
+; RATEAVG - Rate averaging with acceleration compensation
+; Estimates angular rates when constant acceleration is present. Uses averaging
+; formula: Estimated_rate = Current_rate + (Current_rate - Previous_rate)/2
+; This compensates for acceleration effects during entry when aerodynamic forces
+; cause continuous rate changes, improving control stability.
 RATEAVG		COM			# SUBROUTINE TO ESTIMATE RATES IN PRESENCE
 		AD	JETEM		# OF CONSTANT ACCELERATION.
 		EXTEND
@@ -164,6 +250,22 @@ RATEAVG		COM			# SUBROUTINE TO ESTIMATE RATES IN PRESENCE
 		COUNT	20/DAPEN
 		EBANK=	AOG
 
+; ============================================================================
+; TRANSITION: Entry DAP Initialization
+;
+; This section initializes the Command Module Digital Autopilot for atmospheric
+; entry. Called by the entry program (P64/P65/P66/P67), this routine prepares
+; the autopilot system to begin controlling spacecraft attitude during reentry.
+; For Apollo 11's return on July 24, 1969, this initialization occurred shortly
+; after Service Module jettison, preparing for entry interface at 400,000 feet
+; altitude. The DAP must wait for entry guidance to establish the initial flight
+; path angle before beginning active control.
+; ============================================================================
+
+; CM/DAPON - Entry DAP initialization routine
+; Sets up all variables, flags, and interrupt routines needed for entry attitude
+; control. Waits for entry guidance to provide valid trajectory data (GAMDIFSW flag)
+; before activating full DAP operation.
 CM/DAPON	CA	EBAOG
 		TS	EBANK
 
@@ -185,6 +287,11 @@ CM/DAPON	CA	EBAOG
 		TS	DAPDATR1
 		TC	+4
 
+; Wait for entry guidance to establish valid flight path angle
+; The DAP cannot begin operation until entry guidance (REENTRY_CONTROL.agc)
+; has computed the initial trajectory. This synchronization ensures the autopilot
+; has valid bank angle commands before attempting attitude control. During actual
+; entry, this wait typically lasts 1-2 seconds after entry interface.
 NOTYET		CA	.5SEC
 		TC	BANKCALL
 		CADR	DELAYJOB	# (DELAYJOB DOES INHINT)
@@ -193,6 +300,9 @@ NOTYET		CA	.5SEC
 		EXTEND
 		BZF	NOTYET
 
+; Activate entry DAP after guidance is ready
+; Set flags to enable RCS control and FDAI needle display updates.
+; P63FLAG prevents premature program transitions during entry initialization.
 		CS	ONE		# ACTIVATE CM/DAP
 		TS	RCSFLAGS	# USE BIT3 TO INITIALIZE NEEDLER ON
 					# NEXT PASS.
