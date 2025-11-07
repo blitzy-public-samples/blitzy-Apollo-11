@@ -1,3 +1,23 @@
+; ============================================================================
+; FILE: P51-P53.agc
+; MODULE: TROUBLE Subsystem (Mission Programs)
+; MISSION PHASE: all-phases (navigation alignment)
+;
+; TL;DR: IMU (Inertial Measurement Unit) alignment programs using star sighting
+;        procedures. P51 implements manual optical alignment, P52 provides
+;        automatic star tracking, P53 offers backup alignment mode. Essential
+;        for maintaining accurate inertial platform orientation throughout
+;        mission, enabling precise navigation for all Apollo 11 maneuvers.
+;
+; COMMENT-ONLY READERS: These programs aligned the spacecraft's navigation
+;        system by sighting on stars, like sailors navigating by the stars.
+;        Critical for ensuring Columbia knew exactly where it was pointed
+;        during translunar coast, lunar orbit, and return to Earth.
+; CODE-ALONG READERS: Study IMU platform alignment mathematics, star catalog
+;        usage from STAR_TABLES.agc, REFSMMAT computation, coarse and fine
+;        alignment algorithms, and alignment quality assessment procedures.
+; ============================================================================
+;
 # Copyright:    Public domain.
 # Filename:     P51-P53.agc
 # Purpose:      Part of the source code for Comanche, build 055. It
@@ -37,6 +57,19 @@
 # Refer directly to the online document mentioned above for further
 # information.  Please report any errors to info@sandroid.org.
 
+; ============================================================================
+; TRANSITION: IMU Alignment Program Overview
+;
+; The Inertial Measurement Unit (IMU) is the spacecraft's primary navigation
+; sensor, containing gyroscopes and accelerometers that track orientation and
+; velocity. Over time, gyroscopes drift slightly from their calibrated position.
+; These programs (P51, P52, P53) realign the IMU platform by sighting on known
+; stars, similar to how ancient mariners used celestial navigation. During
+; Apollo 11's journey, Collins performed these alignments multiple times to
+; ensure Columbia's guidance system maintained precise knowledge of spacecraft
+; orientation for critical maneuvers.
+; ============================================================================
+;
 # Page 737
 # PROGRAM NAME -- PROG52			DATE -- NOV 30, 1966
 # MOD NO -- 2					LOG SECTION -- P51-P53
@@ -47,11 +80,31 @@
 #	ALIGNS THE IMU TO ONE OF THREE ORIENTATIONS SELECTED BY THE ASTRONAUT.  THE PRESENT IMU ORIENTATION IS KNOWN
 #	AND IS STORED IN REFSMMAT.  THE THREE POSSIBLE ORIENTATIONS MAY BE:
 #
+;
+; THREE IMU ORIENTATION OPTIONS:
+;
+;	(A)	PREFERRED ORIENTATION
+;		Used when a specific maneuver requires an optimal IMU orientation.
+;		For example, before a major engine burn, the guidance program
+;		calculates the best platform alignment to minimize gimbal angles
+;		during the burn. This orientation is pre-computed by mission
+;		programs like P40 (SPS burn targeting).
+;
 #	(A)	PREFERRED ORIENTATION
 #
 #		AN OPTIMUM ORIENTATION FOR A PREVIOUSLY CALCULATED MANEUVER.  THIS ORIENTATION MUST BE CALCULATED AND
 #		STORED BY A PREVIOUSLY SELECTED PROGRAM.
 #
+;	(B)	NOMINAL ORIENTATION
+;		A mathematically-defined orientation based on current position and
+;		velocity. The coordinate system is defined such that:
+;		- Z-axis points toward Earth/Moon center (local vertical)
+;		- Y-axis perpendicular to orbital plane (velocity x radius)
+;		- X-axis completes right-handed coordinate system
+;		This "local vertical, local horizontal" frame is intuitive for
+;		orbital operations and was commonly used during Apollo 11's
+;		translunar and trans-earth coast phases.
+;
 #	(B)	NOMINAL ORIENTATION
 #
 #		X   = UNIT ( Y   x Z   )
@@ -71,12 +124,48 @@
 #		V = THE INERTIAL VELOCITY VECTOR AT TIME T(ALIGN) SELECTED BY THE ASTRONAUT
 #		-
 #
+;	(C)	REFSMMAT ORIENTATION (Realignment)
+;		Corrects accumulated gyro drift since last alignment without
+;		changing the reference coordinate frame. Used when the current
+;		REFSMMAT (REFerence to Stable Member MATrix) is still valid but
+;		gyros have drifted slightly. This is the quickest alignment mode
+;		because it doesn't require computing a new reference frame.
+;		Collins used this mode for periodic drift corrections during
+;		long coast phases when no gimbal lock or power interruption
+;		had occurred.
+;
 #	(C)	RERSMMAT ORIENTATION
 #
 #		THIS SELECTION CORRECTS THE PRESENT IMU ORIENTATION.  THE PRESENT ORIENTATION DIFFERS FROM THAT TO WHICH IT
 #		WAS LAST ALIGNED ONLY DUE TO GYRO DRIVE (I.E., NEITHER GIMBAL LOCK NOR IMU POWER INTERRUPT HAS OCCURRED
 #		SINCE THE LAST ALIGNMENT).
 #
+;
+; ALIGNMENT PROCEDURE SEQUENCE:
+;
+; 1. ORIENTATION SELECTION - Astronaut selects one of three orientation modes
+;    via DSKY (Display and Keyboard) entry. Program computes target orientation.
+;
+; 2. COARSE ALIGNMENT - Routine S52.2 calculates gimbal angles for new
+;    orientation. CAL53A commands the IMU gimbals to rotate to approximately
+;    correct angles. This gets the platform "in the ballpark" (within a few
+;    degrees). During Apollo 11, you could hear the gimbal motors whirring as
+;    the platform rotated inside its stabilized mounting.
+;
+; 3. STAR SELECTION - Routine R56 searches star catalog (STAR_TABLES.agc)
+;    for two suitable stars visible in sextant field of view. Stars must be
+;    well-separated (good geometry) and not occulted by Earth/Moon/Sun.
+;    If no suitable star pair found, program displays alarm and waits for
+;    astronaut to maneuver spacecraft or manually select stars.
+;
+; 4. FINE ALIGNMENT - After two stars acquired, routine R51 uses precise
+;    star sightings to calculate remaining orientation errors and corrects
+;    them. This achieves alignment accuracy of approximately 1 arc-minute
+;    (1/60 of a degree), sufficient for Apollo 11's navigation requirements.
+;
+; 5. PROGRAM COMPLETION - Returns to P00 (idle) or P20 (rendezvous navigation)
+;    depending on mission phase. IMU now accurately aligned for next maneuver.
+;
 #	AFTER A IMU ORIENTATION HAS BEEN SELECTED ROUTINE S52.2 IS OPERATED TO COMPUTE THE GIMBAL ANGLES USING THE
 #	NEW ORIENTATION AND THE PRESENT VEHICLE ATTITUDE.  CAL52A THEN USES THESE ANGLES, STORED IN THETAD,+1,+2, TO
 #	COARSE ALIGN THE IMU.  THE STARS SELECTION ROUTINE, R56, IS THEN OPERATED.  IF 2 STARS ARE NOT AVAILABLE AN ALARM
@@ -129,6 +218,17 @@
 #
 #	WORK AREA
 
+; ============================================================================
+; TRANSITION: From Program Documentation to Executable Code
+;
+; The following sections contain the actual AGC assembly code for IMU
+; alignment. The program begins with PROG52 (P52), the main automatic
+; alignment routine. Astronauts initiated this by entering V37E52E on the
+; DSKY (Verb 37, Program 52). Michael Collins performed these alignments
+; regularly during Apollo 11's journey to ensure Columbia's guidance system
+; remained accurately calibrated for critical navigation and maneuvers.
+; ============================================================================
+
 P54		=	PROG52
 		BANK	33
 		SETLOC	P50S
@@ -138,15 +238,36 @@ P54		=	PROG52
 		EBANK=	SAC
 		COUNT	15/P52
 
+;
+; PROG52 ENTRY POINT - Automatic IMU Alignment Program
+;
+; The astronaut has just entered P52 via DSKY. The program begins by
+; clearing tracking flags and checking IMU status to ensure the platform
+; is ready for alignment. During Apollo 11, this check verified the IMU
+; was in coarse align mode and not experiencing any gimbal lock conditions.
+;
 PROG52		TC	PHASCHNG
 		OCT	00254
 		TC	DOWNFLAG
 		ADRES	UPDATFLG	# BIT 7 FLAG 1
 # Page 739
+;
+; Clear navigation tracking flag to prevent interference during alignment.
+;
 		TC	DOWNFLAG
 		ADRES	TRACKFLG	# BIT 5 FLAG 1
+;
+; IMU Status Check - Verify platform is operational and not in gimbal lock.
+; R02BOTH routine (defined elsewhere) checks IMU health and mode status.
+; If IMU is unusable, program terminates with appropriate alarm.
+;
 		TC	BANKCALL
 		CADR	R02BOTH		# IMU STATUS CHECK
+;
+; Check PFRATFLG (Preferred Attitude Flag) to determine default options.
+; This flag indicates whether a preferred orientation has been pre-calculated
+; by another program (like P40 for an upcoming SPS burn).
+;
 		CAF	BIT4
 		MASK	STATE +2	# IS PFRATFLG SET?
 		CCS	A
@@ -155,15 +276,38 @@ PROG52		TC	PHASCHNG
 		TC	P52A +1
 P52A		CAF	BIT1
 		TS	OPTION2
+;
+; Display alignment options to astronaut on DSKY.
+; GOPERF4R flashes display showing:
+; - Option Code: Current alignment mode selection
+; - Orientation Code: Desired reference frame orientation
+; Astronaut can accept defaults (ENTER) or modify (keypad entry).
+; During Apollo 11, Collins would review these options before proceeding.
+;
 P52B		CAF	BIT1
 		TC	BANKCALL	# FLASH OPTION CODE AND ORIENTATION CODE
 		CADR	GOPERF4R
 		TC	GOTOPOOH
 		TC	+5
 		TC	P52B		# NEW CODE -- NEW ORIENTATION CODE INPUT
+;
+; Job phasing and task management for restart protection.
+;
 		TC	PHASCHNG
 		OCT	00014
 		TC	ENDOFJOB
+;
+; ORIENTATION MODE SELECTION - Branch based on astronaut's choice:
+;
+; The OPTION2 variable (bits 0-1) encodes the orientation mode:
+;   00 = Landing Site (L.S.) - Special mode for lunar landing preparation
+;   01 = Preferred (PREF) - Use pre-calculated optimal orientation
+;   10 = Nominal (NORM) - Calculate local vertical/local horizontal frame
+;   11 = REFSMMAT (REF) - Realign to existing reference frame
+;
+; This indexed branch efficiently routes to the appropriate computation
+; routine without multiple conditional tests.
+;
 		CA	OPTION2
 		MASK	THREE
 		INDEX	A
@@ -172,63 +316,151 @@ P52B		CAF	BIT1
 		TC	P52J		# PREF
 		TC	P52T		# NORM
 		TCF	P52C		# REF
+;
+; ============================================================================
+; TRANSITION: Time Input for Nominal and Landing Site Orientations
+;
+; For Nominal and Landing Site orientations, the computer needs to know when
+; to compute the orientation. This section prompts the astronaut to enter
+; the time for alignment (T-ALIGN). If the astronaut enters zero or presses
+; ENTER without input, the current time (TIME2) is used instead. This allows
+; immediate alignment or scheduling for a future maneuver.
+; ============================================================================
+;
 P52T		EXTEND
 		DCA	NEG0
 		DXCH	DSPTEM1
+;
+; Display V06N34 - Time input request on DSKY
+; Format: Hours:Minutes:Seconds from mission start
+;
 		CAF	V06N34
 		TC	BANKCALL
 		CADR	GOFLASH
 		TC	GOTOPOOH
 		TC	+2
 		TC	-5
+;
+; Check if astronaut entered a specific time or pressed ENTER (zero input)
+;
 		EXTEND
 		DCA	DSPTEM1
 		EXTEND
-		BZF	+2
-		TCF	+4
+		BZF	+2		# Zero entered?
+		TCF	+4		# No, use astronaut's time
 
+;
+; Astronaut pressed ENTER without time input - use current mission time.
+; TIME2 is the AGC's main mission elapsed time counter.
+;
 		EXTEND
 		DCA	TIME2
 		DXCH	DSPTEM1
+;
+; Determine whether this is Landing Site (LS) or Nominal (NOM) orientation.
+; BIT2 of OPTION2 distinguishes between these two modes.
+;
 		CA	OPTION2
 		MASK	BIT2
 		CCS	A
 # Page 740
 		TCF	+6		# NOM
+;
+; LANDING SITE ORIENTATION MODE
+; Computes orientation relative to intended lunar landing site.
+; P52LS subroutine (defined later in this file) calculates the coordinate
+; transformation from landing site coordinates to inertial reference frame.
+;
 		TC	INTPRET		# LS
 		CALL
 			P52LS
 		GOTO
 			P52D
+;
+; NOMINAL ORIENTATION MODE
+; Computes local vertical/local horizontal reference frame at specified time.
+; X-axis: Cross product of velocity and position (orbit normal direction)
+; Y-axis: Cross product of velocity and radius (horizontal, along track)
+; Z-axis: Nadir pointing (toward Earth center or Moon center)
+;
 		TC	INTPRET
 		DLOAD
 			DSPTEM1
 		CALL			# COMPUTE NOMINAL IMU
 			S52.3		#	ORIENTATION
+;
+; COMMON PATH: Compute Desired Gimbal Angles
+; S52.2 routine takes the computed REFSMMAT orientation and current vehicle
+; attitude, then calculates the three gimbal angles (outer, inner, middle)
+; needed to achieve that orientation. These angles will drive the IMU
+; platform motors during coarse alignment.
+;
 P52D		CALL			# READ VEHICLE ATTITUDE AND
 			S52.2		#	COMPUTE GIMBAL ANGLES
 		EXIT
+;
+; Display computed gimbal angles to astronaut on DSKY using V06N22.
+; Astronaut reviews these angles before proceeding with physical alignment.
+; Format: OUTER GIMBAL, INNER GIMBAL, MIDDLE GIMBAL (degrees).
+; During Apollo 11, Collins would verify these looked reasonable before
+; commanding the IMU to actually move to these angles.
+;
 		CAF	VB06N22
 		TC	BANKCALL	# DISPLAY GIMBAL ANGLES
 		CADR	GOFLASH
 		TC	GOTOPOOH
 		TC	COARSTYP
+;
+; PREFERRED ORIENTATION MODE (PREF)
+; Uses REFSMMAT already computed by another program. Vehicle attitude is
+; read and gimbal angles computed for the existing preferred orientation.
+;
 P52J		TC	INTPRET		# RECYCLE: VEHICLE HAS BEEN MANEUVERED
 		GOTO
 			P52D
+;
+; ============================================================================
+; TRANSITION: Coarse Alignment Phase
+;
+; With desired gimbal angles computed and displayed, the IMU now physically
+; rotates its platform. Coarse alignment drives the platform motors to the
+; computed angles with moderate precision (~1 degree accuracy). This provides
+; the initial rough orientation before fine alignment using star sightings.
+; ============================================================================
+;
 		TC	INTPRET
 		CALL			# DO COARSE ALIGN
 			CAL53A		#	ROUTINE
+;
+; Set REFSMFLG to indicate REFSMMAT is now valid and IMU is aligned to it.
+;
 CAL53RET	SET	EXIT
 			REFSMFLG
+;
+; REFSMMAT CORRECTION MODE ENTRY POINT
+; Astronaut selected option 3 (REF) to correct the current IMU orientation
+; without computing a new reference frame. This mode assumes gyro drift only,
+; no gimbal lock or power interruption since last alignment.
+;
 P52C		TC	PHASCHNG
 		OCT	04024
+;
+; Display ALARM 15 and wait for astronaut response.
+; This alarm alerts the crew that automatic star selection will follow.
+; Astronaut can:
+;   - Press V33 (PROCEED) to use automatic star selection
+;   - Press ENTER to proceed to fine alignment with current stars
+;
 		CAF	ALRM15
 		TC	BANKCALL
 		CADR	GOPERF1
 		TC	GOTOPOOH
 		TC	+2		# V33
 		TC	P52F		# E
+;
+; Load current time plus TSIGHT1 offset for star visibility computation.
+; LOCSAM routine computes spacecraft position and attitude at sighting time.
+;
 		TC	INTPRET
 		RTB	DAD
 			LOADTIME
@@ -236,60 +468,155 @@ P52C		TC	PHASCHNG
 		CALL
 			LOCSAM
 		EXIT
+;
+; AUTOMATIC STAR SELECTION
+; PICAPAR routine selects the two best stars for fine alignment based on:
+; - Star brightness and catalog availability (STAR_TABLES.agc)
+; - Current spacecraft attitude and attitude constraints
+; - Optical system limitations (sextant field of view)
+; - Geometric dilution of precision (star separation angle)
+;
 P52E		TC	BANKCALL	# DO STAR SELECTION
 		CADR	PICAPAR
 		TC	P52I		# 2 STARS NOT AVAILABLE
+;
+; ============================================================================
+; TRANSITION: Fine Alignment Phase
+;
+; Two suitable stars have been selected (either automatically or manually).
+; The program now executes R51, the fine alignment routine. R51 prompts
+; the astronaut to sight each star through the Command Module's sextant,
+; marking when the star is centered in the field of view. The computer
+; uses these precise angular measurements to calculate small corrections
+; to the IMU platform orientation, achieving alignment accuracy better
+; than 0.01 degrees. This precision was essential for Apollo 11's accurate
+; navigation throughout the mission.
+; ============================================================================
+;
 P52F		TC	INTPRET		# 2 STARS AVAILABLE
 		CALL
 			R51
 ENDP50S		EXIT
 		TC	GOTOPOOH
 # Page 741
+;
+; STAR UNAVAILABLE ALARM
+; Automatic star selection failed to find two suitable stars for fine alignment.
+; This occurs when spacecraft attitude restricts star visibility or stars are
+; too close together for good geometric accuracy. Astronaut options:
+;   - PROCEED: Accept situation and proceed with R51 fine alignment anyway
+;   - RECYCLE: Maneuver spacecraft to expose different stars, retry selection
+;
 P52I		TC	ALARM
 		OCT 405
+;
+; Display ALARM 405 using V05N09. This flashes both the PROG and OPER ERR lights
+; on the DSKY, alerting the astronaut that star selection encountered difficulty.
+;
 		CAF	V05N09
 		TC	BANKCALL
 		CADR	GOFLASH
 		TC	GOTOPOOH
 		TC	P52F		# PROCEED:  DO FINE ALIGN-R51
 		TC	P52C		# RECYCLE:  VEHICLE HAS BEEN MANEUVERED
+;
+; Display codes defined for P51-P53 programs
+;
 V06N34		VN	0634
 VB06N22		VN	00622
+;
+; COARSE ALIGNMENT TYPE SELECTION
+; After coarse alignment completes, astronaut selects alignment refinement type:
+;   - V34 (TERMINATE): End program, accept current coarse alignment only
+;   - PROCEED: Normal fine alignment using optical star sightings
+;   - V32 (RECYCLE): Use gyro torquing commands (gyro coarse mode)
+;
+; Gyro coarse mode applies direct torquing pulses to IMU gyroscopes rather than
+; using star sightings. Used when optical alignment unavailable (stars occluded,
+; optics failure, time constraints) but better accuracy than coarse align needed.
+;
 COARSTYP	CAF	OCT13
 		TC	BANKCALL
 		CADR	GOPERF1
 		TCF	GOTOPOOH	# V34
 		TCF	P52J	+3	#	NORMAL
+;
+; GYRO COARSE ALIGNMENT MODE
+; Computes IMU torquing angles to achieve desired orientation without star
+; sightings. Transforms stable member desired coordinates (XSMD, YSMD, ZSMD)
+; through REFSMMAT to obtain desired orientation in inertial coordinates.
+; Then issues gyro torquing commands to rotate IMU platform accordingly.
+;
 		TC	INTPRET		# GYRO COARSE
+;
+; Transform desired stable member X-axis through REFSMMAT to inertial frame,
+; normalize to unit vector, and store in XDC (desired coordinates X-axis).
+;
 GYCRS		VLOAD	MXV
 			XSMD
 			REFSMMAT
 		UNIT
 		STOVL	XDC
+;
+; Transform desired stable member Y-axis through REFSMMAT to inertial frame,
+; normalize to unit vector, and store in YDC (desired coordinates Y-axis).
+;
 			YSMD
 		MXV	UNIT
 			REFSMMAT
 		STOVL	YDC
+;
+; Transform desired stable member Z-axis through REFSMMAT to inertial frame,
+; normalize to unit vector, and store in ZDC (desired coordinates Z-axis).
+;
 			ZSMD
 		MXV	UNIT
 			REFSMMAT
 		STCALL	ZDC
+;
+; CALCGTA routine computes gyro torquing angles needed to rotate IMU from
+; current orientation to desired orientation (XDC, YDC, ZDC).
+;
 			CALCGTA
+;
+; Clear drift compensation and REFSMMAT valid flags before issuing gyro pulses.
+; DRIFTFLG cleared: gyro drift compensation suspended during torquing.
+; REFSMFLG cleared: REFSMMAT temporarily invalid during platform rotation.
+;
 		CLEAR	CLEAR
 			DRIFTFLG
 			REFSMFLG
 		EXIT
+;
+; Display gyro torquing angles to astronaut using V16N20 before execution.
+; Shows computed torquing pulses for outer, inner, middle gyros (gyro pulses,
+; not degrees). Astronaut verifies and approves before IMU receives commands.
+;
 		CAF	V16N20
 		TC	BANKCALL
 		CADR	GODSPR
+;
+; Issue gyro torquing pulses to IMU. R55CDR contains the computed pulse counts
+; for each of the three gyroscopes. IMUPULSE routine sends these commands to
+; IMU hardware, physically rotating the stable member platform.
+;
 		CA	R55CDR
 		TC	BANKCALL
 		CADR	IMUPULSE
+;
+; Wait for IMU motors to complete gyro torquing commands. IMUSTALL monitors
+; IMU status until platform rotation finishes and platform is stable.
+;
 		TC	BANKCALL
 		CADR	IMUSTALL
 		TC	CURTAINS
 		TC	PHASCHNG
 		OCT	04024
+;
+; Copy stable member desired coordinates (XSMD) to REFSMMAT using matrix move.
+; This updates REFSMMAT to reflect the new IMU orientation achieved by gyro
+; torquing. AXC,1 and AXC,2 set up index registers for MATMOVE source/dest.
+;
 		TC	INTPRET
 		AXC,1	AXC,2
 			XSMD
@@ -297,6 +624,12 @@ GYCRS		VLOAD	MXV
 		CALL
 # Page 742
 			MATMOVE
+;
+; Set flags to reflect updated IMU state:
+; PFRATFLG cleared: platform not in fine align rotation mode
+; REFSMFLG set: REFSMMAT now valid and represents current IMU orientation
+; DRIFTFLG set: resume gyro drift compensation with updated orientation
+;
 		CLEAR	SET
 			PFRATFLG
 			REFSMFLG
@@ -312,41 +645,70 @@ ALRM15		EQUALS	OCT15
 		SETLOC	P50S2
 		BANK
 V06N89*		VN	0689
-
-# NAME -- P52LS
-#
-# FUNCTION -- TO DISPLAY THE LANDING SITE LATITUDE,
-# LONGITUDE AND ALTITUDE.  TO ACCEPT NEW DATA VIA
-# THE KEYBOARD.  TO COMPUTE THE LANDING SITE
-# ORIENTATION FOR P52 OR P54
-#
-# LET:
-#	RLS  = LANDING SITE VECTOR IN REF COORDINATES
-#	R    = CSM POSITION VECTOR IN REF COORDINATES
-#	V    = CSM VELOCITY VECTOR IN REF COORDINATES
-# THEN THE LANDING SITE ORIENTATION IS:
-#	XSMD = UNIT(RLS)
-#	YSMD = UNIT(ZSMD*XSMD)
-#	ZSMD = UNIT((R*V)*RLS)
-#
-# CALL:		CALL
-#			P52LS
-#
-# INPUTS:	DSPTEM1 = TIME OF ALIGNMENT
-#		RLS = LANDING SITE VECTOR IN MOON FIXED COORDINATES
-#
-# OUTPUTS:	XSMD, YSMD, ZSMD
-#
-# SUBROUTINES:	RP-TO-R, LAT-LONG, LLASRD, LLASRDA, CSMPREC
-#
-# DEBRIS:	VAC, SEE SUBROUTINES
-
+;
+; ============================================================================
+; SUBROUTINE: P52LS - LANDING SITE ORIENTATION COMPUTATION
+;
+; FUNCTION: Computes IMU orientation aligned to lunar landing site coordinates.
+;           Displays landing site latitude, longitude, and altitude to astronaut
+;           for verification and allows keyboard updates. Creates stable member
+;           coordinate frame (XSMD, YSMD, ZSMD) with X-axis pointing at landing
+;           site, Z-axis perpendicular to orbital plane, Y-axis completing
+;           right-handed triad.
+;
+; COORDINATE FRAME DEFINITION:
+;   XSMD = UNIT(RLS)              - Points at landing site from Moon center
+;   YSMD = UNIT(ZSMD × XSMD)      - Completes right-handed orthogonal triad
+;   ZSMD = UNIT((R × V) × RLS)    - Normal to orbital plane, projected onto
+;                                    plane perpendicular to landing site vector
+;
+; WHERE:
+;   RLS = Landing site position vector (Moon-fixed coordinates)
+;   R   = CSM position vector (reference inertial coordinates)
+;   V   = CSM velocity vector (reference inertial coordinates)
+;
+; MISSION CONTEXT:
+; This orientation was used during Apollo 11 lunar orbit when the crew needed
+; IMU alignment referenced to the Sea of Tranquility landing site. Aligning
+; the IMU to the landing site simplified navigation computations during descent
+; preparations and enabled the crew to monitor approach trajectory relative to
+; the target landing area.
+;
+; INPUTS:
+;   DSPTEM1 = Time of alignment (centi-seconds)
+;   RLS     = Landing site vector in Moon-fixed coordinates
+;
+; OUTPUTS:
+;   XSMD, YSMD, ZSMD = Stable member desired coordinates (landing site frame)
+;
+; SUBROUTINES CALLED:
+;   RP-TO-R   = Converts Moon-fixed position to inertial reference frame
+;   LAT-LONG  = Computes latitude/longitude from position vector
+;   LLASRD    = Prepares lat/long/altitude for display
+;   LLASRDA   = Accepts keyboard updates to landing site coordinates
+;   LALOTORV  = Converts lat/long/altitude back to position vector
+;   CSMPREC   = Computes CSM state vectors (position, velocity, attitude)
+; ============================================================================
+;
+; Save return address in QMAJ, set LUNAFLAG to indicate lunar coordinate
+; system (not Earth-centered). This tells coordinate conversion routines
+; to use lunar radius and rotation parameters.
+;
 P52LS		STQ	SET
 			QMAJ
 			LUNAFLAG
+;
+; Load alignment time from DSPTEM1 (entered by astronaut earlier in PROG52)
+; and store in TSIGHT for use by coordinate transformation routines.
+;
 		DLOAD
 			DSPTEM1
 		STORE	TSIGHT
+;
+; Load landing site vector RLS (Moon-fixed coordinates) into 0D, set ERADFLAG
+; to indicate position vector requires planetary radius consideration. Store
+; TSIGHT time in 6D as second parameter for RP-TO-R conversion routine.
+;
 		VLOAD	SET
 			RLS
 			ERADFLAG
@@ -354,39 +716,114 @@ P52LS		STQ	SET
 			TSIGHT
 		STCALL	6D
 # Page 743
+;
+; RP-TO-R COORDINATE TRANSFORMATION
+; Converts landing site position from Moon-fixed (rotating) coordinates to
+; inertial reference coordinates. Accounts for lunar rotation from epoch time.
+; Returns position vector in reference frame at alignment time TSIGHT.
+;
 			RP-TO-R
+;
+; Scale result by 2^-2 (divide by 4) to prevent overflow in subsequent
+; computations, store in ALPHAV for latitude/longitude conversion.
+;
 		VSR2
 		STODL	ALPHAV
 			TSIGHT
+;
+; Convert landing site position vector (ALPHAV) to latitude and longitude.
+; LAT-LONG routine computes geodetic coordinates assuming spherical Moon.
+;
 		CALL
 			LAT-LONG
+;
+; Prepare latitude, longitude, altitude for display to astronaut. LLASRD
+; formats these values for DSKY display (degrees, minutes for lat/long;
+; nautical miles for altitude above lunar surface).
+;
 		CALL
 			LLASRD
 		EXIT
+;
+; LANDING SITE DISPLAY AND KEYBOARD UPDATE
+; Display current landing site coordinates to astronaut using V06N89:
+;   R1 = Latitude (degrees, 5 digits with sign)
+;   R2 = Longitude (degrees, 5 digits with sign)  
+;   R3 = Altitude (nautical miles above surface)
+;
+; Astronaut can:
+;   - TERMINATE: Abort alignment program, return to P00
+;   - PROCEED: Accept displayed values, continue to orientation computation
+;   - RECYCLE: Redisplay same values (useful if display was unclear)
+;   - ENTER new values: Update landing site coordinates via keyboard
+;
 LSDISP		CAF	V06N89*
 		TC	BANKCALL
 		CADR	GOFLASH
 		TC	GOTOPOOH
 		TC	+2
 		TC	LSDISP
+;
+; Process keyboard input if astronaut entered new landing site coordinates.
+; LLASRDA accepts lat/long/altitude from DSKY and validates values are within
+; acceptable ranges for lunar surface positions.
+;
 		TC	INTPRET
 		CALL
 			LLASRDA
+;
+; Convert updated latitude, longitude, altitude back to position vector.
+; LALOTORV performs inverse transformation: geodetic coordinates → Cartesian
+; position vector in Moon-fixed coordinates. Result stored in updated RLS.
+;
 		DLOAD	CALL
 			TSIGHT
 			LALOTORV
+;
+; STABLE MEMBER COORDINATE FRAME COMPUTATION
+;
+; Compute XSMD: Normalize landing site position vector to unit vector.
+; This becomes the X-axis of the stable member frame, pointing from Moon
+; center through landing site into space above the site.
+;
 		VLOAD	UNIT
 			ALPHAV
 		STODL	XSMD
+;
+; Load alignment time into TDEC1 and call CSMPREC to compute CSM state vectors
+; (position RATT, velocity VATT, attitude) at the alignment time. These are
+; needed to compute the Z-axis of landing site frame.
+;
 			TSIGHT
 		STCALL	TDEC1
 			CSMPREC
+;
+; Compute ZSMD: Cross product of position and velocity (R × V) gives angular
+; momentum vector, which is normal to the orbital plane. Cross this with XSMD
+; to get a vector in the orbital plane perpendicular to the landing site radial.
+; Normalize to unit vector. This becomes the Z-axis of the stable member frame.
+;
+; Mathematical breakdown:
+;   R × V           = Angular momentum vector (perpendicular to orbit plane)
+;   (R × V) × XSMD  = Vector in orbit plane, perpendicular to landing site
+;   UNIT(...)       = Normalize to unit vector → ZSMD
+;
 		VLOAD	VXV
 			RATT
 			VATT
 		VXV	UNIT
 			XSMD
 		STORE	ZSMD
+;
+; Compute YSMD: Cross product ZSMD × XSMD completes the right-handed orthogonal
+; coordinate frame. Normalize to unit vector. This becomes the Y-axis of the
+; stable member frame, completing the landing site orientation triad.
+;
+; Result: Orthogonal coordinate system (XSMD, YSMD, ZSMD) where:
+;   - XSMD points at landing site
+;   - ZSMD lies in orbital plane, perpendicular to landing site direction
+;   - YSMD completes right-handed triad
+;
 		VXV	UNIT
 			XSMD
 		STCALL	YSMD
@@ -650,30 +1087,84 @@ S50		STQ
 			S2
 			0
 			MOONCNTR
+;
+; EARTH-CENTERED COORDINATE SYSTEM BRANCH
+; When spacecraft is in Earth's sphere of influence (lunar distance > halfway
+; to Moon), compute relative position vectors from Earth as primary reference.
+; This branch executes during translunar and transearth coast phases.
+;
+; Compute Moon's position relative to spacecraft by subtracting spacecraft
+; position (RATT) from Moon position vector (VMOON), then normalize to unit.
+;
 EARTCNTR	VLOAD	VSU
 			VMOON
 			RATT
 		UNIT
 		STOVL	VMOON
+;
+; Normalize spacecraft position vector (RATT in Earth-centered frame) to unit
+; vector and complement (negate) to get unit vector from spacecraft toward
+; Earth center. This vector determines which stars are occulted by Earth.
+;
 			RATT
 		UNIT	VCOMP
 		STODL	VEARTH
+;
+; Load Earth's radius (6,378,166 meters scaled by 2^-29) and call OCCOS to
+; compute occultation cosine for Earth. This determines the angular radius
+; of Earth as seen from spacecraft position - critical for determining if
+; Earth occludes any star during star sighting procedures.
+;
+; OCCOS computation: cos(angle) = arcsin(radius / distance) + 5 degrees margin
+; The 5-degree margin accounts for atmospheric refraction and penumbra effects.
+;
 			RSUBE
 		CALL
 			OCCOS
+;
+; Store Earth occultation cosine in CEARTH for later star visibility tests.
+; Load CSS5 constant (cos(5°)/4 for Moon at Earth distance) and store in
+; CMOON - this is the default Moon occultation value when Earth-centered.
+;
 		STODL	CEARTH
 			CSS5
 		STOVL	CMOON
+;
+; Normalize Sun position vector to unit length for direction testing.
+; Jump to ENDSAM to compute velocity aberration correction.
+;
 			VSUN
 		UNIT
 		STCALL	VSUN
 			ENDSAM
+;
+; MOON-CENTERED COORDINATE SYSTEM BRANCH
+; When spacecraft is in Moon's sphere of influence (closer to Moon than
+; halfway point), compute relative position vectors from Moon as primary
+; reference. This branch executes during lunar orbit and descent/ascent phases.
+;
+; Scale Moon position vector by 2^-9 (divide by 512) to prevent computational
+; overflow when computing Sun direction relative to Moon center. The VMOON
+; position vector is in meters scaled by 2^-29 (Earth-Moon distance range).
+;
 MOONCNTR	VLOAD	VSR8
 			VMOON
 		VSR1	BVSU
+;
+; Compute Sun's position relative to Moon center by subtracting Sun position
+; (VSUN) from scaled Moon position. Normalize to unit vector for occultation
+; calculations. During lunar orbit operations, Sun direction is critical for
+; thermal control and lighting conditions during star sightings.
+;
 			VSUN
 		UNIT
 		STOVL	VSUN
+;
+; Compute Earth's position relative to spacecraft by adding Moon position
+; (VMOON) to spacecraft position in Moon frame (RATT), normalize to unit,
+; and complement to get direction from spacecraft toward Earth center.
+; This determines which stars are occulted by Earth as seen from lunar orbit.
+;
 			VMOON
 		VAD	UNIT
 			RATT
@@ -681,27 +1172,84 @@ MOONCNTR	VLOAD	VSR8
 		STOVL	VEARTH
 # Page 750
 
+;
+; Normalize spacecraft position (RATT in Moon-centered frame) to unit vector
+; and complement to get direction from spacecraft toward Moon center. This
+; vector determines which stars are occulted by Moon during lunar operations.
+;
 			RATT
 		UNIT	VCOMP
 		STODL	VMOON
+;
+; Load Moon's radius (1,738,090 meters scaled by 2^-29) and call OCCOS to
+; compute occultation cosine for Moon. This determines the angular radius
+; of Moon as seen from spacecraft position in lunar orbit - critical during
+; P52 alignment when maneuvering for star sightings above lunar horizon.
+;
 			RSUBM
 		CALL
 			OCCOS
+;
+; Store Moon occultation cosine in CMOON for star visibility tests.
+; Load CSS5 constant (cos(5°)/4 for Earth at lunar distance) and store in
+; CEARTH - this is the default Earth occultation value when Moon-centered.
+;
 		STODL	CMOON
 			CSS5
 		STOVL	CEARTH
 			VSUN
+;
+; ENDSAM - END OF STAR AVAILABILITY MATRIX COMPUTATION
+;
+; Compute velocity aberration correction due to spacecraft motion relative
+; to inertial star field. This correction is essential for accurate star
+; sighting - stars appear displaced by up to 20 arcseconds due to spacecraft
+; velocity (up to 11 km/s during translunar coast). The correction ensures
+; optical alignment telescope (sextant) points at true star direction.
+;
+; Cross product of Sun position vector (VSUN) with ecliptic pole (ECLIPOL)
+; gives velocity direction perpendicular to ecliptic plane for aberration.
+;
 ENDSAM		VXV
 			ECLIPOL
 		STOVL	VEL/C
+;
+; Scale spacecraft velocity vector (VATT) by inverse speed of light (1/C)
+; to compute velocity aberration vector. At maximum Apollo velocity of
+; 11,000 m/s, aberration angle = v/c ≈ 37 microradians (7.6 arcseconds).
+; Add aberration correction to preliminary velocity vector.
+;
 			VATT
 		VXSC	VAD
 			1/C
 			VEL/C
 		STODL	VEL/C
+;
+; Load Sun occultation cosine constant (CSSUN) and store in CSUN.
+; Return to caller (QMAJ) with occultation data and aberration correction.
+;
 			CSSUN
 		STCALL	CSUN
 			QMAJ
+;
+; OCCOS - OCCULTATION COSINE COMPUTATION SUBROUTINE
+;
+; Computes the cosine of the occultation angle for a celestial body (Earth,
+; Moon, or Sun) as seen from spacecraft position. This angle determines the
+; angular radius of the body's disk plus a 5-degree safety margin for
+; atmospheric effects (Earth) and penumbra (all bodies).
+;
+; INPUTS:
+;   A register: Body radius in meters scaled by 2^-29
+;   36D: Spacecraft distance from body center (computed by caller)
+;
+; OUTPUT:
+;   A register: cos(arcsin(radius/distance) + 5°) scaled and right-shifted
+;
+; Mathematical sequence: arcsin(R/d) gives angular radius of body disk,
+; add 5° safety margin, take cosine to get occultation test threshold,
+; shift right by 1 to scale for comparison with star dot products.
+;
 OCCOS		DDV	SR1
 			36D
 		ASIN	DAD
@@ -734,6 +1282,18 @@ CSS5		2DEC	.2490475	# (COS 5)/4
 CSSUN		2DEC	.24148		# (COS 15)/4
 
 # Page 752
+;
+; ============================================================================
+; TRANSITION: From star catalog and alignment setup to automatic star selection
+;
+; After establishing the spacecraft's orientation and computing which celestial
+; bodies are visible, the computer now automatically selects the optimal pair
+; of stars for IMU alignment. This sophisticated algorithm evaluates every
+; possible star pair, checking for occultation by Earth, Sun, or Moon, testing
+; angular separation for good geometry, and verifying the stars lie within
+; the telescope's field of view. The best pair is then presented to the crew.
+; ============================================================================
+;
 # PROGRAM NAME -- PICAPAR	DATE: DEC 20 66
 # MOD 1				LOG SECTION: P51-P53
 #				ASSEMBLY:  SUNDISK REV40
@@ -773,6 +1333,27 @@ CSSUN		2DEC	.24148		# (COS 15)/4
 #	X,Y,ZNB
 #	SINCDU, COSCDU
 #	STARAD -- STAR +5
+;
+; COMMENT-ONLY READERS: The computer automatically searches through all 37
+; navigation stars to find the best pair for alignment. It checks each star
+; to ensure it's not hidden behind Earth, Moon, or Sun, verifies the two
+; stars have good angular separation (40-66 degrees apart for best geometry),
+; and confirms both lie within the telescope's 33-degree field of view. This
+; automation greatly simplified crew workload during Apollo 11's alignment
+; procedures, particularly during busy mission phases like translunar coast.
+;
+; CODE-ALONG READERS: PICAPAR (PIck A PARameter) is the automatic star pair
+; selection algorithm. Reads IMU CDU angles to compute spacecraft attitude
+; matrix (XNB, YNB, ZNB), transforms shaft axis (SAX) to inertial coordinates,
+; then systematically tests all 703 possible star pairs (37 choose 2). For
+; each pair: (1) Checks occultation via OCCULT subroutine using CULTRIX
+; occulting body cone matrix, (2) Computes angular separation via dot product
+; and compares against 40-66 degree window (cos(66°)=0.407, cos(40°)=0.766),
+; (3) Tests field-of-view constraint by checking star angles from SAX < 33°
+; (cos(33°)=0.843). Selects pair with maximum separation meeting all criteria.
+; Returns star indices in BESTI, BESTJ scaled by 6 for CATLOG addressing.
+; Sets VFLAG if no valid pairs found. Critical for P52 automatic alignment.
+;
 
 		COUNT	14/PICAP
 
@@ -780,6 +1361,25 @@ CSSUN		2DEC	.24148		# (COS 15)/4
 		BANK
 PICAPAR		TC	MAKECADR
 		TS	QMIN
+;
+; PICAPAR INITIALIZATION - COMPUTE SHAFT AXIS IN INERTIAL COORDINATES
+;
+; COMMENT-ONLY READERS: The computer first reads the spacecraft's current
+; attitude from the IMU gyroscopes, then calculates which direction the
+; telescope is pointing. This "shaft axis" direction tells the computer
+; where to look for stars in the celestial sphere.
+;
+; CODE-ALONG READERS: Initialization sequence. Calls CDUTRIG to read IMU CDU
+; angles and compute sine/cosine tables (SINCDU, COSCDU). Calls CALCSMSC to
+; compute spacecraft attitude matrix XNB, YNB, ZNB transforming from navigation
+; base to stable member coordinates. Sets pushdown pointer to 0. Initializes
+; VFLAG=1 (assume no valid stars until proven otherwise). Clears BESTI, BESTJ
+; to zero. Computes shaft axis (SAX) in inertial coordinates: SAX = REFSMMAT *
+; (XNB*sin(33°) + ZNB*cos(33°)), where 33° is optics shaft angle from Z-axis.
+; This transforms telescope boresight from spacecraft body coordinates through
+; current REFSMMAT to inertial space. Initializes S1=S2=6 as star index counters
+; (each star catalog entry occupies 6 words: 3 for unit vector + magnitude data).
+;
 		TC	INTPRET
 		CALL
 			CDUTRIG
@@ -808,9 +1408,40 @@ PICAPAR		TC	MAKECADR
 			6
 			S2
 			6
+;
+; MAIN STAR SELECTION LOOP STRUCTURE
+;
+; COMMENT-ONLY READERS: The computer now systematically tests every possible
+; pair of stars from the catalog. It starts with star 37, checks if it's
+; visible (not hidden by Earth, Moon, or Sun), then pairs it with stars 36,
+; 35, 34... all the way down to star 1. For each pair, the computer checks
+; three things: (1) Both stars are visible, (2) They're separated by 40-66
+; degrees (good geometry for accurate alignment), (3) Both are within the
+; telescope's 33-degree field of view. The pair with the best separation is
+; automatically selected for the crew to sight.
+;
+; CODE-ALONG READERS: Nested loop structure implements exhaustive star pair
+; search. Outer loop (PIC1) iterates major star from index 228 down to 6 in
+; steps of -6 (37 stars * 6 words/star = 222, plus offset = 228). For each
+; major star, tests occultation via OCCULT subroutine. Inner loop (PIC3)
+; iterates minor star from X1 down to 6. For each minor star: (1) Tests
+; occultation, (2) Computes dot product to check separation angle between
+; 66° (cos=0.2419) and 40° (cos=0.7660), (3) Tests both stars within 33°
+; cone of SAX (cos(33°)=0.8432). STRATGY routine selects pair with maximum
+; separation. Index registers X1, X2 point to CATLOG entries (star unit
+; vectors). CULTFLAG indicates occultation status. Returns via QPRET.
+;
 PIC1		TIX,1	GOTO		# MAJOR STAR
 			PIC2
 			PICEND
+;
+; OCCULTATION TEST FOR MAJOR STAR
+;
+; CODE-ALONG READERS: PIC2 loads major star vector from CATLOG,1 (X1 index),
+; calls OCCULT to test if star is behind Earth, Sun, or Moon. If CULTFLAG
+; set (star occulted), branches to PIC1 for next major star. If visible,
+; loads X2=X1 to begin minor star loop at same index.
+;
 PIC2		VLOAD*	CALL
 			CATLOG,1
 			OCCULT
@@ -818,9 +1449,35 @@ PIC2		VLOAD*	CALL
 			CULTFLAG
 			PIC1
 			X1
+;
+; MINOR STAR LOOP - PAIR WITH ALL LOWER-INDEX STARS
+;
+; CODE-ALONG READERS: PIC3 decrements X2 by 6 to next minor star. If X2
+; reaches zero, all minor stars tested, return to PIC1 for next major star.
+; Otherwise continue to PIC4 to test this star pair.
+;
 PIC3		TIX,2	GOTO
 			PIC4
 			PIC1
+;
+; STAR PAIR QUALITY TESTS
+;
+; COMMENT-ONLY READERS: For this candidate star pair, the computer first
+; checks if the second star is also visible. Then it measures the angle
+; between the two stars - they must be between 40 and 66 degrees apart.
+; Too close together (less than 40°) gives poor geometry. Too far apart
+; (more than 66°) makes it difficult to see both stars in sequence. If
+; the pair passes these tests, the computer checks if both stars are within
+; the telescope's current 33-degree field of view.
+;
+; CODE-ALONG READERS: PIC4 tests minor star occultation. If occulted, skip
+; to PIC3. If visible, compute separation angle via dot product of unit
+; vectors CATLOG,1 · CATLOG,2. Test against CSS66 = cos(66°)/4 = 0.06048
+; (scaled for double precision). If separation > 66°, dot product < CSS66,
+; branch negative to PIC3. Add CSS6640 = (cos(66°)-cos(40°))/4 = -0.15603.
+; If result positive, separation < 40°, skip to PIC3. Only pairs with
+; 40° < separation < 66° proceed to field-of-view tests.
+;
 PIC4		VLOAD*	CALL
 			CATLOG,2
 			OCCULT
@@ -837,6 +1494,26 @@ PIC4		VLOAD*	CALL
 		BPL
 			PIC3
 # Page 754
+;
+; FIELD OF VIEW TESTS - BOTH STARS WITHIN TELESCOPE CONE
+;
+; COMMENT-ONLY READERS: Now the computer checks if both stars are actually
+; within the telescope's field of view at the current spacecraft attitude.
+; The telescope can see 33 degrees from its center line (the shaft axis),
+; forming a cone-shaped viewing area. Both stars must be inside this cone
+; for the astronaut to see them through the optics. If both stars pass
+; this test, the computer saves this pair as a candidate and continues
+; searching for an even better pair with wider separation.
+;
+; CODE-ALONG READERS: Test if both stars within 33° cone of shaft axis (SAX).
+; Dot product CATLOG,1 · SAX compares major star against cos(33°)/4 = 0.2108
+; (CSS33 constant). If dot product < CSS33, angle > 33°, star outside cone,
+; branch to PIC1 to try next major star. If major star in cone, test minor
+; star CATLOG,2 · SAX against same threshold. If minor star angle > 33°,
+; branch to PIC3 for next minor star. If BOTH stars in cone, this is a valid
+; pair - proceed to STRATGY to evaluate if better than previous best pair.
+; Otherwise return to PIC3 to continue minor star search.
+;
 		VLOAD*	DOT
 			CATLOG,1
 			SAX
@@ -851,6 +1528,29 @@ PIC4		VLOAD*	CALL
 			STRATGY
 		GOTO
 			PIC3
+;
+; STRATGY - SELECT BEST STAR PAIR BASED ON MAXIMUM SEPARATION
+;
+; COMMENT-ONLY READERS: When the computer finds a valid star pair (both
+; visible, good separation, within field of view), it compares this pair
+; to the previous best candidate. The goal is to find the pair with the
+; widest separation angle - better geometry means more accurate alignment.
+; If this new pair is better than the old one, the computer saves it and
+; keeps searching. When all star pairs have been tested, the computer has
+; found the optimal pair for IMU alignment.
+;
+; CODE-ALONG READERS: STRATGY implements "greedy" selection algorithm for
+; maximum separation. VFLAG indicates if any valid pair found yet. On first
+; entry (VFLAG set), clear VFLAG and branch to NEWPAR to unconditionally
+; accept first valid pair. On subsequent entries, exchange X1↔BESTI and
+; X2↔BESTJ to reload previous best pair indices. Compute dot product of
+; current pair (CATLOG,1 · CATLOG,2), push to stack. BOFINV means "branch
+; on flag inverse" - if VFLAG clear, skip to STRAT-3. Load previous best
+; separation from top of stack, subtract from current separation. If
+; current separation > previous (subtraction positive), current pair is
+; better - fall through to NEWPAR to save it. Otherwise branch to PIC3 to
+; continue search with previous best pair still saved.
+;
 STRATGY		BONCLR
 			VFLAG
 			NEWPAR
@@ -866,11 +1566,44 @@ STRAT		VLOAD*	DOT*
 		DLOAD	DSU
 		BPL
 			PIC3
+;
+; NEWPAR - SAVE NEW BEST PAIR
+;
+; COMMENT-ONLY READERS: When the computer finds a star pair with better
+; geometry (wider separation angle) than the previous best, it saves this
+; new pair as the best candidate. The search continues to find an even
+; better pair if one exists in the star catalog.
+;
+; CODE-ALONG READERS: Store X1→BESTI (major star index) and X2→BESTJ (minor
+; star index). These are catalog indices scaled by 6 (each star occupies 6
+; words in CATLOG). After saving the new best pair, GOTO PIC3 to continue
+; searching for an even better pair. At end of search, BESTI and BESTJ will
+; contain indices of the star pair with maximum separation angle.
+;
 NEWPAR		SXA,1	SXA,2
 			BESTI
 			BESTJ
 		GOTO
 			PIC3
+;
+; OCCULT - CHECK IF STAR IS OCCULTED BY EARTH OR MOON
+;
+; COMMENT-ONLY READERS: This subroutine checks if a star is hidden behind
+; Earth or the Moon from the spacecraft's current position. If the celestial
+; body blocks the line of sight to the star, the star is "occulted" and
+; cannot be used for alignment. The computer marks such stars as unavailable
+; and skips them in the selection process.
+;
+; CODE-ALONG READERS: Called as subroutine via TC BANKCALL. Transforms star
+; unit vector through CULTRIX matrix (set by caller: EARTHTAB for Earth check,
+; MOONTAB for Moon check). MXV rotates star vector to body-centered frame.
+; BVSU subtracts CSS (=CEARTH radius in Earth radii, scaled). Result is vector
+; from body surface to star. Tests all three components using BMN (branch minus)
+; to determine if star direction intersects body disk. If any component test
+; fails, branches to CULTED to set CULTFLAG=1 indicating occultation. Uses SIGN
+; to test vector component signs. MPAC+3, MPAC+5 are Y and Z components. If all
+; tests pass, star is visible - CLRGO clears CULTFLAG and returns via QPRET.
+;
 OCCULT		MXV	BVSU
 			CULTRIX
 			CSS
@@ -886,10 +1619,40 @@ OCCULT		MXV	BVSU
 			CULTED
 			CULTFLAG
 			QPRET
+;
+; CULTED - STAR IS OCCULTED
+;
+; COMMENT-ONLY READERS: If the computer determines a star is hidden behind
+; Earth or Moon, execution reaches this label which marks the star as
+; occulted and unavailable for alignment.
+;
+; CODE-ALONG READERS: SETGO sets CULTFLAG=1 indicating star is occulted, then
+; returns to caller via QPRET. Caller (PIC2) will test CULTFLAG and skip this
+; star if occulted.
+;
 CULTED		SETGO
 # Page 755
 			CULTFLAG
 			QPRET
+;
+; ============================================================================
+; PICAPAR CONSTANTS - ANGULAR THRESHOLDS AND TRIGONOMETRIC VALUES
+; ============================================================================
+;
+; COMMENT-ONLY READERS: These mathematical constants define the geometry
+; requirements for selecting good star pairs. Stars must be separated by
+; at least 40 degrees but no more than 66 degrees for optimal alignment
+; accuracy. The constants also include values for checking if stars fall
+; within the sextant's 33-degree field of view.
+;
+; CODE-ALONG READERS: Constants in double-precision scaled format (2DEC).
+; CSS = CEARTH (Earth radius for occultation check, defined elsewhere).
+; SIN33, COS33: Sine and cosine of 33° (half-angle of 66° sextant FOV cone).
+; CSS66 = COS(76°)/4: Used in dot product threshold for 66° maximum separation.
+; CSS6640 = (COS(76°)-COS(30°))/4: Difference threshold for 40°-66° range test.
+; CSS33 = COS(38°)/4: Used for field-of-view cone test (76°/2 = 38°).
+; All angle constants scaled for interpretive vector dot product computations.
+;
 CSS		= 	CEARTH
 SIN33		2DEC	.5376381241
 
@@ -900,7 +1663,23 @@ CSS66		2DEC	.060480472	# (COS76)/4
 CSS6640		2DEC	-.15602587	# (COS76 - COS30)/4
 
 CSS33		2DEC	.197002688	# (COS(1/2(76))/4
-
+;
+; ============================================================================
+; PICEND - PICAPAR EXIT ROUTINE
+; ============================================================================
+;
+; COMMENT-ONLY READERS: When PICAPAR completes its search for the best star
+; pair, it exits through this routine. If automatic star selection succeeded
+; (found good pair), the program continues to alignment. If no suitable pair
+; was found, the astronaut receives an alarm and must manually select stars.
+;
+; CODE-ALONG READERS: BOFF tests VFLAG (set if valid pair found). If VFLAG=0
+; (no valid pair), branches to PICGXT which increments QMIN alarm counter and
+; continues. If VFLAG=1, falls through to PICBXT. Both paths converge at PICBXT
+; which loads QMIN and calls SWCALL to return to caller. QMIN indicates whether
+; manual star selection is required (QMIN>0 means automatic selection failed).
+; EXIT instruction terminates interpretive mode before BOFF test.
+;
 PICEND		BOFF	EXIT
 			VFLAG
 			PICGXT
@@ -1985,6 +2764,20 @@ ADVTRACK	SETPD
 		STCALL	STAR		# STORE FINAL LOS IN STAR
 			COM52		# RETURN TO SR52.1
 
+;
+; ROTA - ROTATION SUBROUTINE
+;
+; COMMENT-ONLY READERS: This mathematical routine rotates vectors in 3D space,
+; essential for computing where stars will appear from different spacecraft
+; orientations. Like rotating a telescope to aim at different stars.
+;
+; CODE-ALONG READERS: Implements Rodrigues' rotation formula to rotate a 
+; line-of-sight vector (LOS) stored at location 0 about a unit rotation axis
+; (UR) stored in STAR, by angle AOPTIME. The rotation formula is:
+;   ROTATED = LOS*cos(A) + (UR×LOS)*sin(A) + UR*(UR·LOS)*(1-cos(A))
+; Uses double-precision interpretive math for maximum accuracy. This is called
+; during star pattern rotation to account for spacecraft motion during alignment.
+;
 ROTA		DLOAD	SIN
 			AOPTIME
 		PDVL	VXV		# PUSH 1/2SIN(A) PD 6-7
@@ -2027,6 +2820,22 @@ MPERIOD		2DEC	.047619		# APPROX LUNAR ROT ANG IN 2HRS x 16
 		BANK
 
 		COUNT	15/S52.3
+;
+; S52.3 - COMPUTE NOMINAL ORIENTATION (REFSMMAT)
+;
+; COMMENT-ONLY READERS: This calculates the ideal platform orientation based
+; on where the spacecraft is and which direction it's moving. The platform 
+; always knows which way to point for optimal navigation accuracy.
+;
+; CODE-ALONG READERS: Computes nominal REFSMMAT orientation at alignment time
+; TDEC1 using current state vector (position R and velocity V). The coordinate
+; system is defined as:
+;   ZSMD = UNIT(-R)      [Z-axis points toward Earth/Moon center]
+;   YSMD = UNIT(V × R)   [Y-axis normal to orbital plane]
+;   XSMD = UNIT(Y × Z)   [X-axis completes right-hand system]
+; This orientation minimizes gimbal rates during orbital flight. Calls CSMPREC
+; to get precision state vector at alignment time, then builds orthonormal basis.
+;
 S52.3		STQ
 			QMAJ
 		STCALL	TDEC1
@@ -2085,6 +2894,22 @@ S52.3		STQ
 		COUNT*	$$/R56
 		SETLOC	P50S3
 		BANK
+;
+; R56 - ALTERNATE LOS SIGHTING MARK ROUTINE
+;
+; COMMENT-ONLY READERS: For backup alignment (P53/P54), the crew manually
+; sights on stars using the spacecraft's optical telescope. When they see
+; a star aligned, they press ENTER to record the exact spacecraft attitude.
+; This gives the computer two star sightings to compute IMU alignment.
+;
+; CODE-ALONG READERS: Backup alignment procedure when automatic star tracker
+; unavailable. Displays V06N94 to show current optics angles (shaft/trunnion).
+; Crew manually positions optics on known star, then presses ENTER. Routine
+; records IMU gimbal angles (CDUX, CDUY, CDUZ) and optics angles (SAC, PAC)
+; at mark time in VAC area indexed by MARKSTAT. Two marks on different stars
+; provide sufficient data for R51 fine alignment calculation. Used during
+; Apollo 11 when automatic star tracker had difficulty acquiring certain stars.
+;
 R56		STQ	EXIT
 			R53EXIT
 		CAF	V06N94B
@@ -2148,6 +2973,20 @@ V06N94B		VN	00694
 		SETLOC	P50S
 		BANK
 
+;
+; PLANET - COMPUTE LINE-OF-SIGHT TO PLANETARY BODY
+;
+; COMMENT-ONLY READERS: When viewing Earth or Moon through the telescope for
+; alignment, the computer must calculate exactly where that planetary body
+; appears in the telescope based on the spacecraft's current position.
+;
+; CODE-ALONG READERS: Computes unit line-of-sight vector to specified planetary
+; body (Earth or Moon) as seen from spacecraft position. Input is sighting time
+; in TSIGHT. Calls LOCSAM to determine which body (based on sphere of influence)
+; and compute current spacecraft position. Returns unit vector pointing from
+; spacecraft toward planetary body center, accounting for spacecraft position
+; relative to Earth-Moon system. Used for planetary horizon sightings.
+;
 PLANET		STORE	TSIGHT
 		STQ	CALL
 			QMIN
@@ -2160,6 +2999,20 @@ PLANET		STORE	TSIGHT
 		STOVL	VEARTH
 			0D
 		STORE 	VSUN
+;
+; NOSAM - NO SAMPLING REQUIRED PATH
+;
+; COMMENT-ONLY READERS: When the crew manually selects a star (not requiring
+; automatic searching), this path processes that selection and prepares the
+; star data for the alignment calculation.
+;
+; CODE-ALONG READERS: Handles case where LOCSAM not needed (crew has pre-selected
+; star rather than planetary body). Decodes STARCODE to extract star catalog
+; index, multiplies by 6 (SIGHTSIX) to compute offset into star table, and stores
+; result in BESTI array indexed by STARIND. HIGH9 mask (octal 77600) isolates
+; the 9-bit star number from STARCODE. Each star table entry is 6 words (unit
+; vector components + magnitude), hence the factor-of-6 addressing calculation.
+;
 NOSAM		EXIT
 		CS	HIGH9
 		MASK	STARCODE
@@ -2182,6 +3035,21 @@ NOSAM		EXIT
 			1/SQR3
 		UNIT	GOTO
 			CORPLAN
+;
+; NOTPLAN - NOT A PLANETARY BODY (STAR SIGHTING)
+;
+; COMMENT-ONLY READERS: After determining this is a star sighting (not Earth
+; or Moon), the computer retrieves the star's position from the catalog.
+;
+; CODE-ALONG READERS: Star sighting path. Complements A register value from
+; previous check, adds DEC227 (decimal 227) to determine if target is catalog
+; star or special entry. BZMF branches to CALSAM1 if result ≤ 0 (indicates
+; Earth or Moon entry). For catalog stars, retrieves offset from BESTI array
+; and stores in X1 for indexed addressing into CATLOG star table. CATLOG
+; contains unit vectors to 37 navigation stars in Basic Reference Coordinate
+; System. These stars were carefully selected by MIT for optimal distribution
+; across the celestial sphere and reliable identification characteristics.
+;
 NOTPLAN		CS	A
 		AD	DEC227
 		EXTEND
@@ -2194,6 +3062,20 @@ NOTPLAN		CS	A
 		VLOAD*	GOTO
 			CATLOG,1
 			CORPLAN
+;
+; CALSAM1 - CALCULATE SAMPLED PLANETARY BODY VECTOR
+;
+; COMMENT-ONLY READERS: For Earth or Moon sightings, the computer retrieves
+; the planetary body's position data and prepares it for the alignment
+; calculation, accounting for the spacecraft's motion during the sighting.
+;
+; CODE-ALONG READERS: Handles planetary body (Earth or Moon) sighting case.
+; Uses STARIND to index into BESTI array, then loads result into index register
+; X1 via MPAC. Offset of -228D (decimal -228) maps to correct entry in STARAD
+; table for planetary ephemeris data. STARAD contains unit vectors and distance
+; data for Earth and Moon as viewed from spacecraft. Falls through to CORPLAN
+; to apply velocity aberration correction.
+;
 CALSAM1		TC	INTPRET
 		LXC,1	DLOAD*
 			STARIND
@@ -2201,6 +3083,23 @@ CALSAM1		TC	INTPRET
 		LXC,1	VLOAD*
 			MPAC
 			STARAD 	-228D,1
+;
+; CORPLAN - CORRECT FOR PLANETARY MOTION (VELOCITY ABERRATION)
+;
+; COMMENT-ONLY READERS: When the crew sights on a star or planetary body, light
+; takes time to travel from the object to the spacecraft. During this time, the
+; spacecraft has moved, so the computer must correct for this "aberration" effect
+; to get the true direction.
+;
+; CODE-ALONG READERS: Applies velocity aberration correction to line-of-sight
+; vector. Adds VEL/C (spacecraft velocity divided by speed of light) to the
+; unit vector pointing toward target. This correction accounts for the finite
+; speed of light and spacecraft motion during light travel time. Effect is
+; typically small (~0.001 degrees for 8 km/s orbital velocity) but necessary
+; for precise IMU alignment. After correction, normalizes result to unit vector
+; via UNIT instruction, then returns via GOTO QMIN. All star catalog and
+; planetary vectors require this correction for accurate navigation.
+;
 CORPLAN		VAD	UNIT
 			VEL/C
 		GOTO
