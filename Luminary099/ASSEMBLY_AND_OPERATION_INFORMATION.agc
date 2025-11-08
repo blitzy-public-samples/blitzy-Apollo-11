@@ -24,7 +24,49 @@
 #    Assemble revision 001 of AGC program LMY99 by NASA 2021112-061
 #    16:27 JULY 14, 1969
 
+; ============================================================================
+; FILE: ASSEMBLY_AND_OPERATION_INFORMATION.agc
+; MODULE: Core Information
+; MISSION PHASE: All phases (Reference documentation)
+;
+; TL;DR: Master reference document for the Luminary 1A (Apollo 11 Lunar Module)
+;        guidance computer software. Provides comprehensive technical catalog
+;        of all program modules, crew commands (Verbs 00-99), data displays
+;        (Nouns 00-99), data formatting and scaling conventions, alarm codes,
+;        and operational procedures. Essential reference for understanding
+;        the complete LM software architecture and crew interface protocols.
+;
+; COMMENT-ONLY READERS: This file is your mission control manual - the master
+;        index showing all available commands and data displays that Armstrong
+;        and Aldrin used during the lunar landing. Read this to understand the
+;        crew's interface with the guidance computer.
+; CODE-ALONG READERS: Study this as the complete technical specification for
+;        Luminary 1A. Note the data scaling conventions (critical for fixed-
+;        point arithmetic), register mappings, and alarm code catalog. This
+;        documents how the AGC's 16-bit word architecture represents real-world
+;        physical quantities.
+; ============================================================================
+
 # Page 1
+
+; ============================================================================
+; PROGRAM PURPOSE AND CONTRACT INFORMATION
+;
+; This is the Lunar Module Guidance Computer (LGC) software that flew on
+; Apollo 11's Eagle lunar module. On July 20, 1969, this program controlled
+; the descent from lunar orbit, the powered landing on the Sea of Tranquility,
+; and the subsequent ascent back to orbit for rendezvous with Columbia.
+;
+; The program implements the complete guidance, navigation, and control system
+; for all LM mission phases: separation from Command Module, descent orbit,
+; powered descent initiation, landing approach, touchdown, surface operations,
+; ascent, and rendezvous. It was developed by MIT's Instrumentation Laboratory
+; (now Draper Laboratory) under NASA contract NAS 9-4065.
+;
+; This specific revision (Luminary 1A, build 099) was assembled on July 14,
+; 1969, just six days before the lunar landing. It incorporates all final
+; mission updates and represents the flight-proven software configuration.
+; ============================================================================
 
 # THIS LGC PROGRAM IS INTENDED FOR USE IN THE LM DURING THE MANNED LUNAR LANDING MISSION OR ANY SUBSET THEREOF.
 # THE DETAILS OF IMPLEMENTATION ARE SPECIFIED IN REPORT R-567, AS AMENDED.
@@ -41,6 +83,19 @@
 
 # Page 2
 
+; ============================================================================
+; MASTER PROGRAM INDEX
+;
+; The following tables catalog all components of the Luminary 1A software.
+; This serves as both assembly documentation (for the yaYUL assembler) and
+; operational reference (for mission planning and crew training).
+;
+; The program is organized into logical "log sections" corresponding to
+; functional subsystems (guidance, navigation, control, display interface,
+; etc.). Each section contains multiple source files assembled into the
+; AGC's memory banks.
+; ============================================================================
+
 # TABLE OF LOG CARDS
 #	ASSEMBLY AND OPERATION INFORMATION
 #	TAGS FOR RELATIVE SETLOC AND BLANK BANK CARDS
@@ -49,9 +104,48 @@
 #	FLAGWORD ASSIGNMENTS
 #	SUBROUTINE CALLS
 
+; ============================================================================
+; PROGRAM MODULE ORGANIZATION
+;
+; The Luminary 1A software is organized into seven major subsystems, each
+; containing related functional modules. This architecture reflects both the
+; AGC's memory bank structure and the logical separation of mission phases.
+;
+; LUMERASE: Memory allocation (erasable RAM variables)
+; LNYAIDE: Crew interface, displays, interrupt handlers, IMU operations
+; LEMP20S/LEMP30S/KISSING: Rendezvous and orbital navigation programs
+; FLY: The heart of lunar landing - descent, landing, and ascent guidance
+; LEMP50S: Alignment and celestial navigation
+; SKIPPER: Core operating system (executive, interpreter, telemetry)
+; LMDAP: Digital autopilot and reaction control system
+;
+; During Apollo 11's descent on July 20, 1969, the FLY subsystem (containing
+; "THE LUNAR LANDING" program) executed the powered descent that Armstrong and
+; Aldrin rode to the surface. The SKIPPER subsystem's executive scheduler
+; handled the famous 1202 program alarm, while LMDAP controlled the descent
+; engine throttle and RCS thrusters for attitude control.
+; ============================================================================
+
 # TABLE OF SUBROUTINE LOG SECTIONS
+
+; ----------------------------------------------------------------------------
+; LUMERASE SUBSYSTEM: Memory Allocation
+;
+; Defines the 2K words of erasable (RAM) memory organization. Variables are
+; grouped by function: navigation state vectors, guidance parameters, display
+; buffers, autopilot state, interrupt handlers' working storage.
+; ----------------------------------------------------------------------------
 #	LUMERASE
 #		ERASABLE ASSIGNMENTS
+
+; ----------------------------------------------------------------------------
+; LNYAIDE SUBSYSTEM: Crew Interface and Sensor Management
+;
+; Everything the crew sees and touches: DSKY displays, keyboard input, verb
+; and noun processing, IMU alignment procedures, optical sightings. Also
+; includes interrupt handlers (T4RUPT timing, RCS failure detection) and
+; telemetry downlink formatting for ground control monitoring.
+; ----------------------------------------------------------------------------
 #	LNYAIDE
 #		INTERRUPT LEAD INS
 #		T4RUPT PROGRAM
@@ -75,13 +169,36 @@
 #		PINBALL GAMES BUTTONS AND LIGHTS
 #		R60,R62
 #		S-BAND ANTENNA FOR LM
+
+; ----------------------------------------------------------------------------
+; LEMP20S SUBSYSTEM: Rendezvous Navigation (Programs P20-P25)
+;
+; Radar-based relative navigation for rendezvous with the Command Module.
+; After ascent from the lunar surface, these programs tracked Columbia in
+; orbit and computed the trajectory for docking.
+; ----------------------------------------------------------------------------
 #	LEMP20S
 #		RADAR LEADIN ROUTINES
 #		P20-P25
+
+; ----------------------------------------------------------------------------
+; LEMP30S SUBSYSTEM: Maneuver Planning (Programs P30-P37, P72-P75)
+;
+; Lambert targeting for orbital transfers and rendezvous. Computes the delta-V
+; (velocity change) required for orbit adjustments, including the critical
+; descent orbit insertion maneuver before powered descent.
+; ----------------------------------------------------------------------------
 #	LEMP30S
 #		P30,P37
 #		P32-P35, P72-P75
 #		GENERAL LAMBERT AIMPOINT GUIDANCE
+
+; ----------------------------------------------------------------------------
+; KISSING SUBSYSTEM: Ground Tracking and Orbit Determination
+;
+; Programs for orbital parameter display and updates from ground control.
+; P38-P39 maintained stable orbit tracking during lunar coast phases.
+; ----------------------------------------------------------------------------
 #	KISSING
 #		GROUND TRACKING DETERMINATION PROGRAM - P21
 #		P34-P35, P74-P75
@@ -90,6 +207,21 @@
 #		R30
 #		STABLE ORBIT - P38-P39
 # Page 3
+
+; ----------------------------------------------------------------------------
+; FLY SUBSYSTEM: Lunar Landing and Ascent - THE MISSION-CRITICAL CODE
+;
+; This subsystem contains the code that made history. On July 20, 1969:
+; - BURN, BABY, BURN initiated the descent engine at powered descent initiation
+; - THE LUNAR LANDING (P63) executed the 12-minute powered descent trajectory
+; - THROTTLE CONTROL managed engine thrust from 10% to 100% during approach
+; - LUNAR LANDING GUIDANCE computed the fuel-optimal descent path
+; - At 500 feet altitude, Armstrong transitioned to semi-manual control
+; - LANDING ANALOG DISPLAYS showed altitude and velocity to the crew
+; - P70-P71 provided abort capability (not needed, thankfully)
+; - After 21.5 hours on the surface, P12 and ASCENT GUIDANCE lifted Eagle
+;   back to orbit for rendezvous with Collins in Columbia
+; ----------------------------------------------------------------------------
 #	FLY
 #		BURN, BABY, BURN -- MASTER IGNITION ROUTINE
 #		P40-P47
@@ -102,9 +234,35 @@
 #		SERVICER
 #		LANDING ANALOG DISPLAYS
 #		FINDCDUW -- GUIDAP INTERFACE
+
+; ----------------------------------------------------------------------------
+; LEMP50S SUBSYSTEM: IMU Alignment and Ephemerides
+;
+; Star sighting programs (P51-P53) for IMU platform alignment. Also computes
+; Moon and Sun positions for navigation reference frame updates.
+; ----------------------------------------------------------------------------
 #	LEMP50S
 #		P51-P53
 #		LUNAR AND SOLAR EPHEMERIDES SUBROUTINES
+
+; ----------------------------------------------------------------------------
+; SKIPPER SUBSYSTEM: Core Operating System
+;
+; The AGC's "operating system kernel" - contains the Executive (cooperative
+; multitasking job scheduler), Waitlist (preemptive timer-driven scheduler),
+; and Interpreter (virtual machine for high-level vector/matrix operations).
+;
+; During Apollo 11's descent, the Executive's job queue filled when radar
+; data processing overloaded the system, triggering the 1202 program alarm
+; at mission time 102:38:26. Flight controller Steve Bales made the critical
+; "Go" decision to continue the landing. The Executive's restart protection
+; allowed the program to recover gracefully, proving the robustness of this
+; operating system design.
+;
+; Also includes: telemetry formatting, orbital mechanics subroutines, Kalman
+; filter for navigation updates, self-check diagnostics, alarm handling, and
+; keyboard/display interface routines.
+; ----------------------------------------------------------------------------
 #	SKIPPER
 #		DOWN-TELEMETRY PROGRAM
 #		INTER-BANK COMMUNICATION
@@ -133,6 +291,16 @@
 #		ALARM AND ABORT
 #		UPDATE PROGRAM
 #		RTB OP CODES
+
+; ----------------------------------------------------------------------------
+; LMDAP SUBSYSTEM: Digital Autopilot (DAP)
+;
+; Closed-loop attitude control using reaction control system (RCS) thrusters.
+; Separate autopilots for pitch (P-axis), yaw (Q-axis), and roll (R-axis).
+; TJET LAW computes minimum-impulse thruster firing commands. Kalman filter
+; estimates vehicle dynamics. During landing, DAP maintained LM attitude while
+; the descent engine provided thrust, coordinating with manual crew inputs.
+; ----------------------------------------------------------------------------
 #	LMDAP
 #		T6-RUPT PROGRAMS
 #		DAP INTERFACE SUBROUTINES
@@ -157,8 +325,48 @@
 #	OCCUPIED LOCATIONS TABLE
 #	SUBROS CALLED & PROGRAM STATUS
 
+; ============================================================================
+; TRANSITION: From Program Structure Overview to Operational Reference Data
+;
+; The preceding sections documented the overall structure and organization
+; of the Luminary 1A program - the complete software system that guided the
+; Lunar Module Eagle during Apollo 11's historic landing on July 20, 1969.
+;
+; The sections that follow provide detailed reference information for the
+; primary crew interface: the DSKY (Display and Keyboard). Through verb and
+; noun codes, Armstrong and Aldrin communicated with the guidance computer,
+; requesting information displays, entering navigation data, and monitoring
+; critical mission parameters during descent, landing, and ascent.
+;
+; These reference tables - verbs, nouns, scales, alarms, checklists, and
+; options - formed the "language" of human-computer interaction that made
+; the lunar landing possible.
+; ============================================================================
+
 # Page 5
+; ============================================================================
+; SECTION: VERB LIST - Crew Command Catalog
+;
+; This section catalogs all 100 Verb commands (V00-V99) available to the crew
+; through the DSKY (Display and Keyboard) interface. Verbs are the ACTION
+; commands - they tell the guidance computer what operation to perform.
+;
+; COMMENT-ONLY READERS: Think of Verbs as the "buttons" Armstrong and Aldrin
+; pressed to command the computer. V16 displays time, V37 changes programs,
+; V06 displays data on the screen. During the lunar landing, the crew used
+; specific Verb sequences to monitor altitude, velocity, and fuel status.
+;
+; CODE-ALONG READERS: Verbs are implemented as subroutine entry points in
+; PINBALL_GAME_BUTTONS_AND_LIGHTS.agc and EXTENDED_VERBS.agc. Regular Verbs
+; (00-34) handle display and monitoring. Extended Verbs (35-99) perform
+; mission actions. Each verb code branches to its implementation routine.
+; ============================================================================
+
 # VERB LIST FOR LUMINARY
+
+; Regular Verbs (V00-V34): Display and monitoring operations that show data
+; on the DSKY. These allow the crew to view computer state, time, navigation
+; data, and system status without changing the current program or mode.
 
 # REGULAR VERBS
 
@@ -204,6 +412,11 @@
 # 39
 
 # Page 6
+; Extended Verbs (V35-V99): Mission action commands that perform operations
+; beyond simple display. These verbs control IMU alignment, radar modes,
+; program changes, maneuvers, and system configurations. Many require crew
+; input of parameters (loaded via associated Nouns).
+
 # EXTENDED VERBS
 
 # 40	ZERO CDU-S
@@ -269,6 +482,32 @@
 # 99	PLEASE ENABLE ENGINE
 
 # Page 8
+; ============================================================================
+; SECTION: NOUN LIST - Data Type Catalog
+;
+; This section catalogs all 100 Noun data types (N00-N99) available through
+; the DSKY interface. Nouns are the DATA objects - they specify what
+; information to display or load. Nouns work in conjunction with Verbs.
+;
+; COMMENT-ONLY READERS: Think of Nouns as the "data fields" on the DSKY
+; display. N36 shows time to ignition, N68 shows altitude and velocity during
+; landing, N17 shows spacecraft attitude angles. When Armstrong checked the
+; landing radar data during descent, he was monitoring specific Noun displays.
+;
+; CODE-ALONG READERS: Nouns are data structure definitions implemented in
+; PINBALL_NOUN_TABLES.agc. Each noun specifies: number of components (1-3),
+; data scaling (fractional, whole, degrees, etc.), memory address mapping,
+; and load/display restrictions. The scale types determine display format
+; and acceptable input ranges.
+;
+; IMPORTANT RESTRICTIONS:
+; - "NO LOAD" means noun contains at least one component that cannot be
+;   loaded (scale types L, PP, or TT). Verbs 24/25 not allowed, but V21-23
+;   may be used to load loadable components.
+; - "DEC ONLY" means only decimal operation allowed (no octal entry).
+;   Note: "NO LOAD" implies "DEC ONLY".
+; ============================================================================
+
 # IN THE FOLLOWING NOUN LIST THE :NO LOAD: RESTRICTION MEANS THE NOUN
 # CONTAINS AT LEAST ONE COMPONENT WHICH CANNOT BE LOADED, I.E. OF
 # SCALE TYPE L (MIN/SEC), PP (2 INTEGERS) OR TT (LANDING RADAR POSITION).
@@ -278,6 +517,10 @@
 #
 # THE :DEC ONLY: RESTRICTION MEANS ONLY DECIMAL OPERATION IS ALLOWED ON
 # EVERY COMPONENT IN THE NOUN. (NOTE THAT :NO LOAD: IMPLIES :DEC ONLY:.)
+
+; Normal Nouns (N00-N99): Standard data types with 1-3 components each.
+; Components can be fractional values, whole numbers, angles, times, or
+; vectors. Each noun specifies its scaling and display format.
 
 # NORMAL NOUNS				    COMPONENTS	SCALE AND DECIMAL POINT			RESTRICTIONS
 # 00	NOT IN USE
@@ -526,6 +769,26 @@
 # 39		SPARE
 
 # Page 14
+; ============================================================================
+; SUBSECTION: REGISTERS AND SCALING FOR MIXED NOUNS
+;
+; Mixed Nouns (multi-component data types) have each component stored in
+; a different memory register with potentially different scaling. This
+; detailed listing shows the exact memory location and scale type for each
+; component in every mixed noun.
+;
+; COMMENT-ONLY READERS: Mixed nouns display multiple related values together.
+; For example, N44 shows orbital parameters (apoapsis height, periapsis
+; height, and time to free fall) - three different measurements combined
+; into one noun for crew convenience during mission planning.
+;
+; CODE-ALONG READERS: Each component maps to a specific erasable memory
+; location and uses a specific scale type (see scale type definitions
+; earlier). The register addresses are defined in ERASABLE_ASSIGNMENTS.agc.
+; Scale types (Q, L, S, D, E, H, C, K, etc.) determine display format,
+; decimal point placement, and numerical range.
+; ============================================================================
+
 # REGISTERS AND SCALING FOR MIXED NOUNS
 
 # NOUN		COMP		REGISTER		SCALE TYPE
@@ -681,6 +944,33 @@
 #		2		WWVEL			YY
 #		3		WWBIAS			AAA
 # Page 18
+; ============================================================================
+; SECTION: NOUN SCALES AND FORMATS - Data Type Definitions
+;
+; This comprehensive reference defines all scale types used in noun
+; components. Scale types determine how binary AGC data is converted for
+; DSKY display and how crew decimal entries are converted to binary.
+;
+; COMMENT-ONLY READERS: This section explains the "language" the AGC uses to
+; display numbers. Some values are shown as whole numbers, others as
+; fractions, others as angles in degrees. The AGC stores everything as
+; binary integers, so these scale types are the "translation rules" between
+; what the computer stores and what Armstrong and Aldrin saw on the display.
+;
+; CODE-ALONG READERS: AGC lacks floating-point hardware. All arithmetic uses
+; 15-bit signed integers (plus parity). Scale types define fixed-point
+; representations with implied decimal/binary points. For example, scale
+; type B treats the 15-bit value as a fraction (bit 1 = 2^-14), while type
+; C treats it as a whole number (bit 1 = 1). Understanding scaling is
+; critical for interpreting computational precision and range limits.
+;
+; Key abbreviations:
+; SP = Single Precision (one 16-bit AGC word)
+; DP = Double Precision (two 16-bit AGC words)
+; BIT 1 = Least significant data bit (bit 15 is sign bit)
+; 2-S COMP = Two's complement binary representation
+; ============================================================================
+
 # NOUN SCALES AND FORMATS
 
 # -SCALE TYPE-			       PRECISION
@@ -893,6 +1183,33 @@
 # THAT-S ALL ON THE NOUNS.
 
 # Page 23
+; ============================================================================
+; SECTION: ALARM CODES FOR LUMINARY - Program Alarm Catalog
+;
+; This comprehensive catalog lists all program alarm codes that can be
+; displayed on the DSKY during Lunar Module operations. Alarm codes alert
+; the crew to anomalous conditions requiring attention or action.
+;
+; COMMENT-ONLY READERS: When alarm lights illuminated on the DSKY during
+; Apollo 11's descent, Armstrong and Aldrin saw five-digit codes like 1202.
+; These alarm codes told them (and Mission Control) what the computer
+; detected as a problem. The famous 1202 alarms during landing indicated
+; executive overflow - the computer was overloaded with radar data but
+; continuing to function. Flight controller Steve Bales' "Go" decision
+; allowed the landing to proceed despite these alarms.
+;
+; CODE-ALONG READERS: Alarm codes are set by various program modules when
+; detecting error conditions. Each code has:
+; - Five-digit decimal code (displayed on DSKY)
+; - Type indicator (* for priority alarm, ** for highest priority, P for
+;   program-specific)
+; - Description of the condition that triggered it
+; - Module/routine name that sets the alarm
+;
+; Alarm handling is implemented in ALARM_AND_ABORT.agc. The executive
+; scheduler manages alarm priorities and crew notification protocols.
+; ============================================================================
+
 # ALARM CODES FOR LUMINARY
 
 # *9		*18						*60	COLUMN
@@ -1022,6 +1339,35 @@
 
 # Page 26
 
+; ============================================================================
+; SECTION: CHECKLIST CODES FOR LUMINARY - Crew Action Requests
+;
+; Checklist codes (displayed in R1 component of DSKY) request specific crew
+; actions during program execution. These codes guide astronauts through
+; procedural steps requiring manual switch operations or data entry.
+;
+; COMMENT-ONLY READERS: During mission operations, the computer would display
+; five-digit checklist codes on the DSKY to prompt Armstrong and Aldrin for
+; specific actions. For example, code 00203 instructed them to switch guidance
+; control to automatic mode and throttle control to automatic - critical steps
+; before powered descent initiation. These codes served as an automated
+; checklist built into the guidance computer.
+;
+; CODE-ALONG READERS: Checklist codes are flashed on DSKY R1 component by
+; programs requesting crew action. Each code has:
+; - Five-digit decimal code (R1CODE)
+; - Action type (SWITCH, PERFORM, KEY IN, ENTER, PROCEED)
+; - Description of required crew action
+; - Program(s) that request this action
+;
+; Action types:
+; SWITCH = Physical console switch position change
+; PERFORM = Start or complete a task/procedure
+; KEY IN = Manual data entry via DSKY
+; ENTER = Data entry or confirmation
+; PROCEED = Continue with next program phase
+; ============================================================================
+
 # CHECKLIST CODES FOR LUMINARY
 
 # *9		*17		*26					*9	COLUMN
@@ -1044,6 +1390,32 @@
 #				KEY IN DENOTES KEY IN OF DATA THRU THE DSKY
 
 # Page 27
+; ============================================================================
+; SECTION: OPTION CODES FOR LUMINARY - Program Configuration Selections
+;
+; Option codes (displayed in R1 component) request crew selection among
+; multiple operational modes or configuration choices. The astronaut responds
+; by keying the desired option number into R2 component.
+;
+; COMMENT-ONLY READERS: Some mission programs required Armstrong and Aldrin to
+; choose between multiple operating modes. For example, when aligning the IMU
+; (gyroscope platform), the computer would display option code 00001 and wait
+; for them to select their preferred orientation method: PREFERRED, NOMINAL,
+; REFSMMAT, or LANDING SITE. These selections customized program behavior for
+; specific mission phases.
+;
+; CODE-ALONG READERS: Option codes are flashed via V04N06 (load component 1)
+; or V04N12 (extended verbs). Each code has:
+; - Five-digit option code (displayed in R1)
+; - Purpose description
+; - Valid inputs for R2 (numeric codes corresponding to choices)
+; - Program(s) requesting the option
+; - Applicability (which AGC versions support this option)
+;
+; Crew selects desired option by keying numeric code into R2, then pressing
+; ENTER. Program execution continues with selected configuration.
+; ============================================================================
+
 # OPTION CODES FOR LUMINARY
 
 # THE SPECIFIED OPTION CODES WIL BE FLASHED IN COMPONENT R1 IN
