@@ -664,6 +664,72 @@ P33/P73F	ABS	DSU
 #	 S32/33.X
 #	 VNPOOH
 
+; ============================================================================
+; DISDVLVC - DISPLAY DELTA-V IN LOCAL VERTICAL COORDINATES
+;
+; PURPOSE:
+;      Transforms delta-V from stable member (inertial) coordinates to local
+;      vertical coordinates (LVC) and displays the components to the crew via
+;      DSKY for review and approval.
+;
+; OPERATIONAL CONTEXT:
+;      Orbital mechanics computations produce delta-V values that must be
+;      presented to the crew in an intuitive reference frame. Local vertical
+;      coordinates express the velocity change in terms meaningful for orbital
+;      maneuvers:
+;        - Radial component (perpendicular to surface, positive = up)
+;        - In-track component (along velocity vector, positive = prograde)
+;        - Cross-track component (perpendicular to orbital plane)
+;
+;      The crew uses these components to assess the maneuver's effect on the
+;      orbit before committing to engine ignition.
+;
+; COORDINATE TRANSFORMATION:
+;      The input delta-V (in DELVLVC initially holding inertial coordinates)
+;      is transformed to local vertical coordinates using the transformation
+;      matrix constructed by S32/33.X:
+;
+;      DELVLVC_transformed = 0D × DELVLVC_inertial
+;
+;      Where 0D is the 3×3 matrix mapping inertial vectors to the local
+;      vertical reference frame at the spacecraft's current position.
+;
+; DISPLAY FORMAT:
+;      The transformed delta-V is displayed via verb/noun combination stored
+;      in VERBNOUN (typically V06N81 or similar), showing:
+;        R1: Radial component (up/down relative to surface)
+;        R2: In-track component (forward/backward along orbit)
+;        R3: Cross-track component (left/right perpendicular to plane)
+;
+;      Crew can then:
+;        - Press PROCEED to accept the displayed values
+;        - Key in modified components and press ENTER to update the maneuver
+;        - Press RESET to abort the program sequence
+;
+; SUBROUTINE CALLS:
+;      S32/33.X - Constructs local vertical coordinate transformation matrix 0D
+;      VNPOOH   - Verb/noun display processor for DSKY output
+;
+; INPUT:
+;      DELVLVC - Delta-V vector (initially in inertial coordinates)
+;      VERBNOUN - Packed verb/noun code for display format
+;
+; OUTPUT:
+;      DELVLVC - Delta-V vector transformed to local vertical coordinates
+;                (available for crew review and modification)
+;
+; REGISTER USAGE:
+;      X1 - Saved/restored via SXA,1 instruction for verb/noun processing
+;
+; RETURN:
+;      Returns via NORMEX exit, allowing calling routine to proceed based on
+;      crew input (PROCEED, modified values, or abort).
+;
+; This routine provides essential crew situational awareness by presenting
+; delta-V in orbital mechanics terms rather than spacecraft body coordinates,
+; enabling informed decision-making before committing to the maneuver.
+; ============================================================================
+
 		SETLOC	CDHTAG3
 		BANK
 
