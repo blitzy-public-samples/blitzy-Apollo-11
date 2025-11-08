@@ -27,7 +27,113 @@
 #	Assemble revision 001 of AGC program LMY99 by NASA 2021112-061
 #	16:27 JULY 14, 1969
 
+; ============================================================================
+; FILE: ERASABLE_ASSIGNMENTS.agc
+; MODULE: Memory Management / Core System
+; MISSION PHASE: all (foundational memory organization for entire program)
+;
+; TL;DR: This file defines the complete 2,048-word erasable (RAM) memory map
+;        for the Lunar Module's Apollo Guidance Computer. Every variable used
+;        throughout the mission—navigation state vectors, guidance parameters,
+;        control system data, DSKY display buffers, interrupt state, and
+;        mission program variables—is allocated here. This memory organization
+;        was critical during Apollo 11's landing on July 20, 1969, holding all
+;        real-time data that guided Eagle to the lunar surface.
+;
+; COMMENT-ONLY READERS: This is the memory blueprint of the computer that
+;        landed humans on the Moon. Each section reveals what data the AGC
+;        tracked during different mission phases.
+; CODE-ALONG READERS: Study the memory banking structure, variable naming
+;        conventions, and memory-sharing strategies that enabled complex
+;        mission operations within a 2K RAM constraint.
+; ============================================================================
+;
+; AGC ERASABLE MEMORY ARCHITECTURE:
+;
+; The Apollo Guidance Computer had only 2,048 words (2K) of erasable memory
+; (RAM) to hold ALL flight software state during the entire lunar mission.
+; This severe constraint drove every aspect of the software design.
+;
+; MEMORY ORGANIZATION:
+; Total RAM: 2,048 words (each word = 16 bits: 15 data bits + 1 parity bit)
+;
+; Memory is organized into banks:
+; - Unswitched Erasable (E0, E1, E2): 256 words, always accessible
+;   Contains critical interrupt state, executive scheduler data, and
+;   timing variables that must be reachable without bank switching
+;
+; - Switched Erasable Banks (E3-E7): 5 banks × ~256 words each
+;   Contains mission program variables, navigation data, guidance parameters
+;   Requires bank switching to access (EBANK instruction)
+;
+; BANK ALLOCATION BY FUNCTION:
+; - EBANK-0,1,2 (Unswitched): Core OS, interrupts, executive, waitlist, time
+; - EBANK-3: Display interface, DSKY buffers, crew I/O, program control
+; - EBANK-4: Navigation state vectors, IMU data, radar measurements
+; - EBANK-5: Guidance equations, control system state, autopilot variables
+; - EBANK-6: Digital autopilot (DAP), RCS thruster control, mass properties
+; - EBANK-7: Mission programs (P20-P25, P30-P37, etc.), overlays
+;
+; MEMORY CONSTRAINTS AND DESIGN IMPACT:
+; During Apollo 11's descent on July 20, 1969, this 2K of RAM held:
+; - Position and velocity vectors updated 20 times per second
+; - Guidance commands for descent engine throttle and attitude
+; - Radar altitude and velocity measurements
+; - IMU gyro angles and accelerometer data
+; - DSKY display buffers showing data to Armstrong and Aldrin
+; - Executive scheduler job queues (which overflowed during 1202 alarm)
+; - Waitlist timer queues for time-critical tasks
+; - All mission program state for landing, ascent, and rendezvous
+;
+; Every variable was carefully placed to:
+; 1. Minimize bank switching overhead
+; 2. Group related data for cache-like locality
+; 3. Enable memory sharing between mutually exclusive programs
+; 4. Maintain restart protection for critical flight data
+;
+; MEMORY SHARING STRATEGY:
+; To maximize the utility of 2K RAM, many variables are "overlaid"—meaning
+; different mission phases reuse the same physical memory locations:
+; - Landing variables (P63, P64) overlay ascent variables (P12)
+; - Orbital navigation overlays rendezvous targeting
+; - Alignment routines overlay burn program temporaries
+;
+; This was safe because these programs never ran simultaneously, but it
+; required meticulous analysis to prevent conflicts.
+;
+; SCALING AND DATA TYPES:
+; Most variables use scaled fixed-point representation (AGC lacked floating-
+; point hardware). Common scaling conventions documented inline:
+; - Positions: Scaled by 2^29 meters (allows cislunar distances)
+; - Velocities: Scaled by 2^7 meters/centisecond
+; - Time: Centiseconds (0.01 second resolution)
+; - Angles: Revolutions (1 rev = 360 degrees) or radians
+; - Accelerations: PIPA pulses (conversion factors applied)
+;
+; HISTORICAL CONTEXT:
+; This memory map remained stable throughout Apollo 11. During the historic
+; landing:
+; - RALT held the radar altitude Armstrong monitored on the DSKY
+; - State vectors RN/VN were updated continuously by integration routines
+; - TTOGO counted down the time remaining to touchdown
+; - Alarm codes were written here, triggering the famous 1202 display
+; - Every bit of this 2K was essential to "The Eagle has landed"
+;
+; Modern perspective: A typical smartphone has over 4 BILLION times more RAM
+; than this 2K that successfully guided humans to the lunar surface and back.
+;
+; ============================================================================
+
 # Page 90
+;
+; ============================================================================
+; MEMORY ASSIGNMENT CONVENTIONS AND NOTATIONS
+; ============================================================================
+;
+; This section explains the syntax conventions used throughout this file to
+; define memory locations, variable sizes, and sharing strategies. These
+; notations were essential for managing the tight 2K RAM constraint.
+;
 # CONVENTIONS AND NOTATIONS UTILIZED FOR ERASABLE ASSIGNMENTS.
 
 #	EQUALS	IS USED IN TWO WAYS.  IT IS OFTEN USED TO CHAIN A GROUP
@@ -83,8 +189,81 @@
 #			OUT	MEANS OUTPUT FROM THE ROUTINE, PROBABLY
 #				TEMPORARY FOR A HIGHER-LEVEL ROUTINE/PROGRAM.
 
+# ============================================================================
+# AGC ERASABLE MEMORY ARCHITECTURE OVERVIEW
+# ============================================================================
+#
+# TOTAL RAM: 2,048 words (2K erasable memory) - ALL flight software state
+#
+# MEMORY ORGANIZATION:
+#	Unswitched Erasable: Banks E0, E1, E2 (addresses 0000-0777 octal)
+#		- Always accessible without bank switching
+#		- Contains critical interrupt state, special registers,
+#		  executive scheduler core, and most frequently accessed variables
+#		- Fast access for time-critical operations
+#
+#	Switched Erasable Banks: E3, E4, E5, E6, E7 (addresses 1400-3777 octal)
+#		- Require EBANK register setting for access
+#		- Each bank contains specialized variable groups
+#		- Bank switching adds overhead but enables larger address space
+#
+# BANK ALLOCATION SUMMARY:
+#	EBANK 0, 1, 2 (Unswitched): Core OS, interrupts, executive, frequently
+#		accessed navigation/guidance variables, DSKY interface
+#	EBANK-3: Mission programs, navigation state vectors, interpretive stack
+#	EBANK-4: Pad-loaded parameters, mission constants, unsharable variables
+#	EBANK-5: Landing radar, rendezvous programs, guidance parameters
+#	EBANK-6: Digital autopilot (DAP), control system state, thruster logic
+#	EBANK-7: Extended mission programs, additional navigation/guidance storage
+#
+# MEMORY CONSTRAINTS DRIVING AGC DESIGN:
+#	- Every variable carefully placed to minimize bank switching overhead
+#	- Critical variables in unswitched banks for fast interrupt access
+#	- Overlays used for mutually exclusive program phases (landing vs ascent)
+#	- Tight packing: ~2,048 words utilized = 100% memory usage
+#	- This 2K RAM successfully guided Apollo 11's Eagle to the lunar surface
+#	  on July 20, 1969, and returned Armstrong and Aldrin to orbit
+#
+# SCALING CONVENTIONS (documented throughout):
+#	Positions: Typically scaled by 2^29 meters (centimeters precision)
+#	Velocities: Typically scaled by 2^7 meters/centisecond
+#	Time: Centiseconds (1/100 second resolution)
+#	Angles: Revolutions (1 revolution = 360 degrees) or radians
+#	Accelerations: PIPA pulses with documented conversion factors
+#
+# HISTORICAL CONTEXT:
+#	This memory map remained stable throughout Apollo 11 mission.
+#	During landing descent on July 20, 1969 at 102:33-102:45 MET:
+#	- RALT held radar altitude Armstrong and Aldrin monitored
+#	- TTOGO displayed time-to-landing countdown
+#	- State vectors RN/VN updated 20 times per second
+#	- Alarm codes (1201/1202) written here triggered DSKY warnings
+#	- Every variable below was critical to "The Eagle has landed"
+#
+# Modern smartphones have millions of times more RAM than this 2K that
+# successfully executed one of humanity's greatest engineering achievements.
+# ============================================================================
+
 # Page 92
 # SPECIAL REGISTERS.
+#
+# ============================================================================
+# HARDWARE REGISTER ASSIGNMENTS (Addresses 0-7)
+# ============================================================================
+# These are the AGC's core CPU registers, directly accessible by basic
+# instructions without any memory banking considerations. These registers
+# formed the computational foundation for all Apollo 11 flight operations.
+#
+# A (Accumulator): Primary arithmetic register for all computations
+# L (Lower Accumulator): Extended precision for double-precision arithmetic
+# Q (Return Address): Stores subroutine return address for TC (Transfer Control)
+# EBANK: Erasable bank register - selects active erasable memory bank (E3-E7)
+# FBANK: Fixed bank register - selects active fixed (ROM) memory bank
+# Z (Program Counter): Instruction pointer, next instruction address
+# BBANK: Both-bank register - holds either EBANK or FBANK value
+#
+# Register 7: Hardware zero-source used by ZL (Zero to L) instruction
+# ============================================================================
 
 A		EQUALS	0
 L		EQUALS	1		# L AND Q ARE BOTH CHANNELS AND REGISTERS
@@ -95,6 +274,18 @@ Z		EQUALS	5		# ADJACENT TO FBANK AND BBANK FOR DXCH Z
 BBANK		EQUALS	6		# (DTCB) AND DXCH FBANK (DTCF).
 					# REGISTER 7 IS A ZERO-SOURCE, USED BY ZL.
 
+# ============================================================================
+# INTERRUPT CONTEXT SAVE AREA (Addresses 10-17 octal)
+# ============================================================================
+# When hardware interrupt occurs (T4RUPT, T3RUPT, KEYRUPT, UPRUPT, DSRUPT),
+# AGC automatically saves A, L, Q, Z, and bank registers here to preserve
+# program state. Interrupt handler completes, then RESUME restores context.
+#
+# During Apollo 11 descent, these registers preserved state during the
+# critical 1202 program alarms when executive job queue overflowed.
+# Restart protection system used these saved values to recover gracefully.
+# ============================================================================
+
 ARUPT		EQUALS	10		# INTERRUPT STORAGE
 LRUPT		EQUALS	11
 QRUPT		EQUALS	12
@@ -103,10 +294,43 @@ ZRUPT		EQUALS	15		# (13 AND 14 ARE SPARES.)
 BANKRUPT	EQUALS	16		# USUALLY HOLDS FBANK OR BBANK.
 BRUPT		EQUALS	17		# RESUME ADDRESS AS WELL.
 
+# ============================================================================
+# SHIFT REGISTERS AND EDITING REGISTERS (Addresses 20-23 octal)
+# ============================================================================
+# CYR: Cycle Right - Bit shift register for right rotations
+# SR:  Shift Right - Arithmetic right shift register
+# CYL: Cycle Left - Bit shift register for left rotations
+# EDOP: Edits interpretive operation code pairs for interpreter execution
+# ============================================================================
+
 CYR		EQUALS	20
 SR		EQUALS	21
 CYL		EQUALS	22
 EDOP		EQUALS	23		# EDITS INTERPRETIVE OPERATION CODE PAIRS.
+
+# ============================================================================
+# HARDWARE INTERFACE REGISTERS (Addresses 24-44 octal)
+# ============================================================================
+# TIME REGISTERS: Mission elapsed time counters incremented by hardware
+#	TIME2: High-order mission time (coarse resolution)
+#	TIME1: Low-order mission time (fine resolution, 10 ms ticks)
+#	TIME3-TIME6: Additional timing counters for waitlist and displays
+#	During Apollo 11 landing, these counted to the historic moment:
+#	102:45:40 mission elapsed time - "The Eagle has landed"
+#
+# CDU REGISTERS: Coupling Data Units - IMU gimbal angle readouts
+#	CDUX, CDUY, CDUZ: Inertial Measurement Unit gimbal angles (X, Y, Z axes)
+#		Read by navigation routines 20 times per second
+#		Provided spacecraft attitude relative to inertial reference
+#	CDUT, CDUS: Rendezvous radar trunnion and shaft angles
+#		Used for tracking Command Module during rendezvous after ascent
+#
+# PIPA REGISTERS: Pulsed Integrating Pendulous Accelerometer counters
+#	PIPAX, PIPAY, PIPAZ: Acceleration pulse counters (X, Y, Z axes)
+#		Each pulse represents small velocity increment
+#		Integrated by navigation to compute velocity and position
+#		Critical for guidance during powered descent and ascent
+# ============================================================================
 
 TIME2		EQUALS	24
 TIME1		EQUALS	25
@@ -122,22 +346,32 @@ CDUS		EQUALS	36		# REND RADAR SHAFT CDU
 PIPAX		EQUALS	37
 PIPAY		EQUALS	40
 PIPAZ		EQUALS	41
+
+# RHC (Rotational Hand Controller) - Crew attitude control input
+# Armstrong used RHC for manual attitude control during final landing approach
 Q-RHCCTR	EQUALS	42		# RHC COUNTER REGISTERS
 P-RHCCTR	EQUALS	43
 R-RHCCTR	EQUALS	44
+
+# Additional hardware I/O and command registers
 INLINK		EQUALS	45
-RNRAD		EQUALS	46
-GYROCMD		EQUALS	47
+RNRAD		EQUALS	46		# RENDEZVOUS RADAR RANGE
+GYROCMD		EQUALS	47		# GYRO TORQUING COMMANDS
+
+# CDU command outputs - Drive IMU gimbals to desired angles
 CDUXCMD		EQUALS	50
 CDUYCMD		EQUALS	51
 CDUZCMD		EQUALS	52
 CDUTCMD		EQUALS	53
 CDUSCMD		EQUALS	54
+
 # Page 93
-THRUST		EQUALS	55
-LEMONM		EQUALS	56
-OUTLINK		EQUALS	57
-ALTM		EQUALS	60
+
+# Critical engine and sensor interfaces
+THRUST		EQUALS	55		# DESCENT/ASCENT ENGINE THRUST COMMAND
+LEMONM		EQUALS	56		# LEM ENGINE ON/OFF COMMAND
+OUTLINK		EQUALS	57		# OUTPUT CHANNEL LINKAGE
+ALTM		EQUALS	60		# LANDING RADAR ALTITUDE
 
 # INTERPRETIVE REGISTERS ADDRESSED RELATIVE TO VAC AREA.
 
@@ -2069,34 +2303,157 @@ END-E6		EQUALS	VJETCTR
 
 # Page 138
 # EBANK-7 ASSIGNMENTS
+;
+; ============================================================================
+; EBANK-7: MISSION PROGRAM VARIABLES WITH OVERLAY STRATEGY
+; Memory Range: 3400-3777 (256 words)
+; ============================================================================
+;
+; EBANK-7 contains variables for major mission programs including rendezvous
+; navigation (P20-P25), external ΔV programs (P30-P37), IMU alignment
+; (P51-P53), thrust vector control, landing programs (P63-P67), and ascent
+; guidance. Due to the 2K RAM constraint, this bank uses an OVERLAY strategy
+; where different programs share the same physical memory locations.
+;
+; OVERLAY ARCHITECTURE:
+; The bank is divided into two regions:
+;
+; 1. NON-OVERLAID REGION (lines 2309-2400, ~90 words):
+;    Permanent variables shared across multiple programs or pad-loaded
+;    constants. These locations are always accessible regardless of which
+;    overlay is active. Includes:
+;    - P35 constants (ATIGINC, PTIGINC)
+;    - AOT mark storage (AOTAZ, AOTEL)
+;    - Landing radar parameters (LRHMAX, LRWH, RPCRTIME, RPCRTQSW)
+;    - Throttle storage (ZOOMTIME)
+;    - P63/P64 constants (TENDBRAK, TENDAPPR, DELTTFAP, LEADTIME)
+;    - Lambert targeting (TNEWA)
+;    - P32-35, P72-75 storage (DELVSLV, TIG, RTARG, DELLT4, TTOGO)
+;    - Rendezvous navigation (AIG, AMG, AOG, TRKMKCNT)
+;
+; 2. OVERLAID REGION (lines 2401-2868, ~166 words):
+;    Six overlays (numbered 0-5) that reuse the same memory addresses for
+;    mutually exclusive mission programs. Only one overlay is active at a
+;    time, controlled by the mission program currently running.
+;
+; OVERLAY STRATEGY RATIONALE:
+; Different mission phases never execute simultaneously, so their variables
+; can safely occupy the same memory addresses:
+; - Landing programs (Overlay 4) run only during descent
+; - Ascent guidance (Overlay 5) runs only after liftoff from lunar surface
+; - Rendezvous targeting (Overlay 0) run only during orbital operations
+; - Alignment programs (Overlay 2) run only during specific alignment phases
+;
+; This overlay technique was ESSENTIAL to fitting the entire Apollo mission
+; software into 2K of RAM. It required meticulous analysis to ensure no
+; program conflicts, but enabled complex operations that would otherwise
+; have been impossible within memory constraints.
+;
+; OVERLAY INVENTORY:
+; - Overlay 0 (2410-2533): P20-P25 rendezvous navigation and targeting
+; - Overlay 1 (2534-2568): P30-P37 external ΔV programs
+; - Overlay 2 (2569-2646): P51-P53 IMU alignment programs
+; - Overlay 3 (2647-2718): Thrust vector control and DAP
+; - Overlay 4 (2719-2843): **MISSION-CRITICAL** P63-P67 landing programs
+; - Overlay 5 (2844-2868): P12 ascent guidance
+;
+; HISTORICAL CONTEXT - APOLLO 11 LANDING:
+; During the historic landing on July 20, 1969, Overlay 4 was active,
+; holding variables for the P63 braking phase and P64 approach phase. This
+; overlay contained:
+; - RALT: Radar altitude Armstrong monitored
+; - VHORIZ: Horizontal velocity display
+; - FC: Throttle command to descent engine
+; - State and flags for guidance equations that brought Eagle to touchdown
+;
+; After landing, when Eagle prepared for ascent on July 21, the system
+; switched to Overlay 5, overwriting landing data with ascent variables.
+; This was safe because landing was complete and ascent was beginning.
+;
+; MEMORY PROTECTION:
+; The AGC's restart protection system (which proved critical during the
+; 1202 alarm events) carefully tracked which overlay was active. If a
+; restart occurred, the system would restore the correct overlay and
+; preserve mission-critical data.
+;
+; ============================================================================
 
 		SETLOC	3400
 
 # P35 CONSTANTS.	-- PAD LOADED --	(4D)
+;
+; P35 (Target ΔV) Lambert targeting constants. These values are loaded from
+; the ground before mission and control time increments for targeting
+; computations used during rendezvous maneuvers.
 
 ATIGINC		ERASE 	+1		# B(2)PL	*MUST BE AT 1400 FOR SYSTEMSTEST
+					; Apogee time-of-ignition increment
+					; for Lambert targeting calculations
 PTIGINC		ERASE	+1		# B(2)PL
+					; Perigee time-of-ignition increment
+					; for Lambert targeting calculations
 
 # AOTMARK STORAGE.	-- PAD LOADED --	(12D)
+;
+; Alignment Optical Telescope (AOT) mark storage. The LM's AOT was used for
+; IMU alignment by sighting on stars. These variables store azimuth and
+; elevation angles for star positions used during P51/P52 alignment programs.
+; Values are pad loaded before flight based on star catalog data.
 
 AOTAZ		ERASE	+5		# B(6)PL
+					; AOT azimuth angles for 6 alignment stars
+					; Used during IMU alignment procedures
+					; Scaling: Revolutions (1 rev = 360 degrees)
 AOTEL		ERASE	+5		# B(6)PL
+					; AOT elevation angles for 6 alignment stars
+					; Used during IMU alignment procedures
+					; Scaling: Revolutions (1 rev = 360 degrees)
 
 # LANDING RADAR 	-- PAD LOADED --	(2D)
+;
+; Landing radar configuration parameters loaded before descent. The landing
+; radar provided critical altitude and velocity measurements during Apollo 11's
+; descent on July 20, 1969. This data was essential for guidance but also
+; contributed to the computational load that triggered the 1202 alarm.
 
 LRHMAX		ERASE			# B(1)
+					; Landing radar maximum altitude parameter
+					; Controls radar mode transitions during descent
 LRWH		ERASE			# B(1)
+					; Landing radar weight/height parameter
+					; Used in radar data processing algorithms
 
 # THROTTLE STORAGE.	-- PAD LOADED --	(1D)
+;
+; Throttle timing parameter for Descent Propulsion System (DPS) control during
+; powered descent. The DPS throttle range was 10%-60% during braking phase,
+; then throttled up to 60%-100% range for approach and landing phases.
 
 ZOOMTIME	ERASE			# B(1)PL TIME OF DPS THROTTLE-UP COMMAND
+					; Mission time when DPS throttles from
+					; 10-60% range to 60-100% range during P63
+					; Critical for fuel-optimal descent profile
 
 # P63 AND P64 CONSTANTS.	-- PAD LOADED --	(4D)
+;
+; Landing program phase transition constants. P63 (braking phase) transitions
+; to P64 (approach phase) at approximately 2,600 feet altitude, enabling
+; Armstrong's semi-manual control. These thresholds define when phase switches
+; occur based on time-to-go and altitude criteria.
 
 TENDBRAK	ERASE			# B(1) LANDING PHASE SWITCHING CRITERION.
+					; Time criterion marking end of P63 braking
+					; phase and transition to P64 approach phase
+					; Used at ~10,000 feet altitude transition
 TENDAPPR	ERASE			# B(1) LANDING PHASE SWITCHING CRITERION.
+					; Time criterion marking end of P64 approach
+					; phase and transition to P66 landing phase
+					; Used at ~500 feet for manual control
 DELTTFAP	ERASE			# B(1) INCREMENT ADDED TO TTF/8 WHEN
 					#	SWITCHING FROM P63 TO P64.
+					; Time-to-fall correction applied during
+					; braking-to-approach phase transition
+					; Compensates for guidance equation changeover
 LEADTIME	ERASE			# B(1) TIME INCREMENT SPECIFYING HOW MUCH
 					#	GUIDANCE IS PROJECTED FORWARD
 
@@ -2121,9 +2478,18 @@ DELTATM		EQUALS	REPOSTM +2	# I(2)TMP TIME INTERVAL FOR RUNNING
 # *** RETAIN THE ORDER OF DELVSLV, TIG, RTARG, DELLT4 FOR UPDATE. ***
 
 # P32-35 P72-75 STORAGE.			(6D)
+;
+; Storage for rendezvous programs: P32/P33 (coelliptic sequence initiation),
+; P34/P35 (transfer phase initiation), P72/P73 (ground-computed rendezvous),
+; P74/P75 (ground-computed TPI). These programs compute delta-velocity maneuvers
+; for phasing and rendezvous with the Command Module during ascent.
 
 DELVLVC		ERASE	+5		# I(6) DELTA VELOCITY -- LOCAL VERTICAL COO
+					; Delta-velocity vector in local vertical
+					; coordinates for rendezvous maneuvers
+					; Scaling: meters/centisecond (2^7)
 DELVSLV		=	DELVLVC		# (TEMP STORAGE OF SAME VECTOR)    -RDINATE
+					; Logical equivalence for temporary storage
 
 # P30-P40 INTERFACE UNSHARED.			(2D)
 
@@ -2145,15 +2511,27 @@ WHICH		ERASE			# B(1)
 LOSCOUNT	ERASE			# B(1)
 
 # L SR22.3 (RENDEZVOUS NAVIGATION) STORAGE.		(4D)
+;
+; Rendezvous navigation data from radar tracking of the Command Module during
+; ascent and rendezvous phases. Gimbal angles and mark counters support optical
+; and radar measurements used to refine relative position and velocity estimates.
 
 # RETAIN THE ORDER OF AIG TO TRKMKCNT FOR DOWNLINK PURPOSES.
 
 AIG		ERASE			# B(1)OUT GIMBAL ANGLES
+					; Inner gimbal angle from rendezvous tracking
+					; Downlinked to ground for navigation analysis
 AMG		ERASE			# B(1)OUT (MUST BE
+					; Middle gimbal angle from tracking
+					; Must be consecutive for efficient downlink
 AOG		ERASE			# B(1)OUT  CONSECUTIVE)
+					; Outer gimbal angle from tracking
+					; Forms complete 3-axis gimbal set
 
 TRKMKCNT	ERASE			# B(1)TMP TEMPORARY MARK STORAGE.
-MARKCTR		=	TRKMKCNT
+					; Counter for rendezvous tracking marks
+					; Incremented with each radar measurement
+MARKCTR		=	TRKMKCNT	; Logical equivalence for mark counting
 
 # Page 140
 # P32-P35, P72-P75 STORAGE.  -- PERMANENT --	(6)
@@ -2173,6 +2551,43 @@ WHOCARES	EQUALS	E7OVERLA	# DUMMY FOR EBANK INSENSITIVE 2CADRS.
 FCODD		EQUALS	/AFC/ +2	# B(2)TMP THROTTLE
 FP		EQUALS	FCODD +2	# B(2)TMP THROTTLE
 # Page 141
+; ----------------------------------------------------------------------------
+; EBANK-7 MEMORY OVERLAY 0: RENDEZVOUS GUIDANCE (P32-P35)
+; ----------------------------------------------------------------------------
+; MISSION PROGRAMS: P32 (coelliptic sequence initiation), P33 (constant
+;                   delta-height targeting), P34 (transfer phase initiation),
+;                   P35 (transfer phase midcourse)
+;
+; OVERLAY RATIONALE:
+; Rendezvous guidance programs (P32-P35) are used during LM ascent to target
+; the Command Module in lunar orbit. These programs compute maneuver
+; parameters to achieve rendezvous within specific time windows. They are
+; mutually exclusive with landing (Overlay 4) and other mission phases.
+;
+; MEMORY USAGE: ~124 words
+; Overlays with: All other EBANK-7 overlays (0-5)
+;
+; HISTORICAL CONTEXT:
+; On Apollo 11, after Eagle ascended from the lunar surface on July 21, 1969,
+; these routines calculated the maneuvers needed to rendezvous with Columbia
+; (Michael Collins) in lunar orbit. The targeting had to be precise—missing
+; the rendezvous window would have been catastrophic.
+;
+; KEY VARIABLES:
+; - RANGE, RRATE: Range and range-rate to CSM from rendezvous radar
+; - LOS: Line-of-sight unit vector to target spacecraft
+; - VSUBM, RSUBM: Velocity and position of middle of transfer ellipse
+; - DELTAR: Required position change vector
+; - DELTAV: Required velocity change (burn magnitude and direction)
+; - TIG: Time of ignition for rendezvous maneuver
+;
+; CROSS-REFERENCES:
+; Programs: P32-P35 in P32-P35_P72-P75.agc
+; Guidance: GENERAL_LAMBERT_AIMPOINT_GUIDANCE.agc
+; Display: Rendezvous data displayed via DSKY using nouns N54, N81, N86
+;
+; ----------------------------------------------------------------------------
+
 # ******* OVERLAY NUMBER 0 IN EBANK 7 *******
 
 # RENDEZVOUS GUIDANCE STORAGE --P32.....P35--	(89D)
@@ -2297,6 +2712,46 @@ VEX		ERASE	+1		# I(2) EXHAUST VELOCITY FOR TGO COMPUTAT'N
 IRETURN1	ERASE			# B(1) RETURN FROM MIDTOAV1 AND 2.
 
 # Page 144
+; ----------------------------------------------------------------------------
+; EBANK-7 MEMORY OVERLAY 1: INITVEL, P35-P40 INTERFACE, LRS24.1
+; ----------------------------------------------------------------------------
+; MISSION PROGRAMS: INITVEL (velocity initialization), P35-P40 interface,
+;                   LRS24.1 landing radar data processing
+;
+; OVERLAY RATIONALE:
+; This overlay contains variables for initial velocity setup and interfaces
+; between major program sequences. INITVEL handles velocity vector
+; initialization during program transitions. The P35-P40 interface manages
+; handoff between rendezvous programs (P35) and engine burn programs (P40-P47).
+; LRS24.1 processes landing radar sensor data.
+;
+; MEMORY USAGE: ~35 words
+; Overlays with: All other EBANK-7 overlays (0-5)
+;
+; KEY SECTIONS:
+;
+; 1. INITVEL STORAGE (initialization routines):
+;    Variables for setting up velocity vectors when transitioning between
+;    mission phases or after navigation updates. Critical during program
+;    mode changes.
+;
+; 2. P35-P40 INTERFACE:
+;    Handoff variables when transitioning from rendezvous targeting (P35)
+;    to burn execution (P40-P47). Ensures guidance parameters flow correctly
+;    from planning to execution phase.
+;
+; 3. LRS24.1 STORAGE:
+;    Landing radar data processing variables. The landing radar provides
+;    altitude and velocity measurements during lunar descent. During Apollo 11's
+;    landing, radar data was critical but also contributed to the computational
+;    load that triggered the 1202 alarm.
+;
+; CROSS-REFERENCES:
+; Programs: INITVEL routines, P35-P40 transition logic, radar processing
+; Sensors: Landing radar altitude (RALT) and velocity measurements
+; Related: Landing guidance uses radar data processed here
+;
+; ----------------------------------------------------------------------------
 # ******* OVERLAY NUMBER 1 IN EBANK 7 *******
 
 # INITVEL (CALLED BY P34,35,38,39,10,11,S40.9,S40.1)	(6D)
@@ -2332,6 +2787,53 @@ NSRCHPNT	EQUALS	OMEGDISP +2	# B(1)TMP SEARCH PATTERN POINT COUNTER.
 SAVLEMV		EQUALS	NSRCHPNT +1	# I(6)S-S SAVES LOSVEL
 
 # Page 145
+; ----------------------------------------------------------------------------
+; EBANK-7 MEMORY OVERLAY 2: INCORP, AOTMARK, PLANET STORAGE
+; ----------------------------------------------------------------------------
+; MISSION PROGRAMS: INCORP (measurement incorporation into navigation state),
+;                   AOTMARK (Alignment Optical Telescope mark processing),
+;                   PLANET (planetary/lunar ephemeris calculations)
+;
+; OVERLAY RATIONALE:
+; This overlay contains variables for navigation updates and optical
+; measurements. INCORP integrates sensor measurements (radar, optical sightings)
+; into the navigation state vector using Kalman filtering techniques. AOTMARK
+; processes crew star sightings through the LM's Alignment Optical Telescope
+; to update platform alignment. PLANET computes lunar and solar positions.
+;
+; MEMORY USAGE: ~78 words
+; Overlays with: All other EBANK-7 overlays (0-5)
+;
+; KEY SECTIONS:
+;
+; 1. INCORP STORAGE (~47 words):
+;    Measurement incorporation variables for Kalman filter navigation updates.
+;    When crew takes optical marks or radar provides measurements, these
+;    routines update position/velocity estimates with proper weighting based
+;    on measurement uncertainty.
+;
+; 2. AOTMARK STORAGE (~15 words):
+;    Alignment Optical Telescope mark processing. The LM's AOT was a simple
+;    reticle telescope allowing crew to sight known stars for platform
+;    alignment. Less capable than CM's sextant but sufficient for LM needs.
+;
+; 3. PLANET STORAGE (~16 words):
+;    Lunar and solar ephemeris computation variables. Calculates positions
+;    of Moon and Sun relative to Earth for trajectory planning and navigation
+;    reference frames. Critical for cislunar and lunar orbit navigation.
+;
+; HISTORICAL CONTEXT:
+; During Apollo 11, Armstrong and Aldrin used the AOT to verify IMU alignment
+; before descent. Optical marks provided independent navigation checks against
+; IMU drift. The measurement incorporation routines continuously refined the
+; navigation state as new sensor data became available.
+;
+; CROSS-REFERENCES:
+; Programs: MEASUREMENT_INCORPORATION.agc, AOTMARK.agc, ephemeris subroutines
+; Sensors: AOT optical marks, landing radar, rendezvous radar
+; Navigation: Updates state vectors RN/VN in EBANK-4
+;
+; ----------------------------------------------------------------------------
 # ******* OVERLAY NUMBER 2 IN EBANK 7 *******
 
 # INCORP STORAGE IN E7.				(47D)
@@ -2410,6 +2912,63 @@ P21TIME		EQUALS	RANGRDOT +2	# I(2)TMP
 SCAXIS		EQUALS	P21TIME +2	# I(6)
 POINTVSM	EQUALS	SCAXIS +6	# I(6)
 # Page 147
+; ----------------------------------------------------------------------------
+; EBANK-7 MEMORY OVERLAY 3: SERVICER, BURN PROGRAM, P22, P21 STORAGE
+; ----------------------------------------------------------------------------
+; MISSION PROGRAMS: SERVICER (background display updates), BURN programs
+;                   (P40-P47 engine burn execution), P22 (minimum impulse
+;                   targeting), P21 (ground track determination)
+;
+; OVERLAY RATIONALE:
+; This overlay contains variables for engine burn execution, trajectory
+; displays, and specialized navigation programs. SERVICER handles periodic
+; display updates showing altitude, velocity, time-to-go during mission phases.
+; Burn programs (P40-P47) execute engine firings for orbital maneuvers. P22
+; computes minimum-fuel targeting solutions. P21 determines ground track.
+;
+; MEMORY USAGE: ~134 words
+; Overlays with: All other EBANK-7 overlays (0-5)
+;
+; KEY SECTIONS:
+;
+; 1. SERVICER STORAGE (~6 words):
+;    Display update variables:
+;    - ABVEL: Absolute velocity magnitude for crew display
+;    - HDOTDISP: Altitude rate (vertical velocity) display
+;    - TTFDISP: Time-to-go display during burns or coast phases
+;    These update continuously during mission phases, showing crew real-time
+;    trajectory status.
+;
+; 2. BURN PROG STORAGE (~2+ words):
+;    Engine burn execution variables for programs P40-P47. These programs
+;    handle SPS (Service Propulsion System) and RCS burns including:
+;    - P40: SPS burn using external delta-V
+;    - P41: RCS burn using external delta-V
+;    - P42: SPS orbit shaping
+;    Critical for LOI (Lunar Orbit Insertion), TEI (Trans-Earth Injection).
+;
+; 3. P22 STORAGE:
+;    Minimum impulse trajectory targeting. Computes fuel-optimal maneuver
+;    solutions when precise timing and fuel conservation are critical.
+;
+; 4. P21 STORAGE (~18 words):
+;    Ground track determination program. Computes spacecraft position relative
+;    to lunar surface features, enabling crew to identify landmarks and verify
+;    navigation accuracy. Used during lunar orbit for landmark tracking.
+;
+; HISTORICAL CONTEXT:
+; During Apollo 11's mission, P40 executed the critical Lunar Orbit Insertion
+; burn on July 19, 1969, placing Columbia and Eagle into lunar orbit. Later,
+; P40 performed the Trans-Earth Injection burn returning the crew home. These
+; were among the most critical burns of the mission—failure would have meant
+; the spacecraft missing the Moon or being stranded in lunar orbit.
+;
+; CROSS-REFERENCES:
+; Programs: P40-P47.agc (burn programs), SERVICER.agc, P21.agc
+; Displays: DSKY shows ABVEL, HDOTDISP, TTFDISP during active mission phases
+; Related: Burn targeting computed by P30-P37, executed by P40-P47 here
+;
+; ----------------------------------------------------------------------------
 # ******* OVERLAY NUMBER 3 IN EBANK 7 *******
 
 
@@ -2482,6 +3041,152 @@ P21GAM		EQUALS	P21VEL +2	# I(2)TMP	*** NOUN 91 ***
 P21ALT		EQUALS	P21GAM +2	# I(2)TMP	*** NOUN 91 ***
 
 # Page 149
+; ============================================================================
+; EBANK-7 MEMORY OVERLAY 4: LUNAR LANDING GUIDANCE (P63-P67) *** CRITICAL ***
+; ============================================================================
+; MISSION PROGRAMS: P63 (braking phase), P64 (approach phase), P66 (rate of
+;                   descent/manual control), P67 (automatic landing), P65 (abort)
+;
+; *** THIS IS THE MEMORY THAT LANDED HUMANS ON THE MOON ***
+;
+; OVERLAY RATIONALE:
+; This overlay contains ALL variables for the lunar landing guidance sequence—
+; the most complex and critical 12 minutes of the Apollo 11 mission. From
+; powered descent initiation (PDI) at 50,000 feet through touchdown, these
+; variables held the guidance state that brought Eagle safely to the Sea of
+; Tranquility on July 20, 1969, at 20:17:40 UTC (102:45:40 mission time).
+;
+; The landing programs are mutually exclusive with rendezvous (Overlay 0),
+; ascent (Overlay 5), and other mission phases, making overlay memory reuse
+; both safe and necessary given AGC's 2K RAM constraint.
+;
+; MEMORY USAGE: ~206 words (FULLY PACKED - uses all available overlay space)
+; END-E7.4 = 3777 (maximum address, overlay completely fills available memory)
+; Overlays with: All other EBANK-7 overlays (0-5)
+;
+; HISTORICAL SIGNIFICANCE:
+; During Apollo 11's descent on July 20, 1969:
+;
+; 102:33:05 - PDI: P63 braking phase begins, throttle-up to 10% then 100% DPS
+; 102:38:26 - 1202 ALARM: Executive overflow from landing radar data processing
+;             (variables in this overlay contributed to computational load)
+; 102:43:00 - P64: Transition to approach phase at ~7,000 feet altitude
+; 102:43:30 - Armstrong takes semi-manual control (P66 Rate of Descent mode)
+;             Manual landing site selection to avoid boulder field
+; 102:44:40 - LOW FUEL warning (60 seconds remaining)
+; 102:45:20 - LOW FUEL warning (30 seconds remaining)
+; 102:45:40 - CONTACT LIGHT, engine shutdown, "The Eagle has landed"
+;
+; These variables held the guidance solution during those critical moments.
+; The throttle control variables managed DPS from 10% to 100% and back to 60%
+; for final approach. Landing radar variables provided altitude/velocity. 
+; Display variables showed Armstrong and Aldrin their descent rate and position.
+;
+; KEY VARIABLE GROUPS:
+;
+; 1. GUIDANCE TEMPORARY VARIABLES (first section):
+;    Scratch registers for guidance computation including:
+;    - Vector operations during trajectory calculation
+;    - Temporary results during targeting updates
+;    - Intermediate values during coordinate transformations
+;
+; 2. THROTTLE CONTROL VARIABLES (critical for DPS management):
+;    PIFPSET  - Throttle command set point (scaled 0-1 for 10-100% range)
+;    RTNHOLD  - Return/hold flags for throttle state machine
+;    FWEIGHT  - Estimated vehicle weight for thrust/weight ratio calculation
+;    FC       - Commanded thrust acceleration (determines throttle position)
+;    TTHROT   - Throttle command sent to descent engine
+;    
+;    During Apollo 11, throttle management was critical:
+;    - Started at 10% for ignition verification
+;    - Ramped to 100% (9,870 lbf) for braking phase descent
+;    - Reduced to ~60% during approach phase
+;    - Manual throttle control available to Armstrong via hand controller
+;
+; 3. PERMANENT VARIABLES FOR P63-P67 (OURPERMS section):
+;    Variables that persist across guidance cycles:
+;    - HCALC: Computed altitude for guidance reference
+;    - VGDISP: Velocity-to-be-gained magnitude display
+;    - VPRED: Predicted velocity at current guidance solution
+;    - Landing site coordinates and targeting data
+;    - Abort flags and mode indicators
+;
+; 4. LANDING RADAR DATA VARIABLES:
+;    LRADRET  - Landing radar data return flags
+;    VSELECT  - Velocity measurement selection (beam geometry)
+;    VMEAS    - Radar-measured velocity (3-axis from 4 beams)
+;    HMEAS    - Radar-measured altitude (slant range from antenna)
+;    VN2      - Velocity squared for energy calculations
+;    
+;    Landing Radar (LR) provided critical altitude/velocity measurements during
+;    descent. On Apollo 11, LR data initially caused computational overload
+;    (1202 alarm) but was essential for accurate landing. Armstrong trusted
+;    the radar data even during alarm conditions, allowing continued descent.
+;
+; 5. LANDING ANALOG DISPLAY STORAGE (40 words):
+;    LATVMETR - Lateral velocity meter needle position
+;    FORVEL   - Forward velocity display
+;    ALTRATE  - Altitude rate (descent velocity) meter
+;    These drove the cockpit meters Armstrong and Aldrin monitored during
+;    descent. Armstrong's piloting technique relied heavily on altitude rate
+;    and lateral velocity displays during manual site selection.
+;
+; 6. P66 RATE OF DESCENT (R.O.D.) VARIABLES:
+;    P66 is the semi-manual mode Armstrong used for final approach:
+;    - RODCOUNT: Rate-of-descent control loop counter
+;    - RODSCAL1: Rate scaling factor for display
+;    - LASTTPIP/THISTPIP: Accelerometer pulse integration for velocity
+;    - OLDPIPAX/Y/Z: Previous accelerometer readings for delta-V calculation
+;    - DELVROD: Delta-velocity in Rate of Descent frame
+;    
+;    In P66 mode, Armstrong controlled descent rate via hand controller while
+;    AGC maintained attitude and lateral position. This hybrid approach gave
+;    Armstrong landing site selection authority while AGC handled the complex
+;    multi-axis attitude control. This mode was critical during boulder field
+;    avoidance in final approach.
+;
+; 7. NOUN 63 COMPONENT:
+;    HCALC1: Altitude calculation for DSKY display (Noun 63 shows range data)
+;    Crew could request N63 via V16N63 to see specific altitude computations
+;
+; CROSS-REFERENCES:
+; Programs: THE_LUNAR_LANDING.agc (P63), LUNAR_LANDING_GUIDANCE_EQUATIONS.agc,
+;           THROTTLE_CONTROL_ROUTINES.agc, LANDING_ANALOG_DISPLAYS.agc,
+;           P70-P71.agc (abort programs)
+; Sensors: Landing radar altitude/velocity, IMU accelerometers (PIPA)
+; Control: Descent engine throttle commands, RCS attitude control
+; Display: Landing analog displays, DSKY numerical displays
+; Related: Navigation state vectors RN/VN in EBANK-4 continuously updated
+;          during descent, fed into guidance equations here
+;
+; MISSION CONTEXT - WHY THIS OVERLAY WAS NEEDED:
+; The lunar landing was the single most computationally intensive phase of
+; the Apollo mission. Guidance equations ran continuously, integrating:
+; - Landing radar data (4 beams, multiple measurements per second)
+; - IMU accelerometer data (continuous PIPA pulse integration)
+; - Trajectory predictions (iterative numerical integration)
+; - Throttle optimization (fuel-optimal descent trajectory)
+; - Display updates (continuous crew display refresh)
+; - Abort monitoring (continuous go/no-go decision logic)
+;
+; This computational load, combined with radar data processing, caused the
+; famous 1202 program alarms during Apollo 11's descent. The executive
+; scheduler (EBANK-0) was overloaded but successfully prioritized critical
+; tasks. Flight controller Steve Bales made the "Go" call to continue descent
+; despite alarms, trusting the guidance solution held in these variables.
+;
+; The landing was successful with approximately 25 seconds of fuel remaining—
+; a testament to both the guidance algorithms using these variables and
+; Armstrong's manual site selection skills using the displays they drove.
+;
+; MEMORY EFFICIENCY NOTE:
+; This overlay is COMPLETELY FULL (END-E7.4 = 3777 = last available address).
+; Every word was precious. MIT Instrumentation Laboratory engineers optimized
+; variable placement, reused temporaries, and carefully structured data to
+; fit everything needed for landing into this overlay. Modern landing systems
+; have megabytes of RAM; Apollo 11 landed with ~200 words in this overlay.
+;
+; ============================================================================
 # ******* OVERLAY NUMBER 4 IN EBANK 7 *******
 
 # VARIABLES FOR SECOND DPS GUIDANCE (THE LUNAR LANDING)		(18D)
@@ -2607,6 +3312,125 @@ DELVROD		EQUALS	OLDPIPAZ +1	# B(6)
 HCALC1		EQUALS	DELVROD +6	# I(2)
 
 # Page 152
+; ============================================================================
+; EBANK-7 MEMORY OVERLAY 5: ASCENT GUIDANCE (P12) - RETURN TO ORBIT
+; ============================================================================
+; MISSION PROGRAM: P12 (powered ascent from lunar surface to orbital insertion)
+;
+; OVERLAY RATIONALE:
+; This overlay contains variables for the lunar ascent guidance program,
+; which executed Eagle's return to orbit on July 21, 1969. After 21.5 hours
+; on the lunar surface, this guidance brought the ascent stage from the
+; Sea of Tranquility to a rendezvous orbit with Columbia at 124:22:00 MET.
+;
+; Ascent is mutually exclusive with landing (Overlay 4), rendezvous navigation
+; (Overlay 0), and other mission phases, making overlay memory reuse safe.
+;
+; MEMORY USAGE: Only 21 words (compact compared to landing's 206 words)
+; END-E7.5 = TXO +2 (first unused location after this overlay)
+; Overlays with: All other EBANK-7 overlays (0-4)
+;
+; HISTORICAL CONTEXT:
+; Apollo 11 ascent timeline, July 21, 1969:
+;
+; 124:22:00 MET - LIFTOFF: APS (Ascent Propulsion System) ignition
+;                 3,500 lbf fixed-thrust engine, no throttle capability
+; 124:22:07 MET - Pitch program begins (vertical rise complete)
+; 124:22:15 MET - Roll program to correct orbital plane
+; 124:29:16 MET - APS cutoff, insertion into 9x46 nautical mile orbit
+;
+; Total ascent time: ~7 minutes (much simpler than 12-minute landing)
+; Fuel margin: Comfortable (ascent engine more reliable, fixed thrust)
+; Crew: Armstrong and Aldrin, returning to rejoin Collins in Columbia
+;
+; ASCENT VS. LANDING GUIDANCE DIFFERENCES:
+; Landing (Overlay 4): Variable throttle (10-100%), landing radar, complex
+;                      terrain avoidance, manual control, abort monitoring
+; Ascent (Overlay 5):  Fixed thrust (100% APS), no terrain, fully automatic,
+;                      simpler targeting (insertion to rendezvous orbit)
+;
+; This explains why ascent uses only 21 words vs. landing's 206 words.
+; Ascent guidance is fundamentally simpler: single-burn insertion targeting
+; with no throttle control, no landing radar, and no manual override modes.
+;
+; KEY VARIABLE GROUPS:
+;
+; 1. TARGETING VARIABLES (RCO, YCO):
+;    RCO  - Target radius (orbital altitude) scaled at 2^24 meters
+;    YCO  - Out-of-plane distance (latitude targeting) scaled at 2^24 meters
+;    
+;    These define the insertion orbit Armstrong and Aldrin needed to reach
+;    for rendezvous with Columbia. Ground control uplinked the target state
+;    vector before ascent, and these variables held the guidance targets.
+;
+; 2. DELTA-V INVERSE COMPONENTS (1/DV1, 1/DV2, 1/DV3):
+;    Inverse of required delta-velocity in three axes for guidance computation.
+;    Used in closed-loop steering law to null velocity errors during ascent.
+;    Format: Scaled at ATMAG (probably 2^7 or similar for velocity inverse)
+;    
+;    The guidance continuously computed required thrust direction to achieve
+;    orbital insertion. These inverse delta-V terms enabled efficient
+;    calculation of steering commands without expensive division operations.
+;
+; 3. VELOCITY-TO-BE-GAINED VECTOR (VGVECT):
+;    VGVECT - 6-word vector (position + velocity to be gained)
+;             Primary guidance output showing remaining burn requirements
+;    
+;    This vector was continuously updated during ascent, showing how much
+;    more velocity change was needed to reach the target orbit. As VGVECT
+;    approached zero, the guidance prepared for engine cutoff. VGVECT
+;    magnitude also displayed to crew on DSKY for ascent monitoring.
+;
+; 4. TIMING VARIABLES:
+;    TXO      - Time at which X-axis override is allowed (2 words)
+;               Controls when guidance can command pitch-over from vertical
+;    ENGOFFDT - Engine-off delta-time (1 word)
+;               Predicted time until APS cutoff based on current VGVECT
+;
+;    Ascent guidance used phased logic:
+;    - Initial vertical rise (first ~7 seconds)
+;    - Pitch program (transition to horizontal velocity buildup)
+;    - Closed-loop steering (null velocity errors to insertion)
+;    TXO prevented premature pitch-over that could cause ground collision.
+;
+; 5. RANGE CALCULATION (XRANGE):
+;    XRANGE - Downrange distance traveled during ascent (2 words)
+;             Used for insertion accuracy and display purposes
+;
+;    While less critical than landing site accuracy, ascent range tracking
+;    ensured proper orbital insertion geometry for rendezvous. The guidance
+;    targeted a specific insertion point relative to Columbia's orbit.
+;
+; CROSS-REFERENCES:
+; Programs: ASCENT_GUIDANCE.agc (guidance equations), P12.agc (ascent program)
+; Sensors: IMU accelerometers (PIPA) for velocity integration
+;          No radar (unlike landing) - purely inertial guidance
+; Control: APS thrust direction commands (attitude control via RCS)
+; Display: VGVECT magnitude shown on DSKY as "velocity to be gained"
+; Related: Navigation state RN/VN in EBANK-4 updated during ascent burn
+;
+; MISSION SUCCESS NOTE:
+; Apollo 11's ascent was flawless. P12 guidance inserted Eagle into a
+; 9 x 46 nautical mile orbit with high precision. The subsequent rendezvous
+; maneuvers (using Overlay 0 variables after this overlay was no longer
+; needed) brought Armstrong and Aldrin to docking with Collins in Columbia
+; approximately 3.5 hours after ascent.
+;
+; The simplicity of this overlay (21 words) compared to landing (206 words)
+; reflects a fundamental truth: getting off the Moon was easier than landing
+; on it. Fixed thrust, no terrain, no landing radar, fully automatic guidance.
+; The hard part was over once Eagle touched down in the Sea of Tranquility.
+;
+; MEMORY EFFICIENCY:
+; This overlay demonstrates AGC's overlay memory management at its best.
+; The same EBANK-7 physical memory locations that held 206 words of complex
+; landing variables (Overlay 4) were reused for 21 words of simpler ascent
+; variables (Overlay 5) after landing was complete. The programs were mutually
+; exclusive by mission phase, making this reuse completely safe.
+;
+; Modern spacecraft have separate memory for each phase; Apollo had to reuse
+; the same 2K of RAM for the entire mission by carefully overlaying variables.
+; ============================================================================
 # ******* OVERLAY NUMBER 5 IN EBANK 7 *******
 
 # ASCENT GUIDANCE ERASABLES.			(21D)
