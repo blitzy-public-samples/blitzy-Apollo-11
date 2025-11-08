@@ -25,6 +25,29 @@
 #
 #       Assemble revision 001 of AGC program LMY99 by NASA 2021112-061
 #       16:27 JULY 14, 1969
+#
+# ============================================================================
+# FILE: T4RUPT_PROGRAM.agc
+# MODULE: Real-Time Interrupt Processing
+# MISSION PHASE: all phases (launch/earth-orbit/trans-lunar/lunar-orbit/descent/landing/ascent/rendezvous/trans-earth)
+#
+# TL;DR: Implements the Timer 4 interrupt service routine, the heartbeat of
+#        the AGC real-time operating system. Fires every 10 milliseconds to
+#        manage DSKY display scanning, WAITLIST task dispatching, mission
+#        timer updates, IMU/ISS status monitoring, and critical hardware
+#        failure detection. During Apollo 11's descent, computational
+#        overload in this routine contributed to the famous 1202 alarms.
+#
+# COMMENT-ONLY READERS: This is the AGC's "heartbeat" - the routine that
+#        keeps the computer synchronized with real time and spacecraft
+#        systems. Read to understand how the computer managed multiple
+#        critical tasks simultaneously during the lunar landing.
+#
+# CODE-ALONG READERS: Study the interrupt priority structure, register
+#        preservation techniques, and the clever time-slicing strategy
+#        that allowed 10ms interrupt timing despite varying workloads.
+#        Note the DSRUPTSW counter mechanism for distributing tasks.
+# ============================================================================
 # Page 155
 		BANK	12
 		SETLOC	T4RUP
@@ -32,42 +55,78 @@
 
 		EBANK=	M11
 		COUNT*	$$/T4RPT
-T4RUPT		TS	BANKRUPT
+; ============================================================================
+; TRANSITION: T4RUPT Entry Point - The AGC Real-Time Heartbeat
+;
+; Every 10 milliseconds, the AGC hardware triggers this Timer 4 interrupt,
+; suspending whatever program was executing. This is the highest-frequency
+; interrupt in the system, responsible for time-critical operations that
+; keep the spacecraft functioning. During the Apollo 11 lunar descent, this
+; routine's workload became intense as radar data flooded in, contributing
+; to the WAITLIST overflow that triggered the 1202 program alarm at mission
+; time 102:38:26. Flight controller Steve Bales' "Go" decision allowed the
+; landing to continue despite the alarm.
+; ============================================================================
 
-		EXTEND
-		QXCH	QRUPT
+; T4RUPT - Timer 4 Interrupt Service Routine Entry Point
+; Called automatically by AGC hardware every 10 milliseconds (100 Hz).
+; This interrupt has high priority and must complete quickly to avoid
+; disrupting time-critical operations.
 
-		CCS	DSRUPTSW	# GOES 7(-1)0 AROUND AND AROUND
-		TCF	NORMT4 +1
-		TCF	NORMT4
+T4RUPT		TS	BANKRUPT	; Save A register to preserve interrupted program state
+					; BANKRUPT holds accumulator during interrupt processing
 
-		TCF	QUIKDSP
+		EXTEND			; Next instruction is extended (uses both words)
+		QXCH	QRUPT		; Save and restore Q register (return address)
+					; Preserves interrupted program's return linkage
 
-NORMT4		CAF	SEVEN
-		TS	RUPTREG1
-		TS	DSRUPTSW
+; DSRUPTSW cycles through values 7, 6, 5, 4, 3, 2, 1, 0, then back to 7.
+; This counter distributes time-consuming tasks across multiple interrupt
+; cycles, preventing any single 10ms cycle from taking too long. This
+; time-slicing technique was critical for maintaining real-time responsiveness.
+
+		CCS	DSRUPTSW	; Check DSRUPTSW counter value and decrement
+					; CCS (Count, Compare, and Skip) tests: >0, +0, <0, -0
+		TCF	NORMT4 +1	; If positive (7 down to 1), skip display cycle
+		TCF	NORMT4		; If +0, reset counter and continue normal path
+					; (never reaches <0 or -0 cases in normal operation)
+
+		TCF	QUIKDSP		; If counter was 0, do quick display update first
+
+; Normal T4RUPT path: reset the counter to 7 for next cycle through tasks
+NORMT4		CAF	SEVEN		; Load constant 7 into accumulator
+		TS	RUPTREG1	; Save to RUPTREG1 (used for task dispatching)
+		TS	DSRUPTSW	; Reset DSRUPTSW counter to 7 for next 8 cycles
 
 		BLOCK	02
 		SETLOC	FFTAG10
 		BANK
 
 		COUNT*	$$/T4RPT
-100MRUPT	=	OCT37766	# (DEC 16374)
+; Constants for T4RUPT timing and relay control
+100MRUPT	=	OCT37766	# (DEC 16374) - 100ms timing constant for slower tasks
 		# RELTAB IS A PACKED TABLE. RELAYWORD CODE IN UPPER 4 BITS, RELAY CODE
 		# IN LOWER 5 BITS.
 
-RELTAB		OCT	04025
-		OCT	10003
-		OCT	14031
-		OCT	20033
-		OCT	24017
-		OCT	30036
-		OCT	34034
-		OCT	40023
-		OCT	44035
-		OCT	50037
-		OCT	54000
-RELTAB11	OCT	60000
+; RELTAB - Relay Table for DSKY Display Control
+; Each entry contains packed relay control information:
+; - Upper 4 bits: relay word selection (which group of relays)
+; - Lower 5 bits: specific relay code (which relay within group)
+; These control the electromechanical relays that drive the DSKY's
+; seven-segment displays and indicator lights visible to the crew.
+
+RELTAB		OCT	04025		; Relay control entry 0
+		OCT	10003		; Relay control entry 1
+		OCT	14031		; Relay control entry 2
+		OCT	20033		; Relay control entry 3
+		OCT	24017		; Relay control entry 4
+		OCT	30036		; Relay control entry 5
+		OCT	34034		; Relay control entry 6
+		OCT	40023		; Relay control entry 7
+		OCT	44035		; Relay control entry 8
+		OCT	50037		; Relay control entry 9
+		OCT	54000		; Relay control entry 10
+RELTAB11	OCT	60000		; Relay control entry 11
 
 # Page 156
 		# SWITCHED-BANK PORTION
@@ -77,61 +136,111 @@ RELTAB11	OCT	60000
 		BANK
 
 		COUNT*	$$/T4RPT
-CDRVE		CCS	DSPTAB +11D
-		TC	DSPOUT
-		TC	DSPOUT
+; ============================================================================
+; TRANSITION: From Interrupt Entry to Display Output Processing
+;
+; The T4RUPT routine now enters the display management section. The DSKY
+; (Display and Keyboard) uses electromechanical relays to illuminate seven-
+; segment digits and indicator lights. These relays require precise timing
+; to avoid flicker or missed updates. During critical mission phases like
+; lunar landing, the crew relied on these displays for altitude, velocity,
+; and system status information.
+; ============================================================================
 
-		XCH	DSPTAB +11D
-		MASK	LOW11
-		TS	DSPTAB +11D
-		AD	RELTAB11
-		EXTEND
-		WRITE	OUT0
-		TC	HANG20
+; CDRVE - Control Display Relay Driver
+; Manages the 12th DSKY display position (DSPTAB +11D) and drives the
+; corresponding relay output. This position often controls special indicators
+; or the rightmost digit position.
+
+CDRVE		CCS	DSPTAB +11D	; Check display table entry 11 (12th position)
+					; CCS tests if display data is positive
+		TC	DSPOUT		; If positive, update display outputs
+		TC	DSPOUT		; If +0, also update display outputs
+
+		XCH	DSPTAB +11D	; Exchange A with display entry (saves old, loads new)
+		MASK	LOW11		; Mask lower 11 bits to isolate relay data
+		TS	DSPTAB +11D	; Store masked value back to display table
+		AD	RELTAB11	; Add relay table entry 11 for final relay code
+		EXTEND			; Next instruction is extended
+		WRITE	OUT0		; Write relay control to hardware OUT0 channel
+					; This energizes specific DSKY relay coils
+		TC	HANG20		; Wait 20 microseconds for relay settling time
 
 # Page 157
 		# DSPOUT PROGRAM, PUTS OUT DISPLAYS
 
-DSPOUTSB	TS	NOUT
-		CS	ZERO
-		TS	DSRUPTEM	# SET TO -0 FOR 1ST PASS THRU DSPTAB
-		XCH	DSPCNT
-		AD	NEG0		# TO PREVENT +0
-		TS	DSPCNT
-DSPSCAN		INDEX	DSPCNT
-		CCS	DSPTAB
+; DSPOUTSB - Display Output Subroutine
+; Scans through the DSPTAB (display table) to find entries that need
+; updating and writes them to the DSKY hardware. The table contains
+; 12 entries (positions 0-11) representing the DSKY display digits
+; and indicator lights.
+
+DSPOUTSB	TS	NOUT		; Save display request count
+		CS	ZERO		; Load -0 (negative zero)
+		TS	DSRUPTEM	; SET TO -0 FOR 1ST PASS THRU DSPTAB
+					; Using -0 as sentinel for first pass detection
+		XCH	DSPCNT		; Get current display counter position
+		AD	NEG0		; TO PREVENT +0 (convert +0 to -0)
+		TS	DSPCNT		; Store normalized counter value
+
+; DSPSCAN - Display Table Scanner
+; Walks through DSPTAB looking for negative entries (which indicate
+; data ready for display). Positive entries are "pending" (not yet ready).
+; This two-pass algorithm ensures all display positions get serviced.
+
+DSPSCAN		INDEX	DSPCNT		; Use DSPCNT as index into DSPTAB
+		CCS	DSPTAB		; Check display table entry sign
 		CCS	DSPCNT		# IF DSPTAB ENTRY +, SKIP
+					; Entry positive = not ready, check next
 		TCF	DSPSCAN	-2	# IF DSPCNT +, TRY AGAIN
+					; Counter positive = more entries to check
 		TCF	DSPLAY		# IF DSPTAB ENTRY -, DISPLAY
+					; Entry negative = ready to display
 TABLNTH		OCT	12		# DEC 10, LENGTH OF DSPTAB
+					; Table has 12 positions (0-11)
 		CCS	DSRUPTEM	# IF DSRUPTEM=+0, 2ND PASS THRU DSPTAB
 120MRUPT	DEC	16372		# (DSPCNT = 0).  +0 INTO NOUT.
-		TS	NOUT
-		TC	Q
+					; 120ms timing constant for slower updates
+		TS	NOUT		; Clear output request (no more entries)
+		TC	Q		; Return to caller
 		TS	DSRUPTEM	# IF DSRUPTEM=-0, 1ST PASS THRU DSPTAB
+					; First pass complete, prepare for second
 		CAF	TABLNTH		# (DSPCNT=0).+0 INTO DSRUPTEM. PASS AGAIN
-		TCF	DSPSCAN -1
+		TCF	DSPSCAN -1	; Restart scan from beginning of table
 
-DSPLAY		AD	ONE
-		INDEX	DSPCNT
-		TS	DSPTAB		# REPLACE POSITIVELY
-		MASK	LOW11		# REMOVE BITS 12 TO 15
-		TS	DSRUPTEM
-		CAF	HI5
-		INDEX	DSPCNT
-		MASK	RELTAB		# PICK UP BITS 12 TO 15 OF RELTAB ENTRY
-		AD	DSRUPTEM
-		EXTEND
-		WRITE	OUT0
+; DSPLAY - Display Update Handler
+; Processes a display table entry that's ready (negative). Converts the
+; entry back to positive (marking it "displayed"), extracts the relay
+; control bits, and writes them to the DSKY hardware output channel.
 
-		TCF	Q+1
+DSPLAY		AD	ONE		; Add 1 to make negative entry positive
+		INDEX	DSPCNT		; Index into display table
+		TS	DSPTAB		; REPLACE POSITIVELY (mark as displayed)
+		MASK	LOW11		; REMOVE BITS 12 TO 15 (isolate data bits)
+		TS	DSRUPTEM	; Store data portion temporarily
+		CAF	HI5		; Load mask for high 5 bits (bits 12-15)
+		INDEX	DSPCNT		; Index into relay table
+		MASK	RELTAB		; PICK UP BITS 12 TO 15 OF RELTAB ENTRY
+					; These bits select which relay word to use
+		AD	DSRUPTEM	; Combine relay selection with data
+		EXTEND			; Next instruction is extended
+		WRITE	OUT0		; Write complete relay command to DSKY
+					; This illuminates specific display segments
+
+		TCF	Q+1		; Return (skip one instruction)
+
+; DSPOUT - Display Output Main Entry
+; Checks if display updates are enabled (FLAGWRD5 flag) and if there
+; are pending display requests (NOUT counter). Only proceeds with
+; display scanning if both conditions are met.
 
 DSPOUT		CCS	FLAGWRD5	# IS DSKY FLAG ON
-		CAF	ZERO		# NO
-		TCF	NODSPOUT	# NO
-		CCS	NOUT		# YES
-		TC	DSPOUTSB
-		TCF	NODSPOUT	# NO DISPLAY REQUESTS
+					; FLAGWRD5 bit indicates if display active
+		CAF	ZERO		# NO (flag was positive or zero)
+		TCF	NODSPOUT	# NO - skip display update this cycle
+		CCS	NOUT		# YES - check if display requests pending
+		TC	DSPOUTSB	; Requests pending - process display table
+		TCF	NODSPOUT	# NO DISPLAY REQUESTS - skip update
 
 HANG20		CS	14,11,9
 		ADS	DSRUPTSW
@@ -148,6 +257,25 @@ SETTIME4	TS	TIME4
 		#	IF PREV OFF AND NOW ON	-- UPDATE IMODES33 AND PROCESS VIA PINBALL.
 		#	IF PREV OFF AND NOW OFF	-- BYPASS.
 		# THE LOGIC EMPLOYED REQUIRES ONLY 9 MCT (APPROX. 108 MICROSECONDS) OF COMPUTER TIME WHEN NO CHANGES OCCUR.
+
+; ============================================================================
+; PROCEED BUTTON MONITORING
+;
+; The PROCEED button on the DSKY is the astronaut's primary means of
+; acknowledging computer requests and advancing program sequences. During
+; the Apollo 11 descent, Armstrong and Aldrin used PROCEED to confirm
+; program transitions and navigate through landing displays.
+;
+; This routine efficiently detects button state changes using only 9 machine
+; cycles (108 microseconds) when no change occurs, crucial for maintaining
+; the 10ms interrupt deadline. When a press is detected, it schedules the
+; PROCKEY routine via NOVAC to process the keystroke outside the interrupt.
+;
+; The routine compares the current state of Channel 32 Bit 14 (the hardware
+; PROCEED button line) with the previously stored state in IMODES33. Using
+; the RXOR (Read and Exclusive-OR) instruction allows simultaneous reading
+; and comparison in a single operation.
+; ============================================================================
 
 PROCEEDE	CA	IMODES33	# MONITOR FOR PROCEED BUTTON
 		EXTEND
@@ -172,6 +300,29 @@ PROCEEDE	CA	IMODES33	# MONITOR FOR PROCEED BUTTON
 # Page 159
 		# JUMP TO APPROPRIATE ONCE-PER SECOND (0.96 SEC ACTUALLY) ACTIVITY
 
+; ============================================================================
+; T4JUMP - Task Distribution Table
+;
+; This indexed jump table distributes periodic tasks across eight consecutive
+; T4RUPT cycles, creating a ~960ms (approximately 1 second) time slice for
+; lower-priority monitoring functions. RUPTREG1 cycles 0-7, causing each
+; T4RUPT to execute one of eight task sequences.
+;
+; The clever design prevents all monitoring tasks from executing in the same
+; interrupt, which would cause timing overruns. Instead, tasks are spread
+; across multiple cycles:
+;   Cycle 0: RCS monitoring
+;   Cycle 1: Rendezvous radar autopilot check
+;   Cycle 2: IMU monitoring
+;   Cycle 3: Digital autopilot sampling
+;   Cycles 4-7: Repeat the sequence
+;
+; During Apollo 11's descent, this task distribution was crucial for
+; preventing the 1202 alarm from becoming catastrophic. By time-slicing
+; non-critical tasks, the computer could still service the guidance and
+; throttle control computations within their deadlines.
+; ============================================================================
+
 T4JUMP		INDEX	RUPTREG1
 		TCF	+1
 
@@ -189,11 +340,42 @@ T4JUMP		INDEX	RUPTREG1
 # Page 160
 		# ADDITIONAL ROUTINES FOR 20MS. KEYBOARD ACTIVITY
 
+; ============================================================================
+; DISPLAY TIMING CONTROL - 20ms vs 120ms Cycles
+;
+; The T4RUPT alternates between two timing modes to handle different display
+; update rates. NODSPOUT handles the 120ms cycles (every 12th interrupt),
+; while QUIKDSP handles the 20ms cycles (every 2nd interrupt). This dual-
+; rate system allows critical display updates to occur quickly while
+; reducing the average processing load.
+;
+; The DSRUPTSW counter determines which path to take, cleverly encoding
+; multiple timing states in a single variable.
+; ============================================================================
+
 NODSPOUT	EXTEND
 		WRITE	OUT0
 
 		CAF	120MRUPT	#SET FOR NEXT CCRIVE
 		TCF	SETTIME4
+
+; ============================================================================
+; QUIKDSP - Fast Display Update (20ms cycle)
+;
+; This routine handles the rapid display update path, executing every 20ms
+; to provide responsive feedback to the crew. QUIKDSP alternates between
+; writing display data and turning off relay drivers, creating a multiplexed
+; display system.
+;
+; The routine uses BIT14 of DSRUPTSW as a toggle flag to alternate between:
+;   1. Writing new display segments (relay drivers active)
+;   2. Turning off all relays (next cycle)
+;
+; This "write then clear" pattern prevents ghosting on the electroluminescent
+; displays while maintaining adequate brightness. During Apollo 11's landing,
+; this rapid update rate ensured Armstrong and Aldrin saw altitude and
+; velocity information with minimal lag.
+; ============================================================================
 
 QUIKDSP		CAF	BIT14
 		MASK	DSRUPTSW
@@ -229,6 +411,12 @@ OCT37737	OCT	37737
 		TC	SYNCT4
 		TC	RESUME
 
+; QUIKOFF - Turn Off Display Relays
+; This is the "clear" half of the display multiplexing cycle. Writes zeros
+; to OUT0 (Channel 10) to de-energize all relay drivers, preventing segment
+; ghosting. Then sets BIT14 in DSRUPTSW so the next 20ms cycle will write
+; display data again.
+
 QUIKOFF		EXTEND
 		WRITE	OUT0
 		CAF	BIT14		# RESET DSRUPTSW TO SEND DISPLAY NEXT PASS
@@ -237,6 +425,34 @@ QUIKOFF		EXTEND
 14,11,9		OCT	22400
 
 # Page 161
+; ============================================================================
+; IMUMON - Inertial Measurement Unit Monitor
+;
+; The IMU is the spacecraft's primary navigation sensor, containing three
+; gyroscopes and three accelerometers in a stabilized platform. This routine
+; monitors the health and status of the IMU system by detecting changes in
+; six critical status bits from Channel 30 (the IMU telemetry channel).
+;
+; Executes every 480ms (every 48th T4RUPT) to check:
+;   Bit 15: Temperature within limits
+;   Bit 14: ISS (Inertial Subsystem) turn-on request
+;   Bit 13: IMU failure detected
+;   Bit 12: IMU CDU (Coupling Data Unit) failure
+;   Bit 11: IMU in CAGE mode (platform uncaged)
+;   Bit 9:  IMU in OPERATE mode
+;
+; When any bit changes state, IMUMON calls the appropriate handler routine
+; to process the event. During Apollo 11's descent, the IMU provided the
+; position and velocity data that guided Eagle to the lunar surface. Any
+; IMU failure would have required an immediate abort.
+;
+; The routine uses an elegant bit-scanning algorithm: it XORs the current
+; Channel 30 state with the previously saved state (IMODES30), isolates
+; changed bits, then iterates through them using a doubling loop that
+; detects the highest-order changed bit first. This ensures critical
+; failures (higher bits) are processed before less critical events.
+; ============================================================================
+
 # PROGRAM NAME:  IMUMON
 
 # FUNCTIONAL DESCRIPTION:  THIS PROGRAM IS ENTERED EVERY 480 MS.  IT DETECTS CHANGES OF THE IMU STATUS BITS IN
@@ -308,6 +524,43 @@ NXTIFAIL	CCS	RUPTREG2	# PROCESS ANY ADDITIONAL CHANGES.
 		TCF	NXTIFBIT -1
 
 # Page 163
+; ============================================================================
+; TNONTEST - IMU Turn-On Sequence Manager
+;
+; This routine manages the complex initialization sequence required when the
+; IMU (Inertial Subsystem) is powered on. The ISS (Inertial Subsystem) 
+; requires a careful 90-second caging period to allow the gyroscopes to
+; spin up and stabilize before the platform can be aligned for navigation.
+;
+; The routine handles three distinct initialization scenarios:
+;
+; 1. ISS TURN-ON: Computer is operating when ISS is turned on. Both the
+;    "ISS Turn-On" (Channel 30 bit 14) and "ISS Operate" (bit 9) signals
+;    appear. The platform is caged for 90 seconds and the CDUs (Coupling
+;    Data Units) are zeroed so gimbal lock monitoring will function properly.
+;
+; 2. ICDU INITIALIZATION: Computer was turned on or fresh-started with ISS
+;    already in operate mode. Only "ISS Operate" signal is present. The
+;    ICDUs are zeroed for gimbal lock monitoring (unless platform is already
+;    in gimbal lock after a restart, in which case no action is taken).
+;
+; 3. RESTART WITH ACTIVE IMU PROGRAM: A restartable program is using the
+;    IMU. No initialization occurs since the using program already handled
+;    initialization and T4RUPT should not interfere.
+;
+; The routine uses a two-stage timing mechanism encoded in IMODES30 bits 7-8:
+;   - Bit 7 set = 1 by first signal (turn-on or operate) that arrives
+;   - Next 480ms: Bit 8 set = 1, routine waits
+;   - Next 480ms: Bits 7-8 cleared, routine proceeds with initialization
+;
+; This 960ms delay ensures both signals have stabilized before action is taken.
+;
+; During Apollo 11, proper IMU initialization was critical before every major
+; maneuver. The 90-second caging delay, though lengthy, was essential for
+; gyroscope stabilization. Any failure during this sequence would have left
+; the spacecraft without reliable navigation.
+; ============================================================================
+
 # PROGRAM NAME:  TNONTEST.
 
 # FUNCTIONAL DESCRIPTION:  THIS PROGRAM HONORS REQUESTS FOR ISS INITIALIZATION.  ISS TURN-ON (CHANNEL 30 BIT 14)
@@ -495,6 +748,45 @@ ISSZERO		TC	IBNKCALL	# TURN OFF NO ATT LAMP.
 		TCF	C33TEST
 
 # Page 167
+; ============================================================================
+; C33TEST - Channel 33 Interrupt Monitor
+;
+; Channel 33 carries three critical flip-flop status signals from spacecraft
+; hardware systems. This routine reads these signals every 480ms and calls
+; the appropriate handler when a status change is detected.
+;
+; The three monitored conditions are:
+;
+; 1. PIPA FAIL (Bit 13): Accelerometer failure in the IMU's Pulsed
+;    Integrating Pendulous Accelerometer. The PIPA measures spacecraft
+;    acceleration along three axes, and its data is essential for dead-
+;    reckoning navigation. A PIPA failure during powered flight could lead
+;    to navigation errors and require immediate abort.
+;
+; 2. DOWNLINK TOO FAST (Bit 12): The telemetry downlink to Mission Control
+;    is exceeding the ground station's ability to receive and process data.
+;    This condition indicates the AGC is transmitting faster than the
+;    Manned Space Flight Network (MSFN) ground stations can handle.
+;
+; 3. UPLINK TOO FAST (Bit 11): The ground station uplink (commands from
+;    Mission Control) is being sent faster than the AGC can process. This
+;    protects the AGC from being overwhelmed by rapid command sequences.
+;
+; Unlike IMUMON (which uses a READ of Channel 30), C33TEST uses a WAND
+; instruction to read Channel 33. The WAND generates a "write pulse" that
+; automatically resets the flip-flops after reading, preparing them to
+; detect the next occurrence of these conditions.
+;
+; The bit-scanning algorithm is identical to IMUMON's elegant approach:
+; XOR current state with saved state (IMODES33), isolate changed bits,
+; then loop through them using a doubling technique to detect and process
+; the highest-priority changes first.
+;
+; During Apollo 11, reliable telemetry was critical for Mission Control's
+; monitoring of the descent. The "too fast" checks prevented data overruns
+; that could have corrupted commands or telemetry during critical phases.
+; ============================================================================
+
 # PROGRAM NAME:  C33TEST
 #
 # FUNCTIONAL DESCRIPTION:  THIS PROGRAM MONITORS THREE FLIP-FLOP INBITS OF CHANNEL 33 AND CALLS THE APPROPRIATE
@@ -563,6 +855,50 @@ NXTFL33		CCS	RUPTREG2		# PROCESS POSSIBLE ADDITIONAL CHANGES.
 		TCF	NXTIBT -1
 
 # Page 169
+; ============================================================================
+; GLOCKMON - Gimbal Lock Monitor
+;
+; One of the most critical safety monitors in the AGC, GLOCKMON continuously
+; watches the IMU's middle gimbal angle (MGA) to detect and prevent gimbal
+; lock - a condition where the three-gimbal stabilized platform loses one
+; degree of freedom and can no longer maintain proper orientation.
+;
+; Gimbal lock occurs when the middle gimbal approaches ±90 degrees, causing
+; the inner and outer gimbals to align. In this configuration, the platform
+; cannot distinguish rotation about one axis from rotation about another,
+; and the IMU becomes unable to provide reliable attitude information.
+;
+; The routine implements three protection zones based on the absolute value
+; of the middle gimbal angle (MGA), which is read from the CDUZ counter:
+;
+; ZONE 1: |MGA| ≤ 70° - NORMAL OPERATION
+;   The IMU is safely away from gimbal lock. No warnings, no restrictions.
+;   This is the normal operating region for most mission phases.
+;
+; ZONE 2: 70° < |MGA| ≤ 85° - WARNING ZONE
+;   The platform is approaching gimbal lock. The GIMBAL LOCK warning lamp
+;   on the DSKY illuminates to alert the crew. The IMU continues to operate
+;   normally, but the crew should maneuver the spacecraft to move away from
+;   this dangerous region.
+;
+; ZONE 3: |MGA| > 85° - DANGER ZONE
+;   The platform is critically close to gimbal lock. GLOCKMON takes two
+;   emergency actions:
+;   1. Commands the IMU into COARSE ALIGN mode (disabling fine attitude hold)
+;   2. Illuminates the NO ATT (No Attitude) lamp to warn that attitude
+;      reference is unreliable
+;
+; During Apollo 11, gimbal lock was a constant concern during maneuvers.
+; Armstrong and Aldrin had to carefully plan spacecraft rotations to avoid
+; this condition. The famous "program alarm" scenario could have been
+; worsened if the spacecraft had entered gimbal lock during the descent,
+; leaving them without reliable attitude information.
+;
+; The routine checks the gimbal angle every 480ms (every 48th T4RUPT) by
+; testing CDUZ with CCS to determine its sign, then comparing the absolute
+; value against the 70° and 85° thresholds.
+; ============================================================================
+
 # PROGRAM NAME:  GLOCKMON
 #
 # FUNCTIONAL DESCRIPTION:  THIS PROGRAM MONITORS THE CDUZ COUNTER TO DETERMINE WHETHER THE ISS IS IN GIMBAL LOCK
@@ -651,6 +987,38 @@ GLAMPTST	TC	LAMPTEST		# TURN OFF UNLESS LAMP TEST IN PROGRESS.
 -15DEGS		DEC	-.08333
 
 # Page 171
+; ============================================================================
+; TLIM - Temperature Limit Monitor
+;
+; This routine maintains the TEMP warning lamp (bit 4 of Channel 11 on the
+; DSKY) to reflect the temperature status of the IMU (Inertial Subsystem).
+; The ISS continuously monitors its internal temperature and sets bit 15 of
+; Channel 30 if temperature exceeds safe operating limits.
+;
+; The IMU contains precision gyroscopes and accelerometers that require
+; stable thermal conditions for accurate operation. Temperature variations
+; can cause:
+; - Gyro drift rate changes (affecting attitude accuracy)
+; - Accelerometer bias shifts (affecting velocity measurements)
+; - Thermal expansion of the gimbals (affecting alignment)
+;
+; TLIM is called by IMUMON whenever bit 15 of Channel 30 changes state.
+; The routine performs a simple task: mirror the Channel 30 temperature
+; signal to the DSKY TEMP lamp so the crew is immediately aware of any
+; thermal issues.
+;
+; Special handling: If a lamp test is in progress (all DSKY lamps lit for
+; crew verification), TLIM will turn the TEMP lamp ON if temperature exceeds
+; limits, but will NOT turn it OFF when temperature returns to normal. This
+; prevents the lamp test from being disrupted. Once the lamp test completes,
+; the TEMP lamp will reflect the true temperature status.
+;
+; During Apollo 11, the IMU operated within nominal temperature ranges
+; throughout the mission. However, had the TEMP lamp illuminated during
+; the critical descent phase, the crew and Mission Control would have
+; needed to assess whether navigation accuracy was being compromised.
+; ============================================================================
+
 # PROGRAM NAME:  TLIM.
 #
 # FUNCTIONAL DESCRIPTION:  THIS PROGRAM MAINTAINS THE TEMP LAMP (BIT 4 OF CHANNEL 11) ON THE DSKY TO AGREE WITH
@@ -692,6 +1060,47 @@ TEMPOK		TC	LAMPTEST		# IF TEMP NOW OK, DON'T TURN OFF LAMP IF
 		TCF	NXTIFAIL
 
 # Page 172
+; ============================================================================
+; ITURNON - ISS Turn-On Request Handler
+;
+; This routine processes changes in the ISS (Inertial Subsystem) turn-on
+; request signal (Channel 30 bit 14). The ISS turn-on sequence is a complex,
+; carefully orchestrated 90-second initialization process that prepares the
+; IMU gyroscopes and accelerometers for navigation operations.
+;
+; The ISS cannot be turned on instantaneously. The gyroscopes require time
+; to spin up to operating speed, and the platform must stabilize thermally
+; before it can provide accurate attitude reference. The AGC manages this
+; process through a 90-second "caging" period during which the platform is
+; held in a known orientation while it stabilizes.
+;
+; ITURNON handles two scenarios:
+;
+; 1. TURN-ON REQUEST DETECTED (bit 14 goes from 0 to 1):
+;    Sets bit 7 of IMODES30 to signal TNONTEST to begin the ISS
+;    initialization sequence. This starts the 90-second timer and prepares
+;    the platform for caging.
+;
+; 2. TURN-ON REQUEST REMOVED PREMATURELY (bit 14 goes from 1 to 0):
+;    If the turn-on request disappears before the 90-second sequence
+;    completes, this indicates a hardware failure or crew action to abort
+;    the turn-on. ITURNON checks Channel 12 bit 15 (the turn-on delay
+;    signal) and if it's off, issues program alarm 00207 "ISS TURN-ON
+;    REQUEST NOT PRESENT FOR 90 SECONDS" and sets bit 2 of IMODES30 to
+;    indicate a failed sequence.
+;
+; The routine implements a fail-safe mechanism: Once bit 2 of IMODES30 is
+; set (indicating a delay sequence failure), ITURNON and IMUOP will ignore
+; all subsequent turn-on requests until the current 90-second wait period
+; expires. This prevents confusion from multiple rapid on/off cycles.
+;
+; During Apollo 11, the IMU was turned on well before launch and remained
+; powered throughout the mission. However, the turn-on logic was critical
+; for pre-launch checks and for any scenario requiring an IMU power cycle.
+; A failure during turn-on would have necessitated extended troubleshooting
+; or potentially scrubbing the mission.
+; ============================================================================
+
 # PROGRAM NAME:  ITURNON.
 #
 # FUNCTIONAL DESCRIPTION:  THIS PROGRAM IS CALLED BY IMUMON WHEN A CHANGE OF BIT 14 OF CHANNEL 30 (ISS TURN-ON
@@ -755,6 +1164,55 @@ ITURNON2	CS	IMODES30	# SET BIT7 TO INDICATE WAIT OF 1 SAMPLE
 RRINIT		OCT	00102
 
 # Page 174
+; ============================================================================
+; IMUCAGE - IMU Cage Button Handler
+;
+; This routine processes the IMU CAGE button press (Channel 30 bit 11) - one
+; of the most dramatic crew override actions available in the AGC. When an
+; astronaut presses the IMU CAGE button on the control panel, it immediately
+; forces the platform into a safe but non-operational state.
+;
+; "Caging" the IMU is an emergency action that:
+; 1. Commands all three IMU gimbals to zero position (coarse align mode)
+; 2. Terminates all ongoing gyro torquing and CDU (gimbal) positioning
+; 3. Zeros all associated output counters
+; 4. De-selects the gyroscopes (stops fine attitude hold)
+; 5. Illuminates the NO ATT (No Attitude) lamp on the DSKY
+;
+; The term "cage" comes from early mechanical gyroscope systems where the
+; gyro rotor was literally locked in a cage to prevent damage during startup
+; or shutdown. In the AGC context, it means returning the platform to a
+; known reference position where it cannot provide attitude information but
+; is protected from damage.
+;
+; Why would a crew cage the IMU?
+; - Severe gimbal lock approaching 90° (platform about to lose a degree
+;   of freedom and tumble uncontrollably)
+; - IMU malfunction with erratic behavior
+; - Preparation for IMU power cycle
+; - Ground-commanded recalibration
+;
+; The routine only responds to button press (bit transitions from 1 to 0).
+; When the button is released (bit returns to 1), no action occurs. Once
+; caged, the IMU remains in this state until the crew selects an alignment
+; program (P51, P52, or P53) to re-establish the platform's orientation.
+;
+; During Apollo 11, the crew never needed to cage the IMU in flight. However,
+; this capability provided critical protection: if gimbal lock had threatened
+; during the descent, caging the IMU would have been safer than allowing the
+; platform to tumble into an unknown orientation. After caging, the crew
+; could have used the Alignment Optical Telescope to re-align the platform
+; and resume navigation.
+;
+; The routine operates by writing disable commands to:
+; - Channel 14: Terminates ICDU (IMU gimbal), RCDU (rendezvous radar gimbal),
+;   and gyro pulse trains (stops all angular momentum control)
+; - Channel 12: Disables display inertial data, IMU error counters, ICDU zero
+;   mode, coarse align enable, and RR error counter enable
+;
+; After caging, the NO ATT lamp remains lit until a new alignment completes.
+; ============================================================================
+
 # PROGRAM NAME:  IMUCAGE.
 #
 # FUNCTIONAL DESCRIPTION:  THIS PROGRAM PROCESSES CHANGES OF THE IMUCAGE INBIT, CHANNEL 30 BITS 11.  IF THE BIT
@@ -815,6 +1273,59 @@ IMUCAGE		CCS	A		# NO ACTION OF GOING OFF.
 		TCF	NXTIFAIL
 
 # Page 176
+; ============================================================================
+; IMUOP - ISS Operate Discrete Handler
+;
+; This routine monitors the ISS (Inertial Subsystem) OPERATE discrete signal
+; on Channel 30 bit 9, which indicates whether the IMU has full electrical
+; power and is ready for operation. This is distinct from the turn-on request
+; signal - the OPERATE discrete reflects the actual power state of the IMU
+; hardware, not just a request to turn it on.
+;
+; The IMU power state is critical because the AGC cannot safely command gyro
+; torquing or gimbal positioning without confirming that the IMU has stable
+; power. Loss of IMU power during a mission phase that depends on inertial
+; navigation would be catastrophic - the spacecraft would have no attitude
+; reference and could not perform any maneuvers requiring precise orientation.
+;
+; IMUOP handles two transitions:
+;
+; 1. ISS TURNS ON (bit 9 changes from 1 to 0):
+;    The routine checks if an ISS delay sequence failure is in progress
+;    (IMODES30 bit 2 = 1). If not, it sets IMODES30 bit 7 to request that
+;    TNONTEST initiate the 90-second ISS initialization and stabilization
+;    sequence. This ensures the platform has time to reach thermal and
+;    mechanical equilibrium before being used for navigation.
+;
+;    Exception: If bit 2 is set (indicating a previous failed turn-on where
+;    the turn-on request was not maintained for the full 90 seconds), IMUOP
+;    does NOT request another initialization. The system must wait for the
+;    current delay period to expire before attempting another turn-on.
+;
+; 2. ISS TURNS OFF (bit 9 changes from 0 to 1):
+;    The routine checks the IMUSEFLG to determine if any active program was
+;    using the IMU for navigation or guidance. If so, it issues program alarm
+;    00214 "ISS TURNED OFF WHEN IN USE" to alert the crew and Mission Control
+;    of a critical failure. This alarm indicates that ongoing mission programs
+;    (such as rendezvous navigation, lunar descent guidance, or transearth
+;    coast navigation) have lost their primary attitude reference and cannot
+;    continue safely.
+;
+; During Apollo 11, the IMU remained powered and operational throughout the
+; entire mission from pre-launch through splashdown. However, this monitoring
+; was essential for crew safety: if the IMU had lost power during the lunar
+; descent (when Armstrong and Aldrin depended on it for attitude control and
+; landing guidance), alarm 00214 would have triggered an immediate abort to
+; lunar orbit. The crew would have had to rely on the Abort Guidance System
+; (AGS) backup computer for attitude reference.
+;
+; Special initialization note: On FRESH START and RESTART, bit 9 of IMODES30
+; is normally set to 1 (ISS off). However, if the GIMBAL LOCK lamp is already
+; illuminated, bit 9 is set to 0 (ISS on) to prevent TNONTEST from attempting
+; ICDU zeroing while the platform is in or near gimbal lock - a dangerous
+; condition that could cause uncontrolled gimbal motion.
+; ============================================================================
+
 # PROGRAM NAME:  IMUOP.
 #
 # FUNCTIONAL DESCRIPTION:  THIS PROGRAM PROCESSES CHANGES IN THE ISS OPERATE DISCRETE, BIT 9 OF CHANNEL 30.
@@ -867,6 +1378,68 @@ IMUOP2		CAF	BIT2			# SEE IF FAILED ISS TURN-ON SEQ IN PROG.
 		TCF	ITURNON2		# SECONDS EXPIRES.
 
 # Page 177
+; ============================================================================
+; PIPFAIL - PIPA Failure Handler
+;
+; This routine responds to failures in the PIPA (Pulsed Integrating Pendulous
+; Accelerometer) system - the AGC's accelerometers that measure velocity
+; changes. The PIPAs are the only sensors that can detect acceleration; without
+; them, the AGC cannot track velocity or compute position changes during
+; thrusting maneuvers or coast phases.
+;
+; The IMU contains three PIPAs, one per axis (X, Y, Z), mounted orthogonally
+; on the stable platform. Each PIPA outputs pulses proportional to acceleration
+; along its sensing axis. The AGC counts these pulses to integrate velocity
+; changes over time. If any PIPA fails, the AGC loses the ability to track
+; motion along that axis - a critical failure for guidance and navigation.
+;
+; Channel 33 bit 13 (PIPA FAIL) is set by IMU hardware when it detects:
+; - Loss of power to a PIPA
+; - PIPA output stuck or erratic
+; - PIPA pulse rate out of expected range
+; - Internal PIPA electronics malfunction
+;
+; PIPFAIL routine actions:
+;
+; 1. Updates IMODES30 bit 10 to mirror Channel 33 bit 13 state:
+;    - Bit 10 = 1: PIPA failure detected
+;    - Bit 10 = 0: PIPAs operating normally
+;
+; 2. Calls SETISSW to evaluate whether the ISS WARNING lamp should be
+;    illuminated. The lamp lights when multiple IMU problems combine to
+;    make the system unreliable (see SETISSW documentation).
+;
+; 3. If a PIPA failure is present, checks whether the ISS is being
+;    initialized (turn-on sequence in progress). If not, and if no ISS
+;    warning has been issued (IMODES30 bit 1 = 1), issues program alarm
+;    00212 "PIPA FAIL" to alert the crew and Mission Control.
+;
+; Why differentiate between initialization and normal operation?
+; During the 90-second ISS turn-on sequence, the PIPAs may briefly show
+; failure indications as they stabilize. These transient failures are
+; expected and not alarming. However, a PIPA failure during normal IMU
+; operation is serious and requires immediate crew attention.
+;
+; Impact of PIPA failure during Apollo 11:
+; A PIPA failure during the lunar descent would have been mission-critical.
+; The descent guidance equations depend on PIPA data to compute velocity
+; changes from throttle commands. Without working PIPAs, the AGC could not:
+; - Track descent velocity (essential for fuel-optimal guidance)
+; - Compute altitude rate for landing flare
+; - Detect horizontal velocity for site selection
+; - Monitor acceleration limits during powered flight
+;
+; A PIPA failure at any time during Apollo 11 would likely have resulted in:
+; - Immediate mission abort if detected during descent
+; - Switch to AGS (Abort Guidance System) for backup navigation
+; - Possible mission termination if no backup available
+; - Return to Earth using ground tracking and manual attitude control
+;
+; The fact that all three PIPAs operated flawlessly throughout Apollo 11's
+; eight-day mission was a tribute to the robustness of MIT Instrumentation
+; Laboratory's PIPA design and the careful pre-flight testing protocols.
+; ============================================================================
+
 # PROGRAM NAME:  PIPFAIL
 #
 # FUNCITONAL DESCRIPTION:  THIS PROGRAM PROCESSES CHANGES OF BIT 13 OF CHANNEL 33, PIPA FAIL.  IT SETS BIT 10 OF
@@ -911,6 +1484,64 @@ PIPFAIL		CCS	A			# SET BIT10 IN IMODES30 SO ALL ISS WARNING
 		TCF	NXTFL33
 
 # Page 178
+; ============================================================================
+; DNTMFAST - Downlink Too Fast Handler
+; UPTMFAST - Uplink Too Fast Handler
+;
+; These routines monitor the telemetry data rates between the spacecraft and
+; Mission Control, ensuring that neither the uplink (ground-to-spacecraft) nor
+; the downlink (spacecraft-to-ground) exceeds the maximum sustainable rate for
+; the communication system. Telemetry rate problems indicate either hardware
+; failures or configuration errors that could lead to data corruption or loss
+; of communication.
+;
+; Channel 33 bits monitored:
+; - Bit 12: Downlink too fast (monitored by DNTMFAST)
+; - Bit 11: Uplink too fast (monitored by UPTMFAST)
+;
+; These bits are set by the AGC's communications hardware when the data rate
+; exceeds the threshold for reliable transmission. The thresholds depend on
+; the selected telemetry mode and the spacecraft's distance from Earth.
+;
+; When either bit changes from 1 (normal) to 0 (rate too fast):
+;
+; DNTMFAST: Issues program alarm 01105 "DOWNLINK TOO FAST"
+; - Indicates the spacecraft is sending telemetry data faster than the
+;   communications system can reliably transmit
+; - Can occur if the wrong downlink mode is selected (high-rate mode chosen
+;   when spacecraft is too far from Earth for that rate)
+; - Results in data loss - ground stations cannot decode the signal
+; - Crew action required: Switch to lower telemetry rate via DSKY or switches
+;
+; UPTMFAST: Issues program alarm 01106 "UPLINK TOO FAST"
+; - Indicates Mission Control is sending commands or data faster than the
+;   AGC can reliably receive and process
+; - Can occur if ground uses wrong uplink configuration
+; - Results in corrupted or lost commands - potentially dangerous if critical
+;   maneuver parameters or state vector updates are being uploaded
+; - Crew/ground action required: Mission Control reduces uplink data rate
+;
+; Historical context for Apollo 11:
+; During the mission, telemetry rates were carefully managed based on distance:
+; - Near Earth: High-speed telemetry available (51.2 kbps downlink)
+; - Cislunar coast: Medium-speed telemetry (1.6 kbps)
+; - Lunar orbit: Low-speed during far-side passes due to weaker signal
+; - Lunar surface: EVA periods used even lower rates to conserve power
+;
+; A downlink rate error during the lunar descent would have been serious but
+; not immediately mission-threatening - ground could still track the LM via
+; radar. However, an uplink rate error during a state vector update or maneuver
+; PAD (Parameter Data) upload could have corrupted critical navigation data.
+;
+; The crew had manual control over telemetry mode selection via switches on
+; the Main Display Console. If these alarms occurred, they would switch to a
+; lower-rate mode and request Mission Control re-send any corrupted data.
+;
+; Note: These are relatively rare alarms. The communication system design
+; included multiple layers of rate control to prevent rate mismatches. These
+; alarms served as a last-resort safeguard.
+; ============================================================================
+
 # PROGRAM NAMES:  DNTMFAST, UPTMFAST
 #
 # FUNCTIONAL DESCRIPTION:  THESE PROGRAMS PROCESS CHANGES OF BITS 12 AND 11 OF CHANNEL 33.  IF A BIT CHANGES TO A
@@ -947,6 +1578,105 @@ UPTMFAST	CCS	A			# SAME AS DNLINK TOO FAST WITH DIFFERENT
 		OCT	1106
 		TCF	NXTFL33
 # Page 179
+; ============================================================================
+; SETISSW - ISS Warning Lamp Control
+;
+; This routine manages the ISS WARNING indicator lamp on the caution and
+; warning panel, providing the crew with immediate visual notification of
+; failures in the Inertial Subsystem (ISS) - the collective term for the IMU,
+; its associated CDUs (Coupling Data Units), and the three PIPA accelerometers.
+;
+; The ISS WARNING lamp is a critical crew alert that summarizes the health of
+; the spacecraft's primary navigation sensor suite. When illuminated, it means
+; the AGC has detected a hardware failure that degrades or eliminates the
+; ability to determine the spacecraft's attitude or measure acceleration.
+;
+; Failure conditions monitored:
+;
+; 1. IMU FAIL (IMODES30 bit 13):
+;    - IMU internal malfunction detected (gyro drift excessive, power fault)
+;    - IMU cage button pressed (emergency shutdown)
+;    - IMU temperature out of limits
+;    - Can be inhibited via IMODES30 bit 4 during intentional shutdowns
+;
+; 2. ICDU FAIL (IMODES30 bit 12):
+;    - Coupling Data Unit malfunction (gimbal angle readout failed)
+;    - CDU discrete indicates hardware fault
+;    - Can be inhibited via IMODES30 bit 3 during CDU zeroing operations
+;
+; 3. PIPA FAIL (IMODES30 bit 10):
+;    - One or more PIPA (accelerometer) hardware failure
+;    - PIPA discrete indicates sensor malfunction
+;    - Can be inhibited via IMODES30 bit 1 during PIPA testing
+;
+; Logic operation:
+; The routine performs a complex bit manipulation to determine if any
+; un-inhibited failure exists. It multiplies the failure bits (13, 12, 10)
+; by BIT10, then rotates the result and compares against the inhibit bits
+; (4, 3, 1). If any failure is present without its corresponding inhibit,
+; the ISS WARNING lamp is turned on.
+;
+; VARALARM alarm codes issued when lamp turns on:
+; - 00777: PIPA FAIL only
+; - 03777: ICDU FAIL only
+; - 04777: ICDU + PIPA FAIL
+; - 07777: IMU FAIL only
+; - 10777: IMU + PIPA FAIL
+; - 13777: IMU + ICDU FAIL
+; - 14777: IMU + ICDU + PIPA FAIL (complete ISS failure)
+;
+; The octal alarm code encoding allows ground controllers to immediately
+; identify which specific combination of failures triggered the warning by
+; examining which bits are set in the alarm code.
+;
+; Lamp test protection:
+; If IMODES33 bit 1 indicates a lamp test is in progress, the routine will
+; NOT turn off the ISS WARNING lamp even if all failures have cleared. This
+; prevents the lamp test from being interrupted, ensuring the crew can verify
+; that the lamp is functional. The lamp will turn off automatically when the
+; lamp test completes and SETISSW is called again.
+;
+; Calling context:
+; SETISSW is called frequently throughout T4RUPT and IMU management routines:
+; - IMUMON: When IMU FAIL or ICDU FAIL discretes change state
+; - PIPFAIL: When PIPA FAIL discrete changes state
+; - IFAILOK/PFAILOK: When failure inhibits are removed after testing
+; - PIPUSE/PIPFREE: When PIPA availability changes (possible alarm)
+; - IMUZERO3/ISSUP: After IMU restart sequences complete
+;
+; Historical context for Apollo 11:
+; The ISS WARNING lamp was part of the Lunar Module's master alarm system.
+; A lit ISS WARNING during critical mission phases (descent, landing, ascent)
+; would be extremely serious - it could mean loss of attitude knowledge or
+; velocity measurement, both essential for guidance.
+;
+; During Apollo 11's mission, the ISS performed flawlessly throughout. Had an
+; ISS WARNING occurred during the lunar landing on July 20, 1969, it would
+; likely have triggered an immediate abort - the crew cannot land safely
+; without reliable attitude and acceleration data.
+;
+; The careful inhibit logic (bits 4, 3, 1) was essential because many normal
+; operations temporarily trigger failure discretes:
+; - IMU coarse alignment: IMU FAIL inhibited during platform torquing
+; - CDU zeroing: ICDU FAIL inhibited during gimbal reference initialization  
+; - PIPA testing: PIPA FAIL inhibited during self-test sequences
+;
+; Without the inhibit mechanism, the ISS WARNING lamp would flash annoyingly
+; during routine operations, potentially causing the crew to ignore it during
+; an actual failure (the classic "cry wolf" problem in alarm design).
+;
+; The multi-bit alarm codes (00777, 03777, etc.) allowed Mission Control to
+; rapidly diagnose the failure mode and provide crew procedures. For example:
+; - 00777 (PIPA only): Crew could continue with degraded navigation
+; - 07777 (IMU only): Crew might attempt IMU restart
+; - 14777 (complete ISS): Mission abort likely required
+;
+; Hardware interface:
+; - Input: IMODES30 (failure and inhibit status bits)
+; - Input: IMODES33 bit 1 (lamp test in progress flag)
+; - Output: DSALMOUT channel 11 bit 1 (ISS WARNING lamp control)
+; ============================================================================
+
 # PROGRAM NAME:  SETISSW
 #
 # FUNCTIONAL DESCRIPTION:  THIS PROGRAM TURNS THE ISS WARNING LAMP ON AND OFF (CHANNEL 11 BIT 1 = 1 FOR ON,
@@ -1077,6 +1807,148 @@ BITS6&15	OCT	40040
 GLOCKOK		EQUALS	RESUME
 
 # Page 182
+; ============================================================================
+; RRAUTCHK - Rendezvous Radar Auto Mode Monitor
+;
+; This routine is the primary inbit monitor for the Rendezvous Radar (RR)
+; power-on-auto discrete, detecting when the crew switches the RR power
+; control knob between OFF, STANDBY, and AUTOMATIC positions. The RR is the
+; Lunar Module's primary sensor for measuring range and range-rate to the
+; Command Module during rendezvous operations in lunar orbit.
+;
+; Hardware monitored:
+; - Channel 33 Bit 2: RR POWER ON AUTO discrete
+;   * Set (1) when RR power knob is in AUTOMATIC position (radar energized)
+;   * Clear (0) when RR power knob is in OFF or STANDBY position
+;
+; The RR POWER ON AUTO discrete is a crucial hardware interface. Unlike the
+; Landing Radar which operates automatically during descent, the Rendezvous
+; Radar requires manual crew control. The astronauts must manually position
+; the power control knob based on mission phase:
+; - OFF: During non-rendezvous phases (landing, surface operations)
+; - STANDBY: Pre-rendezvous warm-up (allows hardware to stabilize)
+; - AUTOMATIC: During rendezvous tracking (radar actively measuring)
+;
+; Routine operation (called every 480 milliseconds):
+;
+; 1. Discrete change detection:
+;    The current RR AUTO MODE bit (CHAN 33 BIT 2) is XORed with the
+;    previously stored value in RADMODES bit 2. If no change has occurred,
+;    the routine immediately exits to RRCDUCHK (next radar check in chain).
+;
+; 2. RADMODES update when change detected:
+;    RADMODES bit 2 is updated to match the new hardware discrete state.
+;    Additionally, several control and status bits are cleared to reset the
+;    radar subsystem state:
+;    - Bit 14: Continuous designate mode (cleared)
+;    - Bit 11: Remode (data good flag) (cleared)
+;    - Bit 10: Reposition (antenna slewing) (cleared)
+;    - Bit 13: RR CDU Zero sequence active (cleared)
+;    - Bit 1: Turn-on sequence active (cleared)
+;
+;    The clearing of these bits acknowledges that any prior radar operation
+;    has been interrupted by the power state change.
+;
+; 3. Power-off detection (CHAN 33 BIT 2 transitioned from 1 to 0):
+;    If the radar has just been turned off, STATE bit 7 is checked to
+;    determine if a navigation program was actively using the RR:
+;    - If STATE bit 7 clear (no program using RR): Exit to RRCDUCHK normally
+;    - If STATE bit 7 set (program using RR): Issue alarm 00514 "RADAR GOES
+;      OUT OF AUTO MODE WHILE BEING USED", then exit to RRCDUCHK
+;
+;    Alarm 00514 alerts the crew and Mission Control that an unexpected radar
+;    power-off has occurred during active rendezvous navigation. This could
+;    indicate:
+;    - Accidental crew switch movement
+;    - Hardware power fault
+;    - Electrical transient
+;
+;    The program using the radar (typically P20 series rendezvous programs)
+;    will have its navigation solution degraded or halted.
+;
+; 4. Power-on detection (CHAN 33 BIT 2 transitioned from 0 to 1):
+;    When the radar is just turned on, the routine checks STATE bit 7 to see
+;    if a program was waiting for the RR. Regardless of STATE, the turn-on
+;    sequence is initiated:
+;    - RADMODES bit 13 set: RR CDU Zero sequence required
+;    - RADMODES bit 1 set: Turn-on sequence active
+;    - WAITLIST task scheduled: RRTURNON in 10 milliseconds (1 centisecond)
+;    - Exit to NORRGMON (bypassing normal RRCDUCHK and RRGIMON checks)
+;
+;    The WAITLIST call to RRTURNON begins the complex radar initialization:
+;    - CDU zeroing: Antenna gimbal angle counters reset to known reference
+;    - Gyro spin-up: RR gyro stabilization (requires several seconds)
+;    - Self-test: Built-in test equipment (BITE) verification
+;    - Mode initialization: Radar prepared for track acquisition
+;
+;    The 10-millisecond delay before RRTURNON allows the radar electronics to
+;    stabilize after power application before CDU commands are issued.
+;
+; RADMODES bit definitions (referenced by this routine):
+; - Bit 2: RR AUTO MODE (matches CHAN 33 BIT 2 discrete)
+; - Bit 1: TURNON SEQUENCE ACTIVE
+; - Bit 7: RR CDU OK (updated by RRCDUCHK, not this routine)
+; - Bit 10: REPOSITION (antenna slewing command active)
+; - Bit 11: REMODE (radar data good, lock achieved)
+; - Bit 13: RR CDU ZERO SEQUENCE ACTIVE
+; - Bit 14: CONTINUOUS DESIGNATE (automatic tracking mode)
+;
+; STATE bit 7: RR IN USE BY PROGRAM
+; Set by P20-series rendezvous programs when RR measurements are required.
+; Checked by RRAUTCHK to determine if power-off is unexpected.
+;
+; Historical context for Apollo 11:
+; The Rendezvous Radar was essential for the lunar orbit rendezvous between
+; Eagle (LM) and Columbia (CM) after Eagle's ascent from the lunar surface on
+; July 21, 1969. Armstrong and Aldrin used the RR to measure range and
+; range-rate to Collins in Columbia as they executed the rendezvous sequence.
+;
+; The RR provided crucial data for the P20 rendezvous navigation program,
+; which computed the maneuvers needed to achieve docking. Without the RR,
+; rendezvous would have required ground-based tracking and manual crew
+; techniques - significantly more difficult and risky.
+;
+; The 480-millisecond polling interval (twice per second) was chosen to:
+; - Detect crew switch changes quickly (human reaction time ~200-300ms)
+; - Minimize T4RUPT computational load (RR checks are relatively complex)
+; - Provide adequate response time for turn-on sequencing
+;
+; The alarm 00514 logic was critical for crew situational awareness. If the
+; RR accidentally switched off during P20 rendezvous navigation, the crew
+; needed immediate notification so they could:
+; 1. Recognize the radar was no longer tracking
+; 2. Restore power to the radar (move knob back to AUTO)
+; 3. Re-acquire track (RR would need to find the target again)
+; 4. Assess impact on rendezvous timeline
+;
+; The complex turn-on sequence (RRCDUZRO, then RRTURNON) was necessary
+; because the RR hardware required precise initialization:
+; - The CDUs (gimbal angle readouts) must be zeroed before antenna motion
+; - The radar gyro must spin up to operating speed (temperature stabilization)
+; - The radar electronics must complete self-test before track attempts
+; - The antenna must be positioned to the initial search position
+;
+; Unlike the Landing Radar (which operates during single-opportunity descent),
+; the Rendezvous Radar might be turned on and off multiple times during the
+; mission (initial rendezvous practice, actual rendezvous, contingency modes).
+; This routine's robust change detection and sequencing ensured reliable
+; operation across multiple power cycles.
+;
+; The OCT05776 mask (octal 5776 = bits 14, 13, 11, 10, 1) clears all
+; previous radar operating mode bits, acknowledging that the power state
+; change invalidates any prior radar configuration. This prevents the radar
+; from attempting to resume an incompatible mode after power restoration.
+;
+; The OCT10001 value (octal 10001 = bits 13, 1) sets both RRCDUZRO and
+; TURNON bits simultaneously, initiating the complete initialization sequence
+; with a single memory store operation.
+;
+; Exit paths:
+; - RRCDUCHK: Normal exit when no change or after processing power-off
+; - NORRGMON: Special exit after initiating turn-on sequence (bypasses CDU
+;   and gimbal checks which would be meaningless during initialization)
+; ============================================================================
+
 # PROGRAM NAME:  RRAUTCHK
 #
 # FUNCITONAL DESCRIPTION:
@@ -1138,6 +2010,208 @@ RRAUTCHK	CA	RADMODES			# SEE IF CHANGE IN RR AUTO MODE BIT.
 OCT05776	OCT	5776
 
 # Page 184
+; ============================================================================
+; RRCDUCHK - Rendezvous Radar CDU Fail Monitor
+;
+; This routine monitors the Rendezvous Radar Coupling Data Unit (CDU) failure
+; discrete, detecting hardware faults in the RR gimbal angle measurement
+; system. The CDUs are precision shaft angle encoders that report the angular
+; position of the RR antenna in azimuth (trunnion) and elevation (shaft) axes.
+; CDU failures prevent the computer from knowing where the radar antenna is
+; pointing, making rendezvous navigation impossible.
+;
+; Hardware monitored:
+; - Channel 30 Bit 7: RR CDU FAIL discrete
+;   * Set (1) when RR CDU hardware detects internal fault (normal operation)
+;   * Clear (0) when RR CDU has failed (failure condition - inverted logic)
+;
+; Note the inverted logic: The discrete is normally HIGH (1) during correct
+; operation and goes LOW (0) on failure. This is a common aerospace design
+; pattern - a "heartbeat" signal that requires continuous healthy operation
+; to maintain, so that wire breaks or power failures appear as faults rather
+; than falsely indicating good health.
+;
+; Routine operation (called every 480 milliseconds):
+;
+; 1. CDU fail discrete change detection:
+;    The current RR CDU FAIL bit (CHAN 30 BIT 7) is compared with the
+;    previously stored value in RADMODES bit 7. The routine uses RXOR
+;    (exclusive-or with channel) to detect any state change. If no change has
+;    occurred since the last check, the routine immediately exits to RRGIMON
+;    (next radar check in chain) via BZF (branch if zero to fixed).
+;
+; 2. Auto mode verification when change detected:
+;    If a CDU fail state change has occurred, the routine checks RADMODES
+;    bit 2 (RR AUTO MODE) to determine if the Rendezvous Radar is currently
+;    powered on and operating. If the RR is not in AUTO mode (power off or
+;    standby), the CDU fail state is irrelevant (radar not being used), so
+;    the routine exits to NORRGMON without updating RADMODES bit 7 or issuing
+;    any alarms.
+;
+;    This prevents spurious CDU fail indications when:
+;    - RR power is OFF (CDU not powered, fail discrete may float)
+;    - RR in STANDBY mode (CDU not initialized, may show transient states)
+;    - Landing Radar is being used (LR shares some channel bits with RR)
+;
+;    If the check were not performed, the TRACKER FAIL lamp might illuminate
+;    incorrectly when the crew was using Landing Radar data, causing
+;    confusion during critical descent phases.
+;
+; 3. RADMODES bit 7 (RR CDU OK) update when in auto mode:
+;    When the RR is in AUTO mode and a CDU fail state change has been
+;    detected, RADMODES bit 7 is updated to reflect the new CDU health state.
+;    The update sequence uses a careful read-modify-write pattern:
+;    - RADMODES loaded into L register (preserving all other bits)
+;    - L XORed with RCDUFBIT (bit 7 toggled)
+;    - Result stored back to RADMODES
+;
+;    This ensures that only bit 7 changes; all other RADMODES control and
+;    status bits remain unaffected.
+;
+;    RADMODES bit 7 semantics:
+;    - Set (1): RR CDU is healthy (CHAN 30 BIT 7 is set)
+;    - Clear (0): RR CDU has failed (CHAN 30 BIT 7 is clear)
+;
+; 4. CDU failure detection (RADMODES bit 7 transitioned from 1 to 0):
+;    After updating RADMODES bit 7, the routine checks the new state. If
+;    RADMODES bit 7 is now clear (CDU has just failed), the routine checks
+;    FLAGWRD0 bit 1 (RNDVZBIT - rendezvous flag) to determine if a P20-series
+;    rendezvous navigation program is currently operating:
+;    - If RNDVZBIT clear (no rendezvous program): Proceed to TRKFLCDU
+;    - If RNDVZBIT set (P20 or P22 active): Issue alarm 00515 "RR CDU FAIL
+;      DURING P-20", then proceed to TRKFLCDU
+;
+;    Program alarm 00515 is critical crew notification. It indicates that:
+;    - The rendezvous navigation program has lost RR gimbal angle data
+;    - RR range and range-rate measurements may still be valid, but the
+;      computer doesn't know the line-of-sight direction
+;    - Navigation solution accuracy is severely degraded
+;    - Crew must assess whether to continue rendezvous or abort
+;
+;    Alarm 00515 requires crew and Mission Control evaluation:
+;    - Can rendezvous continue with degraded navigation?
+;    - Is the CDU failure transient or permanent?
+;    - Should crew attempt RR power cycle to restore CDU?
+;    - Are backup rendezvous techniques required (ground tracking, manual)?
+;
+; 5. CDU recovery detection (RADMODES bit 7 transitioned from 0 to 1):
+;    If RADMODES bit 7 is now set (CDU has just recovered from failure), no
+;    alarm is issued. The routine proceeds directly to TRKFLCDU. CDU recovery
+;    is a positive event (hardware has self-restored), so crew notification
+;    is provided by clearing the TRACKER FAIL lamp rather than by alarm.
+;
+;    Recovery might occur due to:
+;    - Transient electrical fault cleared
+;    - Crew RR power cycle completed successfully
+;    - Thermal stabilization after cold period
+;
+; 6. TRACKER FAIL lamp update (always performed after change):
+;    Routine calls SETTRKF to update the TRACKER FAIL lamp (DSPTAB+11D bit 8)
+;    based on the new RADMODES bit 7 state. SETTRKF illuminates or extinguishes
+;    the lamp on the DSKY according to current RR health:
+;    - RADMODES bit 7 clear (CDU failed): TRACKER FAIL lamp ON
+;    - RADMODES bit 7 set (CDU healthy): TRACKER FAIL lamp OFF
+;
+;    SETTRKF returns control to RRGIMON (next radar check in chain) to
+;    continue the T4RUPT radar monitoring sequence.
+;
+; CDU hardware architecture:
+; The RR has two CDUs (Coupling Data Units):
+; - RR CDU TRUNNION: Measures azimuth gimbal angle (antenna rotation around
+;   vertical axis), output to computer as OPTX (optical X-axis angle)
+; - RR CDU SHAFT: Measures elevation gimbal angle (antenna rotation around
+;   horizontal axis), output to computer as OPTY (optical Y-axis angle)
+;
+; Both CDUs are 16-bit binary shaft angle encoders providing 360-degree
+; coverage with approximately 0.0055-degree resolution (2^16 counts per
+; revolution = 65536 counts per 360 degrees). The CDUs are driven by
+; synchro resolvers mechanically coupled to the gimbal axes.
+;
+; The RR CDU FAIL discrete is generated by the CDU electronics when:
+; - CDU power supply is out of tolerance
+; - Synchro resolver excitation is absent or incorrect
+; - Encoder output is invalid or inconsistent
+; - Self-test diagnostic detects internal fault
+; - Temperature is outside operating range
+;
+; CDU failures are rare but mission-critical. Without accurate gimbal angle
+; data, the computer cannot:
+; - Compute line-of-sight direction to target (Command Module)
+; - Transform radar measurements from antenna frame to navigation frame
+; - Command antenna repositioning for track acquisition or maintenance
+; - Compute relative velocity vector (requires line-of-sight direction)
+;
+; The 480-millisecond polling interval (twice per second) was chosen to:
+; - Detect CDU failures quickly enough for crew response
+; - Minimize T4RUPT computational load (CDU checks are lightweight)
+; - Provide adequate response time for alarm processing
+; - Match the overall T4RUPT radar monitoring interval (all radar checks
+;   execute on same 480ms cycle)
+;
+; RADMODES bit 7 vs CHAN 30 BIT 7 relationship:
+; RADMODES bit 7 is a software mirror of CHAN 30 BIT 7, maintained by this
+; routine. The mirroring serves several purposes:
+; - Software can check RR CDU status without reading hardware channel (faster)
+; - Change detection via XOR requires previous state in memory
+; - Other routines can test RADMODES bit 7 without channel access overhead
+; - RADMODES consolidates all radar mode and status bits in one location
+;
+; The careful auto mode check before updating RADMODES bit 7 prevents
+; "cross-talk" between Landing Radar and Rendezvous Radar monitoring. The LR
+; and RR share some hardware resources and channel bit assignments (mode-
+; dependent). By verifying RR is in AUTO mode before acting on CDU fail,
+; the routine ensures that LR operations don't trigger spurious RR alarms.
+;
+; Historical context for Apollo 11:
+; The Rendezvous Radar CDU system operated flawlessly during Apollo 11's lunar
+; orbit rendezvous on July 21, 1969. The RR successfully tracked Columbia (CM)
+; throughout the rendezvous sequence, providing accurate range, range-rate, and
+; line-of-sight angle data to the P20 rendezvous navigation program.
+;
+; No alarm 00515 (RR CDU FAIL) was issued during Apollo 11. The CDU health
+; monitoring provided confidence that gimbal angle data was valid throughout
+; the rendezvous, contributing to the successful docking between Eagle and
+; Columbia approximately 3.5 hours after Eagle's ascent from the lunar surface.
+;
+; The TRACKER FAIL lamp was a critical crew interface element. During
+; rendezvous, Armstrong and Aldrin monitored the lamp to verify that the RR
+; was tracking properly. If the lamp had illuminated during P20 operation,
+; it would have indicated loss of radar tracking, requiring crew intervention.
+;
+; The CDU fail monitoring was especially important because rendezvous is a
+; time-critical operation. If the RR CDU had failed during the rendezvous
+; sequence, the crew would have had limited time to:
+; - Diagnose the problem (transient vs permanent)
+; - Attempt recovery (RR power cycle, mode changes)
+; - Transition to backup rendezvous techniques if necessary
+; - Coordinate with Mission Control for ground-based tracking support
+;
+; The routine's design reflects aerospace fault tolerance principles:
+; - Fail-safe logic (inverted discrete - wire break appears as failure)
+; - Separation of concerns (only monitor when radar is in use)
+; - Immediate crew notification (alarm on failure detection)
+; - Graceful degradation (lamp indication on recovery)
+; - Operational context awareness (check for active rendezvous program)
+;
+; The RCDUFBIT mask isolates bit 7 for all operations. The careful use of
+; EXTEND/RXOR and EXTEND/BZF ensures atomic read-modify-write sequences,
+; preventing race conditions with other interrupt routines that might be
+; accessing RADMODES concurrently.
+;
+; The pre-turnon code at lines 2046-2048 (labeled "-3") executes during RR
+; power-on initialization (called from RRTURNON). It disables the RR CDU
+; error counters (CHAN 12 BIT 2) to prevent spurious error accumulation
+; during the CDU zeroing sequence. This is unrelated to the RRCDUCHK change
+; detection logic but is positioned here for memory organization efficiency.
+;
+; Exit paths:
+; - RRGIMON: Normal exit when no change detected (continue radar monitoring)
+; - NORRGMON: Exit when change detected but RR not in auto mode (skip gimbal
+;   checks which would be irrelevant)
+; - TRKFLCDU -> SETTRKF -> RRGIMON: Exit after updating RADMODES bit 7 and
+;   TRACKER FAIL lamp (continue radar monitoring with updated status)
+; ============================================================================
+
 # PROGRAM NAME:	RRCDUCHK
 #
 # FUNCTIONAL DESCRIPTION:
@@ -1207,6 +2281,246 @@ RRCDUCHK	CA	RADMODES		# LAST SAMPLED BIT IN RADMODES.
 TRKFLCDU	TC	SETTRKF			# UPDATE TRAKER FAIL LAMP ON DSKY.
 
 # Page 186
+; ============================================================================
+; RRGIMON - Rendezvous Radar Gimbal Monitor and Limit Check
+;
+; This routine monitors the Rendezvous Radar antenna gimbal angles and verifies
+; they are within safe operating limits for the current radar tracking mode.
+; The RR antenna must point within specific angular ranges to avoid mechanical
+; interference with the Lunar Module structure and to maintain valid tracking
+; geometry. RRGIMON prevents antenna damage and ensures measurement validity.
+;
+; Hardware monitored:
+; - RR CDU OPTY (shaft angle): Elevation gimbal position from CDU
+; - RR CDU OPTX (trunnion angle): Azimuth gimbal position from CDU
+; - RADMODES control flags: Mode and status bits affecting gimbal limits
+;
+; Routine operation (called every 480 milliseconds):
+;
+; 1. Pre-check for conditions disabling gimbal monitoring:
+;    Before checking gimbal limits, the routine verifies that gimbal monitoring
+;    is appropriate for the current radar state. Several conditions cause
+;    immediate exit to NORRGMON (DAP matrix computation) without limit checks:
+;
+;    a) RADMODES bit 14 set (REMODE - continuous designate active):
+;       In continuous designate mode, the computer is commanding the antenna
+;       to specific angles for non-tracking purposes (antenna checkout, manual
+;       pointing). Gimbal limits are handled by the designate logic itself.
+;
+;    b) RADMODES bit 13 set (RR CDU ZERO sequence active):
+;       During CDU zeroing (part of RR turn-on), the gimbal servos are being
+;       driven to known reference positions. Limit checks would interfere with
+;       the zeroing sequence, so monitoring is disabled.
+;
+;    c) RADMODES bit 11 set (REPOSITION - antenna slewing in progress):
+;       When the antenna is already repositioning due to a previous limit
+;       violation, further limit checks are suppressed to avoid recursive
+;       reposition commands. The reposition task (DORREPOS) will clear bit 11
+;       when the antenna reaches the commanded safe position.
+;
+;    d) RADMODES bit 2 clear (RR not in AUTO mode):
+;       If the RR is not in AUTO mode (power off or standby), gimbal positions
+;       are not being actively controlled, so limit checks are meaningless.
+;
+;    e) FLAGWRD5 NORRMBIT set (no RR angle monitor flag):
+;       This flag (set by certain programs) globally disables RR gimbal limit
+;       monitoring when gimbal angle checks would interfere with mission program
+;       operations (e.g., during specific attitude maneuvers or radar modes).
+;
+;    The pre-check logic tests FLAGWRD5 NORRMBIT first, then uses a single
+;    mask operation (OCT05776 = bits 14, 13, 11, 2) to check all four RADMODES
+;    conditions simultaneously. If any bit is set (or bit 2 clear), the routine
+;    exits immediately to NORRGMON.
+;
+; 2. Gimbal limit check via RRLIMCHK subroutine:
+;    If all pre-checks pass (radar is in normal tracking operation), the routine
+;    calls RRLIMCHK to verify that the current RR gimbal angles (OPTY, OPTX)
+;    are within the safe angular limits for the present tracking mode.
+;
+;    RRLIMCHK examines the current gimbal positions and compares them against
+;    mode-dependent limit boundaries:
+;    - Mode 1 limits (wide angle search mode): ±60 degrees typical
+;    - Mode 2 limits (narrow angle track mode): ±45 degrees typical
+;    - Mode 3 limits (auto-track mode): ±30 degrees typical
+;
+;    The exact limit values depend on:
+;    - LM structural clearances (antenna must not hit spacecraft)
+;    - Radar beam geometry (valid measurement cone angles)
+;    - Gimbal servo mechanical range (physical stops)
+;    - Tracking mode requirements (search vs track angular coverage)
+;
+;    RRLIMCHK returns to RRGIMON with:
+;    - TC NORRGMON if angles are within limits (normal exit)
+;    - Fall through to RRBAD if angles exceed limits (reposition needed)
+;
+; 3. Limit violation response (RRBAD - angles out of limits):
+;    If RRLIMCHK determines that the RR gimbal angles have exceeded safe limits,
+;    RRGIMON initiates a reposition sequence to drive the antenna to a safe
+;    angle within limits. The reposition response involves multiple actions:
+;
+;    a) RADMODES bit 11 set (REPOSITION flag):
+;       Indicates antenna repositioning is in progress. This flag prevents
+;       further limit checks (see pre-check 1c above) until reposition completes.
+;
+;    b) CHAN 12 BIT 14 cleared (RR AUTO TRACKER disabled):
+;       The RR automatic tracking circuits are disabled to prevent the tracker
+;       from fighting the reposition command. Auto-track attempts to keep the
+;       antenna pointed at the target, but during reposition the antenna must
+;       slew to a safe angle regardless of target position.
+;
+;    c) CHAN 12 BIT 2 cleared (RR ERROR COUNTER disabled):
+;       The RR error counter accumulates tracking errors for quality assessment.
+;       During reposition, large tracking errors are expected (antenna is not
+;       pointed at target), so the error counter is disabled to prevent false
+;       tracking quality degradation indications.
+;
+;    d) WAITLIST task scheduled: DORREPOS in 20 milliseconds (2 centiseconds):
+;       A WAITLIST task is scheduled to call DORREPOS (DO Rendezvous Radar
+;       REPOSITION) after a 20-millisecond delay. DORREPOS computes safe gimbal
+;       angles within limits and commands the gimbal servos to slew the antenna
+;       to the safe position. The 20ms delay allows the tracker disable and
+;       error counter disable commands to propagate through the hardware before
+;       the antenna begins moving.
+;
+;    e) Exit to NORRGMON:
+;       After initiating the reposition sequence, RRGIMON exits to NORRGMON
+;       (DAP matrix computation), continuing the T4RUPT execution sequence.
+;
+; 4. Normal exit when within limits:
+;    If RRLIMCHK determines that gimbal angles are within safe limits, it
+;    returns directly to NORRGMON via TC NORRGMON, bypassing the reposition
+;    logic entirely. This is the normal case during stable tracking operations.
+;
+; Gimbal limit violation causes:
+; Gimbal angles can exceed limits due to several operational scenarios:
+;
+; a) Target motion during tracking:
+;    As the Command Module moves relative to the Lunar Module during rendezvous,
+;    the line-of-sight direction changes. The RR antenna tracks the moving
+;    target, and the required gimbal angles evolve continuously. If the target
+;    moves to an angular position near the structural limits, the tracker may
+;    drive the antenna toward the limit boundary.
+;
+; b) LM attitude changes:
+;    When the LM performs attitude maneuvers (RCS firings to change orientation),
+;    the RR antenna (mounted to the LM structure) moves with the spacecraft. The
+;    target's angular position in the LM body frame changes even though the
+;    inertial line-of-sight remains constant. Large attitude changes can cause
+;    gimbal angles to exceed limits.
+;
+; c) Initial track acquisition at unfavorable geometry:
+;    When the RR first acquires track on the CM, the initial relative geometry
+;    may place the line-of-sight near or beyond the gimbal limits. The tracker
+;    locks on to the target signal, driving the antenna to the required angles,
+;    which may violate limits.
+;
+; d) Tracking mode transitions:
+;    When the RR switches between tracking modes (wide angle search to narrow
+;    angle track, for example), the gimbal limits change. Angles that were
+;    valid in one mode may exceed limits in the new mode, triggering reposition.
+;
+; The reposition sequence moves the antenna to a safe angle while maintaining
+; radar operation. The repositioned antenna may not be pointed directly at the
+; target, so tracking is temporarily lost. After reposition completes, the RR
+; must re-acquire track at the new safe gimbal angles.
+;
+; RADMODES bit definitions (referenced by this routine):
+; - Bit 2: RR AUTO MODE (must be set for gimbal monitoring)
+; - Bit 11: REPOSITION (antenna slewing to safe angle)
+; - Bit 13: RR CDU ZERO sequence active
+; - Bit 14: CONTINUOUS DESIGNATE (manual antenna pointing mode)
+;
+; FLAGWRD5 NORRMBIT: NO RR ANGLE MONITOR flag
+; Set by programs requiring temporary suspension of gimbal limit checks.
+;
+; Historical context for Apollo 11:
+; The Rendezvous Radar gimbal limit monitoring operated throughout Apollo 11's
+; lunar orbit rendezvous on July 21, 1969. The RR successfully tracked Columbia
+; (CM) during the entire rendezvous sequence without gimbal limit violations,
+; indicating favorable tracking geometry throughout the approach.
+;
+; Gimbal repositioning was more common in earlier Apollo missions where
+; rendezvous trajectories or LM attitude profiles placed the RR line-of-sight
+; near structural limits. By Apollo 11, rendezvous procedures and trajectory
+; designs had been optimized to avoid unfavorable RR gimbal geometries.
+;
+; The 480-millisecond polling interval (twice per second) was chosen to:
+; - Detect gimbal limit approaches quickly (gimbal rates ~5 deg/sec typical)
+; - Minimize T4RUPT computational load (limit checks involve trigonometry)
+; - Provide adequate response time for reposition sequencing
+; - Match the overall T4RUPT radar monitoring interval
+;
+; The reposition sequence (disable tracker, schedule DORREPOS, exit) was
+; carefully designed to avoid gimbal servo instabilities. If the auto-tracker
+; remained enabled during reposition, it would generate tracking error signals
+; opposing the reposition command, causing servo oscillation or positioning
+; errors. The 20-millisecond WAITLIST delay ensures tracker disable takes
+; effect before antenna motion begins.
+;
+; The OCT05776 mask (octal 5776 = bits 14, 13, 11, 2) efficiently tests all
+; four RADMODES pre-check conditions in a single operation. The careful bit
+; assignment in RADMODES allows this optimization - related conditions are
+; grouped for efficient mask operations.
+;
+; Gimbal limit boundaries are not hard-coded in RRGIMON itself. The actual
+; limit checks occur in RRLIMCHK (called as a subroutine), which accesses
+; limit tables defining mode-dependent angular boundaries. This separation
+; allows limit values to be changed without modifying the monitoring logic.
+;
+; The routine's design reflects operational rendezvous requirements:
+; - Continuous monitoring during all tracking modes
+; - Fast response to limit violations (reposition within 20ms)
+; - Graceful handling of tracking interruptions (disable auto-track)
+; - Prevention of recursive reposition commands (bit 11 check)
+; - Compatibility with special radar modes (continuous designate, CDU zero)
+;
+; RRLIMCHK subroutine (called by RRGIMON):
+; RRLIMCHK performs the actual angular limit comparison. It reads the current
+; RR CDU angles (OPTY shaft, OPTX trunnion) and compares them against
+; mode-dependent limit tables. The subroutine uses either direct return (TC
+; NORRGMON if within limits) or fall-through (to RRBAD if out of limits),
+; providing efficient control flow for the common case (within limits).
+;
+; DORREPOS task (scheduled by RRGIMON when limits exceeded):
+; DORREPOS computes safe gimbal angles and commands the RR servos to reposition
+; the antenna. The safe angles are chosen to:
+; - Be well within gimbal limits (margin from boundary)
+; - Maintain favorable tracking geometry if possible
+; - Minimize antenna slew time (minimize tracking interruption)
+; - Avoid structural obstructions and beam blockages
+;
+; After DORREPOS completes the antenna reposition, it clears RADMODES bit 11
+; (REPOSITION flag), re-enables the auto-tracker (CHAN 12 BIT 14), and
+; re-enables the error counter (CHAN 12 BIT 2). The RR then attempts to
+; re-acquire track at the new safe gimbal angles.
+;
+; The gimbal limit monitoring system (RRGIMON + RRLIMCHK + DORREPOS) forms a
+; closed-loop protection system ensuring safe RR antenna operation:
+; - RRGIMON: Periodic monitoring and violation detection
+; - RRLIMCHK: Angular limit boundary comparison
+; - DORREPOS: Corrective reposition command generation
+;
+; This layered architecture separates concerns (monitoring vs checking vs
+; correction) and provides maintainability and testability benefits.
+;
+; No alarms are issued by RRGIMON or its associated logic. Gimbal limit
+; violations are considered normal operational events, not faults. The antenna
+; repositions automatically, and the crew is not notified unless tracking is
+; lost for an extended period (handled by other RR monitoring routines).
+;
+; Exit paths:
+; - NORRGMON (early exit): Pre-check conditions indicate monitoring should be
+;   skipped (REMODE, CDU ZERO, REPOSITION, not AUTO mode, or NORRMBIT set)
+; - NORRGMON (via RRLIMCHK): Gimbal angles within limits, normal operation
+; - NORRGMON (after RRBAD): Reposition sequence initiated, continue T4RUPT
+;
+; The NORRGMON label (defined as DAPT4S/GPMATRIX) continues the T4RUPT
+; execution sequence, proceeding to Digital Autopilot (DAP) matrix
+; computations. This transition represents the end of radar hardware monitoring
+; and the beginning of spacecraft attitude control processing within the same
+; T4RUPT cycle.
+; ============================================================================
+
 # PROGRAM NAME:  RRGIMON
 #
 # FUNCTIONAL DESCRIPTION:
@@ -1284,6 +2598,212 @@ OCT20002	OCT	20002
 OCT02100	OCT	02100				# P20, P22 MASK BITS.
 
 # Page 188
+; ============================================================================
+; ROUTINE: GPMATRIX (also known as DAPT4S)
+; LOCATION: Page 188-189
+; MISSION PHASE: All powered flight phases (descent, ascent, rendezvous, docking)
+;
+; PURPOSE AND OPERATIONAL CONTEXT:
+; GPMATRIX computes the transformation matrix elements that convert vectors
+; between the spacecraft's gimbal coordinate frame and pilot (body) coordinate
+; frame. This transformation is fundamental to the Digital Autopilot (DAP)
+; system, enabling the AGC to translate desired attitude commands into actual
+; gimbal angles and thruster firing commands.
+;
+; During Apollo 11's lunar descent on July 20, 1969, this routine executed
+; continuously at 4 Hz (4 times per second), providing the LM DAP with current
+; transformation matrices as Armstrong and Aldrin descended to the Sea of
+; Tranquility. The routine's 250-millisecond cycle rate ensured attitude
+; control commands were based on up-to-date gimbal orientation data.
+;
+; EXECUTION FREQUENCY AND INTEGRATION WITH T4RUPT:
+; GPMATRIX executes 4 times per second (every 250 milliseconds) as part of
+; the T4RUPT interrupt service cycle. It appears in the T4JUMP dispatch table
+; multiple times:
+; - Twice explicitly as DAPT4S entries
+; - Twice implicitly following RRAUTCHK (which also appears twice in T4JUMP)
+; - Additionally as NORRGMON exit point from radar gimbal monitoring
+;
+; This multiple scheduling ensures DAP matrix updates occur regularly
+; throughout each second, maintaining fresh transformation data for attitude
+; control regardless of which T4RUPT dispatch path is taken.
+;
+; COORDINATE FRAME TRANSFORMATION THEORY:
+; The Apollo LM uses a three-gimbal Inertial Measurement Unit (IMU) to
+; maintain stable platform orientation. The relationship between gimbal angles
+; and body (pilot) axes requires mathematical transformation matrices.
+;
+; Gimbal angles measured by CDU (Coupling Data Unit) readouts:
+; - CDUX = Outer Gimbal angle (OG), rotation about X-axis
+; - CDUY = Inner Gimbal angle (IG), rotation about Y-axis  
+; - CDUZ = Middle Gimbal angle (MG), rotation about Z-axis
+;
+; The transformation from Gimbal to Pilot coordinates (M_GP matrix) and its
+; inverse from Pilot to Gimbal coordinates (M_PG matrix) are computed using
+; trigonometric functions of these gimbal angles.
+;
+; TRANSFORMATION MATRICES COMPUTED:
+;
+; M_GP (Gimbal to Pilot) matrix elements:
+;   Row 1: [ sin(MG),           0,          1 ]
+;   Row 2: [ cos(MG)cos(OG),    sin(OG),    0 ]
+;   Row 3: [-cos(MG)sin(OG),    cos(OG),    0 ]
+;
+; M_PG (Pilot to Gimbal) matrix - not fully computed, only needed elements:
+;   Row 2: [ 0,  sin(OG),           cos(OG)          ]
+;   Row 3: [ 1, -sin(MG)cos(OG)/cos(MG), sin(MG)sin(OG)/cos(MG) ]
+;
+; Note: Row 1 of M_PG is not computed as it's not required by LEM DAP routines.
+; This optimization (dating from February 1968 modification) saves computation
+; time in the time-critical T4RUPT interrupt handler.
+;
+; MATRIX ELEMENTS STORED IN ERASABLE MEMORY:
+; The computed single-precision matrix elements are stored in EBANK M11:
+; - M11 = sin(MG)                    [M_GP row 1, col 1]
+; - M21 = cos(MG)cos(OG)             [M_GP row 2, col 1]
+; - M31 = -cos(MG)sin(OG)            [M_GP row 3, col 1]
+; - M22 = sin(OG)                    [M_GP row 2, col 2; also M_PG row 2, col 2]
+; - M32 = cos(OG)                    [M_GP row 3, col 2; also M_PG row 2, col 3]
+; - COSMG = cos(MG)                  [Intermediate factor for computations]
+;
+; All matrix elements are scaled at 1 (full-scale representation, effectively
+; -1.0 to +1.0 in the AGC's fixed-point arithmetic).
+;
+; SINGLE-PRECISION VS INTERPRETIVE REPRESENTATION:
+; GPMATRIX computes SINGLE-PRECISION matrix elements specifically for use by
+; BASIC LANGUAGE (native AGC assembly) routines in the DAP. These are NOT
+; arrayed for interpretive programs, which would require double-precision
+; vector/matrix representations.
+;
+; This design decision reflects performance optimization: DAP control laws
+; execute in native AGC code for speed, requiring single-precision elements
+; stored as individual variables rather than interpretive vector arrays.
+;
+; TRIGONOMETRIC COMPUTATION SUBROUTINES:
+; GPMATRIX calls two fundamental math subroutines:
+; - SPSIN: Single-Precision SINe function
+; - SPCOS: Single-Precision COSine function
+;
+; These subroutines accept gimbal angles in AGC angular units (scaled as
+; fractions of a full circle: 180° = 1.0 in two's complement representation)
+; and return trigonometric values scaled at 1 (range -1.0 to +1.0).
+;
+; The SPSIN and SPCOS implementations use polynomial approximations optimized
+; for AGC's limited instruction set and fixed-point arithmetic constraints.
+;
+; HISTORICAL MODIFICATION CONTEXT:
+; February 7, 1968 modification by P. S. Weissman deleted computation of
+; matrix elements MR12 and MR13 (originally part of M_PG row 1), which were
+; found to be unused by any DAP routines. This optimization reduced T4RUPT
+; execution time, freeing processor cycles for other critical tasks.
+;
+; During Apollo 11's descent, this optimization contributed to overall system
+; margin, reducing the computational load that contributed to the famous 1202
+; executive overflow alarms at 102:38:26 mission elapsed time.
+;
+; DAP USAGE OF TRANSFORMATION MATRICES:
+; The LEM Digital Autopilot uses these matrix elements to:
+; 1. Transform desired attitude (in pilot/body coordinates) to required gimbal
+;    angles for IMU gimbal drive commands
+; 2. Transform measured gimbal rates to body angular rates for rate damping
+; 3. Convert commanded body-axis torques to gimbal-axis torque requirements
+; 4. Compute coupling effects between gimbal motions and body motions
+;
+; During lunar landing, these transformations enabled the DAP to maintain
+; proper spacecraft attitude while accounting for:
+; - Descent engine thrust vector offset from center of gravity
+; - Propellant mass depletion changing moment of inertia
+; - Crew inputs via Attitude Controller Assembly (ACA)
+; - Guidance computer attitude command changes
+;
+; CALLING SEQUENCE WITHIN T4RUPT DISPATCH:
+; GPMATRIX is entered via multiple paths within the T4JUMP table:
+; 1. Direct entry as DAPT4S (explicit T4JUMP table entry, occurs twice)
+; 2. Following RRAUTCHK completion (radar auto-tracker check routine)
+; 3. As NORRGMON exit point from RRGIMON (radar gimbal limit monitor)
+;
+; The label DAPT4S is defined as EQUALS GPMATRIX, making both names
+; interchangeable entry points to the same routine.
+;
+; EXECUTION TIMING AND PROCESSOR LOAD:
+; GPMATRIX execution time is dominated by trigonometric function calls:
+; - SPSIN call: ~8 milliseconds (depending on angle value)
+; - SPCOS call: ~8 milliseconds
+; - Total routine: ~50-60 milliseconds including 6 trig calls and multiplies
+;
+; At 4 executions per second, GPMATRIX consumes approximately 200-240
+; milliseconds of processor time per second, representing ~20-24% of AGC
+; computational capacity. This significant load is justified by the critical
+; importance of accurate attitude control transformation.
+;
+; GIMBAL LOCK CONSIDERATIONS:
+; The transformation matrix becomes singular (mathematically undefined) when
+; the middle gimbal (MG) reaches ±90°, a condition known as "gimbal lock."
+; In gimbal lock, the outer and inner gimbals align, losing one degree of
+; rotational freedom.
+;
+; GPMATRIX itself does not check for gimbal lock conditions - that
+; responsibility belongs to the GLOCKMON (Gimbal Lock Monitor) routine, which
+; executes earlier in the T4RUPT cycle and illuminates the GIMBAL LOCK warning
+; light on the DSKY if middle gimbal exceeds ±70° (providing 20° safety
+; margin before actual lock at ±90°).
+;
+; During Apollo 11, gimbal lock was avoided through proper IMU alignment and
+; mission trajectory planning. The LM remained well within safe gimbal angle
+; ranges throughout descent, landing, and ascent operations.
+;
+; COMPUTATIONAL PRECISION AND SCALING:
+; All gimbal angles (CDUX, CDUY, CDUZ) are stored as 15-bit two's complement
+; values representing fractions of a complete revolution:
+; - 0° = 0 (decimal)
+; - 90° = 8192 (decimal) = 020000 (octal)
+; - 180° = 16384 (decimal) = 040000 (octal)
+; - 270° = 24576 (decimal) = 060000 (octal)
+;
+; This "revolutions" scaling provides ~0.011° angular resolution, more than
+; adequate for IMU gimbal angle representation.
+;
+; Trigonometric function outputs and matrix elements use "single-precision at 1"
+; scaling:
+; - +1.0 = 16384 (decimal) = 037777 (octal) [maximum positive]
+; - -1.0 = -16384 (decimal) = 140000 (octal) [maximum negative]
+; - 0.0 = 0
+;
+; This scaling maximizes precision within the AGC's 15-bit signed arithmetic.
+;
+; RELATIONSHIP TO INTERPRETIVE NAVIGATION:
+; While GPMATRIX computes single-precision elements for DAP use, the AGC also
+; maintains double-precision transformation matrices (stored as interpretive
+; vectors) for high-precision navigation computations. These separate matrix
+; representations serve different purposes:
+; - Single-precision (GPMATRIX): Fast, for real-time control (DAP)
+; - Double-precision (interpretive): Accurate, for navigation state updates
+;
+; The two matrix sets are computed independently and used by different AGC
+; subsystems, reflecting the dual-architecture nature of the Apollo guidance
+; system.
+;
+; EXIT PATH TO RESUME:
+; GPMATRIX completes by transferring control to RESUME, which restores
+; interrupt context (Q register, BANK register) and returns from the T4RUPT
+; interrupt handler to resume the interrupted program.
+;
+; The RESUME routine handles:
+; - Restoring Q (return address) from QRUPT
+; - Restoring BANK (memory bank) from BANKRUPT  
+; - Restoring accumulator A from ARUPT (if saved)
+; - Re-enabling interrupts
+; - Resuming interrupted program execution
+;
+; LABEL DEFINITIONS AND ALIASES:
+; - DAPT4S EQUALS GPMATRIX: Primary entry point name (DAP Task 4 Seconds)
+; - NORRGMON EQUALS DAPT4S: Exit point from radar gimbal monitor
+; - ENDDAPT4 EQUALS RESUME: Symbolic end-of-DAP marker
+;
+; These multiple label aliases reflect the routine's integration with both
+; radar monitoring logic and general T4RUPT dispatch structure.
+; ============================================================================
+
 # PROGRAM NAME:  GPMATRIX (DAPT4S) MCD. NO. 2 DATE: OCTOBER 27, 1966
 #
 # AUTHOR:  JOHNATHAN D. ADDLELSTON (ADAMS ASSOCIATES)
