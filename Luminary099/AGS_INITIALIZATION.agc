@@ -24,6 +24,24 @@
 #	Assemble revision 001 of AGC program LMY99 by NASA 2021112-061
 #	16:27 JULY 14, 1969
 
+; ============================================================================
+; FILE: AGS_INITIALIZATION.agc
+; MODULE: Abort Guidance System Initialization
+; MISSION PHASE: lunar-orbit/descent/landing/ascent
+;
+; TL;DR: Initializes the backup Abort Guidance System (AGS/AEA) by
+;        transferring current spacecraft state vectors from the primary AGC
+;        to the AGS computer. Establishes common reference frame by zeroing
+;        gimbal angle counters. Critical for abort readiness during lunar
+;        descent and ascent when immediate abort capability must be maintained.
+;
+; COMMENT-ONLY READERS: This routine prepares the LM's backup guidance computer
+;        for potential abort scenarios during lunar operations. Read to
+;        understand dual-computer redundancy in Apollo spacecraft.
+; CODE-ALONG READERS: Study AGC-to-AGS data transfer protocol, coordinate
+;        transformation from AGC to AGS frame, and IMU synchronization logic.
+; ============================================================================
+
 # Page 206
 
 # PROGRAM NAME:  AGS INITIALIZATION (R47)
@@ -65,6 +83,15 @@
 #		AGSBUFF		(14D)	CONTAINS AGS INITIALIZATION DATA (SEE :OUTPUT: BELOW)
 #		AGSWORD		(1)	PREVIOUS DOWNLIST SAVED HERE
 
+; ============================================================================
+; TRANSITION: AGS Initialization Program Entry
+;
+; The Lunar Module carries two independent guidance computers for safety:
+; the primary AGC and the backup AGS (Abort Guidance System). This program
+; (invoked by crew entering V47E on the DSKY) synchronizes the AGS with
+; current mission state, ensuring abort readiness during critical phases.
+; ============================================================================
+
 		EBANK=	AGSBUFF
 
 		BANK	40
@@ -72,6 +99,11 @@
 		BANK
 
 		COUNT*	$$/R47
+
+; AGSINIT: Entry point for AGS initialization routine (V47E)
+; Before transferring state vectors to the AGS, verify that the reference
+; coordinate system (REFSMMAT) is valid. An invalid REFSMMAT would corrupt
+; the AGS with incorrect position and velocity data.
 
 AGSINIT		CAF	REFSMBIT
 		MASK	FLAGWRD3			# CHECK REFSMFLG.
@@ -82,9 +114,18 @@ AGSINIT		CAF	REFSMBIT
 		OCT	220
 		TC	ENDEXT
 
+; NEWAGS: Establish new AGS clock zero time
+; The AGS maintains its own mission elapsed time clock. This routine captures
+; the crew's ENTER keystroke time and uses it to establish the AGS clock zero
+; reference point for subsequent time calculations.
+
 NEWAGS		EXTEND
 		DCA	SAMPTIME			# TIME OF THE :ENTER: KEYSTROKE
 		DXCH	AGSK				# BECOMES NEW AEA CLOCK :ZERO:
+
+; REDSPTEM: Display current AGS clock zero time to crew
+; The crew can verify the AGS time reference on the DSKY before proceeding
+; with state vector transfer. This ensures both computers share common time.
 
 REDSPTEM	EXTEND
 		DCA	AGSK
@@ -99,10 +140,26 @@ AGSDISPK	CAF	V06N16
 		EXTEND
 		BZF	NEWAGS				# YES, USE KEYSTROKE TIME FOR NEW AGSK
 
+; Crew can enter AGS clock zero time manually via V25E or automatically
+; via V32. This flexibility supports different mission procedures.
 		EXTEND					# NO, NEW AGSK LOADED VIA V25
 		DCA	DSPTEMX				# LOADED INTO DSPTEMX BY KEYING
 		TC	REDSPTEM -1			# V25E FOLLOWED BY HRS.,MINS.,SECS.
 							# DISPLAY THE NEW K
+
+; ============================================================================
+; TRANSITION: From Time Display to State Vector Calculation
+;
+; With AGS clock zero established, the computer now calculates current
+; position and velocity for both the Lunar Module and Command Module.
+; These state vectors must be extrapolated to present time and converted
+; to AGS coordinate frame before transmission to the backup computer.
+; ============================================================================
+
+; AGSVCALC: Calculate and buffer state vectors for AGS transfer
+; The AGS requires both LM and CSM state vectors to maintain abort capability.
+; During descent/ascent, if the primary AGC fails, the AGS must know both
+; spacecraft positions to compute rendezvous trajectories for abort scenarios.
 
 AGSVCALC	TC	INTPRET
 		SET
@@ -114,6 +171,9 @@ AGSVCALC	TC	INTPRET
 		TC	BANKCALL
 		CADR	EXDSPRET
 
+; Extrapolate spacecraft state vectors to current time
+; Both LM and CSM may have maneuvered since last navigation update. The AGC
+; uses numerical integration to propagate orbital state to present moment.
 		TC	INTPRET				# EXTRAPOLATE LEM AND CSM STATE VECTORS
 		RTB					# TO THE PRESENT TIME
 			LOADTIME			# LOAD MPAC WITH TIME2,TIME1
@@ -136,6 +196,11 @@ AGSVCALC	TC	INTPRET
 		STORE	AGSBUFF +12D
 		EXIT
 
+; Initiate AGS downlink transmission
+; The buffered state vectors are transmitted via digital downlink to the
+; AGS computer. This 20-second transmission updates the backup system with
+; current mission state, maintaining abort readiness.
+
 		CAF	LAGSLIST
 		TS	DNLSTCOD
 
@@ -143,11 +208,27 @@ AGSVCALC	TC	INTPRET
 		TC	BANKCALL			# DOWNLIST IS TRANSMITTED
 		CADR	DELAYJOB
 
+; After 20-second downlink transmission completes, restore normal telemetry
+; The AGS downlist temporarily interrupts regular telemetry to ground control.
+; Once state vector transfer completes, resume previous downlist configuration.
 		CA	AGSWORD
 		TS	DNLSTCOD			# RETURN TO THE OLD DOWNLIST
 		CAF	IMUSEBIT
 		MASK	FLAGWRD0			# CHECK IMUSE FLAG.
 		CCS	A
+; ============================================================================
+; TRANSITION: From State Vector Transfer to IMU Synchronization
+;
+; With state vectors transferred to AGS, the final initialization step
+; synchronizes the IMU gimbal angle counters between AGC and AGS. Both
+; computers must share common gimbal angle reference to maintain attitude
+; knowledge during potential abort scenarios requiring AGS takeover.
+; ============================================================================
+
+; IMU zeroing procedure establishes common attitude reference
+; The IMU (Inertial Measurement Unit) gimbal angles define spacecraft attitude.
+; By simultaneously zeroing both AGC and AGS gimbal counters, both computers
+; measure attitude relative to the same reference, critical for abort guidance.
 		TC	AGSEND				# IMU IS BEING USED -- DO NOT ZERO
 CKSTALL		CCS	IMUCADR				# CHECK FOR IMU USAGE WHICH AVOIDS THE
 		TCF	+3				# IMUSE BIT:  I.E., IMU COMPENSATION.
@@ -158,6 +239,9 @@ CKSTALL		CCS	IMUCADR				# CHECK FOR IMU USAGE WHICH AVOIDS THE
 		CADR	DELAYJOB
 		TCF	CKSTALL
 
+; Pulse IMU zero discrete for 320 milliseconds
+; This hardware signal simultaneously resets AGC, LGC, and AEA gimbal counters
+; to zero, establishing synchronized attitude reference across all systems.
  +6		TC	BANKCALL			# IMU IS NOT IN USE
  		CADR	IMUZERO				# SET IMU ZERO DISCRETE FOR 320 MSECS.
 		TC	BANKCALL			# WAIT 3 SEC FOR COUNTERS TO INCREMENT
@@ -166,6 +250,9 @@ CKSTALL		CCS	IMUCADR				# CHECK FOR IMU USAGE WHICH AVOIDS THE
 AGSEND		TC	DOWNFLAG			# ALLOW V37
 		ADRES	NODOFLAG
 
+; Display completion to crew via DSKY
+; V50N16 requests crew acknowledgment that AGS initialization completed
+; successfully, confirming abort backup system is ready for mission operations.
 		CAF	V50N16
 		TC	BANKCALL
 		CADR	GOMARK3
@@ -173,12 +260,25 @@ AGSEND		TC	DOWNFLAG			# ALLOW V37
 		TCF	ENDEXT
 		TC	ENDEXT
 
+; ============================================================================
+; SCALEVEC: Transform and scale state vectors for AGS compatibility
+;
+; The AGS computer uses different coordinate frame and numerical representation
+; than the AGC. This routine transforms AGC vectors from navigation base
+; coordinates to stable member coordinates via REFSMMAT, scales for AGS
+; precision, and converts from AGC's one's complement to AGS two's complement.
+; ============================================================================
+
 SCALEVEC	VLOAD	MXV
 			VATT1
 			REFSMMAT
 		VXSC	VSL2
 			VSCALE
 # Page 209
+; Rounding and complement conversion for AGS compatibility
+; AGC uses one's complement arithmetic (negative zero exists: +0 and -0)
+; AGS uses two's complement arithmetic (single zero representation)
+; This conversion ensures numerical consistency across both computers.
 		VAD	VAD				# THIS SECTION ROUNDS THE VECTOR, AND
 			AGSRND1				# CORRECTS FOR THE FACT THAT THE AGS
 			AGSRND2				# IS A 2 S COMPLEMENT MACHINE WHILE THE
@@ -194,6 +294,9 @@ SCALEVEC	VLOAD	MXV
 		VAD	RTB				# CASE OF A HIGH-ORDER ZERO COUPLED WITH
 			AGSRND2				# A LOW ORDER NEGATIVE PART.
 			VECSGNAG
+; Pack transformed vectors into MPAC stack for storage
+; The index register manipulation ensures proper alignment in memory buffer
+; for transmission to AGS. Vectors must be tightly packed for downlink.
 		LXA,1
 			VATT1
 		SXA,1	LXA,1
@@ -205,17 +308,32 @@ SCALEVEC	VLOAD	MXV
 		SXA,1	RVQ
 			MPAC +6
 
+; ============================================================================
+; CONSTANTS AND DISPLAY CODES
+; ============================================================================
+
+; LAGSLIST: AGS downlist code selector
+; Switches telemetry stream to AGS initialization data format during transfer
 LAGSLIST	=	ONE
+
+; Display verb/noun codes for crew interface
+; These DSKY codes guide crew through AGS initialization procedure
 V01N14		VN	0114
 V50N00A		VN	5000
 V00N25		EQUALS	OCT31
-V06N16		VN	0616
+V06N16		VN	0616			# Display time (hrs, min, sec)
 V00N34		EQUALS	34DEC
-V50N16		VN	5016
+V50N16		VN	5016			# Please perform AGS initialization
+
+; Scaling factors for AGS unit conversion
+; AGS uses feet/feet-per-second while AGC uses meters/meters-per-centisecond
 TSCALE		2DEC	100 B-10			# CSEC TO SEC SCALE FACTOR
-20SEC		DEC	2000
+20SEC		DEC	2000				# Downlink transmission duration
 RSCALE		2DEC	3.280839 B-3			# METERS TO FEET SCALE FACTOR
 VSCALE		2DEC	3.280839 E2 B-9			# METERS/CS TO FEET/SEC SCALE FACTOR
+
+; Rounding vectors for one's complement to two's complement conversion
+; These constants ensure proper numerical representation for AGS computer
 AGSRND1		2OCT	0000060000
 		2OCT	0000060000
 		2OCT	0000060000
