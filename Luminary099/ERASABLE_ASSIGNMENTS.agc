@@ -3079,7 +3079,7 @@ P21ALT		EQUALS	P21GAM +2	# I(2)TMP	*** NOUN 91 ***
 ;
 ; These variables held the guidance solution during those critical moments.
 ; The throttle control variables managed DPS from 10% to 100% and back to 60%
-; for final approach. Landing radar variables provided altitude/velocity. 
+; for final approach. Landing radar variables provided altitude/velocity.
 ; Display variables showed Armstrong and Aldrin their descent rate and position.
 ;
 ; KEY VARIABLE GROUPS:
@@ -3096,7 +3096,7 @@ P21ALT		EQUALS	P21GAM +2	# I(2)TMP	*** NOUN 91 ***
 ;    FWEIGHT  - Estimated vehicle weight for thrust/weight ratio calculation
 ;    FC       - Commanded thrust acceleration (determines throttle position)
 ;    TTHROT   - Throttle command sent to descent engine
-;    
+;
 ;    During Apollo 11, throttle management was critical:
 ;    - Started at 10% for ignition verification
 ;    - Ramped to 100% (9,870 lbf) for braking phase descent
@@ -3117,7 +3117,7 @@ P21ALT		EQUALS	P21GAM +2	# I(2)TMP	*** NOUN 91 ***
 ;    VMEAS    - Radar-measured velocity (3-axis from 4 beams)
 ;    HMEAS    - Radar-measured altitude (slant range from antenna)
 ;    VN2      - Velocity squared for energy calculations
-;    
+;
 ;    Landing Radar (LR) provided critical altitude/velocity measurements during
 ;    descent. On Apollo 11, LR data initially caused computational overload
 ;    (1202 alarm) but was essential for accurate landing. Armstrong trusted
@@ -3138,7 +3138,7 @@ P21ALT		EQUALS	P21GAM +2	# I(2)TMP	*** NOUN 91 ***
 ;    - LASTTPIP/THISTPIP: Accelerometer pulse integration for velocity
 ;    - OLDPIPAX/Y/Z: Previous accelerometer readings for delta-V calculation
 ;    - DELVROD: Delta-velocity in Rate of Descent frame
-;    
+;
 ;    In P66 mode, Armstrong controlled descent rate via hand controller while
 ;    AGC maintained attitude and lateral position. This hybrid approach gave
 ;    Armstrong landing site selection authority while AGC handled the complex
@@ -3358,7 +3358,7 @@ HCALC1		EQUALS	DELVROD +6	# I(2)
 ; 1. TARGETING VARIABLES (RCO, YCO):
 ;    RCO  - Target radius (orbital altitude) scaled at 2^24 meters
 ;    YCO  - Out-of-plane distance (latitude targeting) scaled at 2^24 meters
-;    
+;
 ;    These define the insertion orbit Armstrong and Aldrin needed to reach
 ;    for rendezvous with Columbia. Ground control uplinked the target state
 ;    vector before ascent, and these variables held the guidance targets.
@@ -3367,7 +3367,7 @@ HCALC1		EQUALS	DELVROD +6	# I(2)
 ;    Inverse of required delta-velocity in three axes for guidance computation.
 ;    Used in closed-loop steering law to null velocity errors during ascent.
 ;    Format: Scaled at ATMAG (probably 2^7 or similar for velocity inverse)
-;    
+;
 ;    The guidance continuously computed required thrust direction to achieve
 ;    orbital insertion. These inverse delta-V terms enabled efficient
 ;    calculation of steering commands without expensive division operations.
@@ -3375,7 +3375,7 @@ HCALC1		EQUALS	DELVROD +6	# I(2)
 ; 3. VELOCITY-TO-BE-GAINED VECTOR (VGVECT):
 ;    VGVECT - 6-word vector (position + velocity to be gained)
 ;             Primary guidance output showing remaining burn requirements
-;    
+;
 ;    This vector was continuously updated during ascent, showing how much
 ;    more velocity change was needed to reach the target orbit. As VGVECT
 ;    approached zero, the guidance prepared for engine cutoff. VGVECT
