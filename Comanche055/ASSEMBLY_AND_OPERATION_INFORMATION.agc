@@ -28,13 +28,58 @@
 
 # Page 2
 
+; ============================================================================
+; FILE: ASSEMBLY_AND_OPERATION_INFORMATION.agc
+; MODULE: INFORMATION Subsystem
+; MISSION PHASE: all-phases (assembly configuration)
+;
+; TL;DR: Master assembly directives and operational notes defining how Comanche
+;        055 source files compile into executable flight software. Documents
+;        subroutine call structure tables, memory bank organization philosophy,
+;        operational modes, and yaYUL assembler targeting requirements that
+;        differ from original YUL/GAP assemblers.
+;
+; COMMENT-ONLY READERS: This file explains how the Apollo software was built
+;        from source code into the programs that flew to the Moon.
+; CODE-ALONG READERS: Critical reference for understanding AGC memory banking,
+;        assembly directives, and build process architecture.
+; ============================================================================
+
 # ASSEMBLY AND OPERATIONS INFORMATION
 # TAGS FOR RELATIVE SETLOC AND BLANK BANK CARDS
 # SUBROUTINE CALLS
+
+; ============================================================================
+; SECTION: SUBROUTINE CALL STRUCTURE TABLE
+;
+; This section provides an index of all major software modules in Comanche 055,
+; organized by subsystem. The Command Module software is divided into six major
+; subsystems, each containing multiple program modules that handle specific
+; mission functions from launch through splashdown.
+;
+; COMMENT-ONLY READERS: Think of this as the table of contents for the Apollo
+;        Command Module flight software. Each subsystem handles different parts
+;        of the mission - from navigation and guidance to attitude control and
+;        reentry.
+;
+; CODE-ALONG READERS: This organizational structure reflects the AGC memory
+;        banking requirements. With only 36K words of fixed memory available,
+;        modules are carefully placed in memory banks to optimize cross-bank
+;        call overhead and minimize bank-switching during time-critical operations.
+; ============================================================================
 #
-#
+; --- COMERASE SUBSYSTEM ---
+; Erasable (RAM) memory allocation. Defines the 2K words of read-write memory
+; available for variables, computation scratch space, and runtime state.
+;
 #	COMERASE
 #		ERASABLE ASSIGNMENTS
+;
+; --- COMAID SUBSYSTEM ---
+; Interrupt handlers, restart logic, crew interface, and navigation support.
+; This subsystem handles real-time interrupts, DSKY display/keyboard operations,
+; IMU sensor management, and mission program support routines.
+;
 #	COMAID
 #		INTERRUPT LEAD INS
 #		T4RUPT PROGRAM
@@ -53,6 +98,12 @@
 #		KALCMANU STEERING
 #		SYSTEM TEST STANDARD LEAD INS
 #		IMU CALIBRATION AND ALIGNMENT
+;
+; --- COMEKISS SUBSYSTEM ---
+; Orbital navigation and targeting programs. Handles ground tracking data,
+; Lambert targeting for orbital maneuvers, and stable orbit determination.
+; Used during translunar coast, lunar orbit, and transearth phases.
+;
 #	COMEKISS
 #		GROUND TRACKING DETERMINATION PROGRAM - P21
 #		P34-P35, P74-P75
@@ -60,6 +111,13 @@
 #		P76
 #		R30
 #		STABLE ORBIT - P38-P39
+;
+; --- TROUBLE SUBSYSTEM ---
+; Major mission programs including rendezvous navigation, service propulsion
+; burns, IMU alignment, and atmospheric entry control. Contains the programs
+; that execute during critical mission phases including translunar injection,
+; lunar orbit insertion, rendezvous operations, and Earth reentry.
+;
 #	TROUBLE
 #		P11
 #		TPI SEARCH
@@ -76,6 +134,13 @@
 #		CM BODY ATTITUDE
 #		P37,P70
 #		S-BAND ANTENNA FOR CM
+;
+; --- TVCDAPS SUBSYSTEM ---
+; Thrust Vector Control (TVC) and Digital Autopilot System. Controls engine
+; gimbal positioning during SPS burns and manages RCS thruster firing for
+; attitude control. Critical for precision orbital maneuvers and maintaining
+; spacecraft orientation during coast phases.
+;
 #	TVCDAPS
 #		TVCINITIALIZE
 # Page 3
@@ -91,6 +156,14 @@
 #		RCS-CSM DAP EXECUTIVE PROGRAMS
 #		JET SELECTION LOGIC
 #		CM ENTRY DIGITAL AUTOPILOT
+;
+; --- CHIEFTAN SUBSYSTEM ---
+; Core operating system and mathematical foundation. Contains the Executive
+; scheduler, Waitlist timer system, Interpreter virtual machine for high-level
+; vector/matrix operations, coordinate transformation routines, orbital
+; mechanics calculations, and fundamental utility functions. This is the
+; foundational layer upon which all mission programs are built.
+;
 #	CHIEFTAN
 #		DOWN-TELEMETRY PROGRAM
 #		INTER-BANK COMMUNICATION
@@ -135,7 +208,51 @@
 #       SUBROS CALLED & PROGRAM STATUS
 
 # Page 5
+
+; ============================================================================
+; TRANSITION: From Subroutine Organization to Crew Interface Documentation
+;
+; The following sections document the DSKY (Display and Keyboard) verb/noun
+; system that astronauts used to communicate with the AGC. Verbs specify
+; operations to perform (display data, load values, execute programs), while
+; nouns specify which data to operate on (position, velocity, time, etc.).
+;
+; During the Apollo 11 mission, Neil Armstrong and Buzz Aldrin used these
+; verb/noun combinations hundreds of times - requesting navigation data,
+; initiating maneuvers, and monitoring spacecraft systems. The DSKY was their
+; primary interface to the guidance computer throughout the journey from
+; Earth to the Moon and back.
+;
+; COMMENT-ONLY READERS: This is like the command language astronauts used to
+;        "talk" to the computer. Verb+Noun combinations let them ask questions
+;        and give commands (e.g., V16N36 displayed time from ignition).
+;
+; CODE-ALONG READERS: Understanding the verb/noun architecture is essential
+;        for tracing how crew procedures trigger specific software routines.
+;        Each verb number maps to executable code in EXTENDED_VERBS.agc or
+;        PINBALL_GAME_BUTTONS_AND_LIGHTS.agc.
+; ============================================================================
+
 # VERB LIST FOR CSM
+
+; ============================================================================
+; SECTION: VERB LIST (Regular and Extended)
+;
+; Verbs are numerical commands (V01-V99) that instruct the AGC what operation
+; to perform. Regular Verbs (01-37) handle common display and data operations.
+; Extended Verbs (40-99) control mission programs and specialized functions.
+;
+; Astronauts entered verbs by pressing the VERB key followed by two digits.
+; The AGC would then typically prompt for a noun to specify which data to
+; operate on. Some verbs operated standalone (e.g., V37 to change programs).
+;
+; VERB CATEGORIES:
+; - Display verbs (V05-V06, V16): Show data on DSKY in various formats
+; - Load verbs (V21-V25): Accept crew input to update navigation or targeting
+; - Monitor verbs (V11, V16): Continuously update displays with changing data
+; - Program verbs (V37, V70-V75): Terminate or change major mission programs
+; - Test verbs (V34-V36): System self-test and hardware checkout functions
+; ============================================================================
 
 # REGULAR VERBS
 
@@ -247,6 +364,43 @@
 # 99 PLEASE ENABLE ENGINE
 
 # Page 8
+
+; ============================================================================
+; SECTION: NOUN LIST (Normal and Mixed Nouns)
+;
+; Nouns are numerical data identifiers (N01-N99) that specify which information
+; to display or modify. Each noun represents 1-3 components of related data
+; (e.g., X/Y/Z coordinates, or hours/minutes/seconds of time).
+;
+; Nouns fall into two categories:
+; - NORMAL NOUNS: Fixed data locations in memory (e.g., N36 = time from ignition)
+; - MIXED NOUNS: Variable data depending on program context (e.g., N90 adapts
+;                to current program's needs)
+;
+; DATA COMPONENT FORMATS:
+; - 1COMP: Single value (altitude, velocity magnitude, angle)
+; - 2COMP: Pair of values (latitude/longitude, option codes)
+; - 3COMP: Triple of values (position vector XYZ, velocity vector, time HMS)
+;
+; SCALING AND DISPLAY:
+; Each noun component has a specific scaling factor and decimal point position.
+; For example, N36 displays time as HHH.HH hours, MMM.MM minutes, SSS.SS seconds.
+; Position nouns use scaling appropriate for distances (nautical miles, feet).
+;
+; LOAD RESTRICTIONS:
+; :NO LOAD: - Noun contains components that cannot be crew-loaded (computed values)
+; :DEC ONLY: - Only decimal entry allowed (no octal). NO LOAD implies DEC ONLY.
+;
+; COMMENT-ONLY READERS: Think of nouns as "what" the astronauts wanted to see
+;        or change - their position, velocity, fuel remaining, time to ignition.
+;        Each number (N01-N99) meant something specific to the mission.
+;
+; CODE-ALONG READERS: Each noun maps to specific memory registers in erasable
+;        memory. The mapping is defined in PINBALL_NOUN_TABLES.agc. Scaling
+;        factors convert internal AGC fixed-point representation to human-
+;        readable decimal values on the DSKY display.
+; ============================================================================
+
 # IN THE FOLLOWING NOUN LIST THE :NO LOAD: RESTRICTION MEANS THE NOUN
 # CONTAINS AT LEAST ONE COMPONENT WHICH CANNOT BE LOADED, I.E. OF
 # SCALE TYPE L (MIN/SEC) OR PP (2 INTEGERS).
@@ -472,6 +626,59 @@
 
 # Page 14
 
+; ============================================================================
+; SECTION: REGISTERS AND SCALING FOR NORMAL AND MIXED NOUNS
+;
+; This section maps each noun to its specific erasable memory register
+; locations and scaling factors. Understanding this mapping is critical for
+; both mission operations and software maintenance.
+;
+; MEMORY ARCHITECTURE CONTEXT:
+; The AGC has only 2K words of erasable (RAM) memory, shared between all
+; mission programs, navigation state, guidance parameters, and display buffers.
+; Every register location is precious and carefully allocated. The register
+; assignments shown here were finalized after extensive analysis to optimize
+; memory usage while maintaining real-time performance.
+;
+; REGISTER NAMING CONVENTIONS:
+; - Single letter codes (TSTRT, DSPTEM1, CDUX, etc.) are symbolic names for
+;   specific erasable memory addresses
+; - Register locations are defined in ERASABLE_ASSIGNMENTS.agc
+; - Some registers are shared between multiple nouns depending on program phase
+;
+; SCALING FACTOR EXPLANATION:
+; AGC lacks floating-point hardware, so all numbers use fixed-point arithmetic
+; with predefined scaling. Each noun component has a scale factor indicating
+; the physical unit per AGC internal count. For example:
+; - Position scale "28" means bit 1 of high register = 2^28 centimeters
+; - Velocity scale "7" means bit 1 = 2^7 meters/centisecond
+; - Time scales use special formats (HMS, decimal hours, etc.)
+;
+; WHY SCALING MATTERS:
+; Scaling choices balance precision versus range. A position scaled at 2^29
+; meters can represent cislunar distances while maintaining meter-level
+; precision. Velocity scaled at 2^7 m/cs covers orbital speeds while preserving
+; sub-meter/second precision. These scaling decisions were fundamental to
+; AGC's ability to navigate accurately with 15-bit signed arithmetic.
+;
+; DOUBLE PRECISION (DP) VALUES:
+; Many nouns use two consecutive registers for double precision (30 bits of
+; data + sign). The "high register" contains the most significant bits, the
+; "low register" contains the least significant bits. This extends range and
+; precision beyond single 15-bit words.
+;
+; COMMENT-ONLY READERS: This section shows where in computer memory each piece
+;        of mission data lived - position, velocity, time, fuel, angles. The
+;        Apollo computer had very limited memory, so every location was
+;        carefully planned and reused when possible.
+;
+; CODE-ALONG READERS: Cross-reference these register assignments with
+;        ERASABLE_ASSIGNMENTS.agc to see the complete memory map. Note how
+;        registers are reused (e.g., DSPTEM1/2/3 serve multiple nouns). The
+;        scaling factors here must match the scaling used in all computational
+;        code that writes to these registers.
+; ============================================================================
+
 # REGISTERS AND SCALING  FOR NORMAL NOUNS
 #
 # NOUN	        REGISTER	SCALE TYPE
@@ -685,6 +892,67 @@
 
 # Page 19
 
+; ============================================================================
+; SECTION: NOUN SCALES AND FORMATS - Complete Reference
+;
+; This critical reference section defines the 40+ scale types (A through YY)
+; used throughout the AGC display system. Each scale type specifies:
+; - Physical units (degrees, meters, feet, seconds, etc.)
+; - Decimal format shown on DSKY (where decimal point appears)
+; - AGC internal format (how bits map to physical values)
+; - Precision available (what's the smallest displayable increment)
+;
+; SCALE TYPE CATEGORIES:
+; - Generic types (A-C): Octal, fractional, whole numbers
+; - Angular types (D-K): Degrees in various formats and precisions
+; - Linear types (M-P): Distance in feet or nautical miles
+; - Velocity types (Q-T): Speed in feet/second or meters/centisecond
+; - Time types (U-L): Hours, minutes, seconds in various combinations
+; - Specialized types: Propellant mass, gimbal angles, option codes, etc.
+;
+; FIXED-POINT REPRESENTATION:
+; All scale types use AGC's fixed-point arithmetic. The "BIT 1 = 2^N UNITS"
+; notation indicates the scaling factor - the physical value represented by
+; the least significant data bit (bit 1). For example:
+; - "BIT 1 = 2^-14 UNITS" means bit 1 = 1/16384 of a unit
+; - "BIT 1 = 2^28 CENTIMETERS" means bit 1 = 268,435,456 cm (2,684 km)
+;
+; DECIMAL FORMAT NOTATION:
+; - "XXXXX." means whole number with decimal after all digits (12345.)
+; - ".XXXXX" means fraction with decimal before all digits (.12345)
+; - "XXX.XX" means decimal point in middle (123.45)
+; - "±XXXXX" means signed value with explicit plus/minus display
+;
+; PRECISION AND RANGE TRADEOFF:
+; Each scale type represents an engineering decision balancing measurement
+; precision against maximum representable value. A 15-bit signed word can
+; represent -16384 to +16383 counts. Scaling determines what physical range
+; this covers. Fine precision (like scale D: 1 degree = 180 counts) gives
+; accurate angle measurement. Coarse precision (like scale 28: position scaled
+; at 2^28 cm per count) allows cislunar distances but sacrifices sub-kilometer
+; resolution.
+;
+; WHY THIS MATTERS FOR OPERATIONS:
+; During Apollo 11, when Armstrong and Aldrin requested V16N36 (time from
+; ignition), the AGC retrieved values from registers, applied scale type L
+; formatting (minutes and seconds), and displayed "MM.SS" on the DSKY. When
+; they loaded a target address with V21N18, the DSKY converted their decimal
+; input to internal fixed-point using scale B. Every number exchange between
+; crew and computer flowed through these scale type conversions.
+;
+; COMMENT-ONLY READERS: This section is like a codebook translating between
+;        what astronauts saw on the display (feet, degrees, minutes) and how
+;        the computer internally stored those values as binary numbers. Each
+;        "scale type" letter code defined a specific conversion rule.
+;
+; CODE-ALONG READERS: These scale type definitions are referenced throughout
+;        PINBALL_NOUN_TABLES.agc, DISPLAY_INTERFACE_ROUTINES.agc, and all code
+;        that formats data for DSKY output or accepts DSKY input. The scaling
+;        math (multiply, shift, round) happens in display interface routines.
+;        Understanding these scales is essential for tracing data flow from
+;        computational routines through display formatting to crew visibility.
+; ============================================================================
+
 # NOUN SCALES AND FORMATS
 #
 # -SCALE TYPE-				 PRECISION
@@ -864,6 +1132,109 @@
 
 # Page 23
 
+; ============================================================================
+; SECTION: ALARM CODES - Program Fault Detection and Recovery
+;
+; This section documents the complete catalog of program alarm codes used
+; throughout Comanche 055 (Command Module flight software). Program alarms
+; are the AGC's fault detection and annunciation system, alerting the crew
+; to software-detected anomalies while allowing mission continuation.
+;
+; ALARM SYSTEM ARCHITECTURE:
+; When software detects an error condition (invalid sensor data, computational
+; overflow, timing violation, etc.), it invokes the ALARM routine with a
+; 5-digit octal code. The ALARM routine:
+; 1. Displays the alarm code on the DSKY with flashing PROG light
+; 2. Records the alarm in telemetry for ground analysis
+; 3. Logs the alarm in erasable memory alarm history
+; 4. Continues program execution (non-fatal) or initiates abort logic (fatal)
+;
+; ALARM CODE STRUCTURE:
+; Five-digit octal codes (00110 through 77777) identify specific fault
+; conditions. The code assignment reflects:
+; - Subsystem origin (navigation, guidance, control, display, etc.)
+; - Severity level (informational, warning, critical)
+; - Recovery action required (crew intervention, automatic, abort)
+;
+; HISTORICAL CONTEXT - APOLLO 11 MISSION:
+; During Apollo 11's lunar landing on July 20, 1969, program alarms became
+; mission-critical. At mission time 102:38:26, the Lunar Module's AGC issued
+; alarm 1202 (executive overflow - too many jobs queued). This occurred
+; because the rendezvous radar was inadvertently left on, flooding the
+; computer with unnecessary tracking data while simultaneously executing
+; landing guidance. Flight controller Steve Bales and backroom engineer Jack
+; Garman recognized 1202 as non-critical (the AGC's restart system would
+; recover), gave a "GO" decision, and the landing continued successfully.
+;
+; The 1202 alarm repeated four times during descent. Without understanding
+; the alarm system's design - that it protected against overload while
+; maintaining critical functions - mission control might have aborted. The
+; alarm codes documented in this file represent the AGC's fault tolerance
+; strategy that enabled the first lunar landing despite computer overload.
+;
+; ALARM vs ABORT:
+; Most alarm codes are informational or recoverable warnings. The AGC
+; continues operation after displaying the alarm. Critical alarms (like
+; IMU failures or guidance system faults) may trigger abort programs that
+; separate the spacecraft from the lunar surface or terminate powered flight.
+; The distinction between recoverable alarms and abort conditions was
+; carefully engineered into each alarm code's handling logic.
+;
+; CREW RESPONSE PROCEDURES:
+; When an alarm illuminates the DSKY PROG light:
+; 1. Crew notes the 5-digit alarm code
+; 2. Presses KEY REL to acknowledge and clear the flashing display
+; 3. Consults checklist or ground control for alarm meaning
+; 4. Executes corrective action if required (switch setting, data entry)
+; 5. Continues monitoring for alarm recurrence
+;
+; During Apollo 11's descent, Armstrong and Aldrin acknowledged each 1202
+; alarm with KEY REL, received "GO" from Houston, and continued the landing.
+; This interaction between alarm system, crew response, and ground control
+; decision-making exemplified human-computer cooperation under pressure.
+;
+; ALARM CODE TABLE FORMAT:
+; Each entry specifies:
+; - CODE: 5-digit octal alarm number
+; - TYPE: Error category (computational, sensor, timing, etc.)
+; - SET BY: Which software module detects and issues this alarm
+; - ALARM ROUTINE: How the alarm system processes this code
+;
+; TELEMETRY AND GROUND MONITORING:
+; Every alarm triggers downlink telemetry, allowing Mission Control to track
+; AGC health and anomalies in real-time. The telemetry includes alarm code,
+; time of occurrence, program executing when alarm occurred, and system state.
+; This data was critical for Apollo 11's ground team to diagnose the 1202
+; alarms and authorize landing continuation.
+;
+; RESTART PROTECTION:
+; Many alarms coordinate with the AGC's restart system. If an alarm indicates
+; computational overload or timing violation, the restart system preserves
+; mission-critical state and restarts interrupted programs from protected
+; phases. This restart capability, integrated with the alarm system, provided
+; the fault tolerance that saved Apollo 11's landing when 1202 alarms occurred.
+;
+; COMMENT-ONLY READERS: Program alarm codes are like warning lights in a car,
+;        but much more sophisticated. When the Apollo computer detected a
+;        problem, it displayed a 5-digit code to alert the astronauts. During
+;        Apollo 11's lunar landing, alarm code 1202 flashed four times because
+;        the computer was overloaded with data. Mission Control understood the
+;        alarm meant "I'm busy but still working" rather than "I'm failing,"
+;        so they allowed Armstrong to continue the landing. This alarm system
+;        was one reason the first Moon landing succeeded despite unexpected
+;        computer problems.
+;
+; CODE-ALONG READERS: Cross-reference these alarm codes with ALARM_AND_ABORT.agc
+;        which contains the ALARM display routine and alarm handling logic.
+;        EXECUTIVE.agc and WAITLIST.agc contain the code that generates 1201/
+;        1202 alarms when job queues or task lists overflow. Each module that
+;        issues alarms (SXTMARK, IMU_CALIBRATION, POWERED_FLIGHT_SUBROUTINES,
+;        etc.) calls TC ALARM with the appropriate 5-digit code in the A
+;        register. Understanding alarm flow requires tracing from fault
+;        detection point → ALARM routine → DSKY display → telemetry downlink
+;        → crew/ground response.
+; ============================================================================
+
 # 		ALARM CODES FOR 504
 
 # 		REPORT DEFICIENCIES TO JOHN SUTHERLAND @ MIT 617-864-6900 X1458
@@ -960,6 +1331,138 @@
 
 # Page 25
 
+; ============================================================================
+; SECTION: CHECKLIST CODES - Crew Procedure Request System
+;
+; This section documents the complete catalog of checklist codes used by
+; Comanche 055 (Command Module flight software) to request astronaut actions.
+; Checklist codes are the AGC's method of prompting the crew to perform
+; specific console switch operations, manual tasks, or data entry procedures
+; that cannot be automated by the computer.
+;
+; CHECKLIST CODE ARCHITECTURE:
+; When software requires crew intervention, it displays a checklist code in
+; DSKY register R1 (typically via Verb 05 Noun 09 or similar display verb).
+; The code format is a 5-digit octal number identifying the specific action
+; required. The crew:
+; 1. Notes the checklist code displayed in R1
+; 2. References their printed checklist or memory for the action
+; 3. Performs the requested procedure
+; 4. Presses PROCEED to acknowledge completion
+; 5. The program continues execution
+;
+; CREW INTERFACE DESIGN PHILOSOPHY:
+; The AGC cannot physically control all spacecraft systems. Many critical
+; functions require manual switch throws, optical sightings, or physical
+; procedures. Checklist codes provide structured computer-human cooperation,
+; where the AGC:
+; - Determines when an action is needed based on mission timeline
+; - Displays the specific checklist code to identify the action
+; - Waits for crew acknowledgment before continuing
+; - Maintains mission sequence coordination
+;
+; CHECKLIST CODE CATEGORIES:
+; Codes follow a systematic organization reflecting action type:
+; - SWITCH codes: Request crew to change a console switch position
+; - PERFORM codes: Request crew to start or complete a manual task
+; - KEY IN codes: Request crew to manually enter data via DSKY
+;
+; Each action type requires different crew interaction. SWITCH operations
+; typically involve immediate hardware configuration (CMC AUTO, OPTICS MODE,
+; etc.). PERFORM operations require extended procedures (maneuver execution,
+; alignment procedures, etc.). KEY IN operations require numerical data entry
+; following the checklist code display.
+;
+; HISTORICAL CONTEXT - APOLLO 11 MISSION:
+; Throughout Apollo 11's flight from July 16-24, 1969, checklist codes
+; coordinated crew actions with autonomous AGC operations. Critical examples:
+;
+; - During translunar coast, checklist codes prompted Michael Collins to
+;   perform periodic platform realignment using star sightings. The AGC
+;   displayed the code, Collins performed optical marks on stars, the AGC
+;   computed alignment corrections.
+;
+; - During preparations for lunar orbit insertion (LOI), checklist codes
+;   prompted switch configurations for the Service Propulsion System (SPS)
+;   engine burn. The AGC coordinated timing but relied on Collins to enable
+;   hardware systems.
+;
+; - During entry preparations for Earth return, checklist codes guided
+;   console switch settings for CM/SM separation, parachute deployment
+;   arming, and entry autopilot configuration.
+;
+; The checklist code system exemplified Apollo's human-computer partnership.
+; The AGC provided computational intelligence and mission timeline management,
+; while astronauts provided physical manipulation capability and judgment.
+;
+; CODE FORMAT AND DISPLAY:
+; Checklist codes appear as 5-digit octal numbers (e.g., 00014, 00041, 00202)
+; displayed in DSKY register R1. The VERB NOUN combination varies by program:
+; - V05 N09: Display checklist code and wait for PROCEED
+; - V04 N06: Display checklist code with option selection
+; - V50 N25: Display checklist code with load request
+;
+; The specific Verb/Noun determines whether the code is informational (crew
+; acknowledges with PROCEED) or interactive (crew enters data in R2/R3).
+;
+; CHECKLIST REFERENCE DOCUMENTATION:
+; Astronauts carried printed checklists keyed to these codes. Each code
+; number corresponded to a specific procedure card or checklist page with
+; detailed instructions. The codes served as compact references, avoiding
+; long text messages on the limited DSKY display. A 5-digit code could
+; reference multi-step procedures documented in crew manuals.
+;
+; PROGRAM COORDINATION:
+; Multiple programs use checklist codes to coordinate mission phases:
+; - P50 series (IMU alignment programs): Request fine alignment options,
+;   star mark termination, optics mode switches
+; - P40 series (SPS burn programs): Request gimbal trim, switch to CMC AUTO,
+;   automatic maneuver execution
+; - Entry programs: Request CM/SM separation switch, AGC power down sequences
+;
+; The checklist system integrated software state machines with human
+; procedures, creating a cooperative control system spanning computer logic
+; and astronaut training.
+;
+; MISSION TIMELINE INTEGRATION:
+; Checklist codes aren't arbitrary interruptions—they're precisely timed
+; within mission sequences. The AGC's executive scheduler determines when
+; a program reaches a point requiring crew action, displays the appropriate
+; checklist code, and suspends program execution until crew acknowledgment.
+; This ensures mission phases proceed in correct order with proper crew
+; coordination.
+;
+; APOLLO TRAINING INTEGRATION:
+; Astronaut training extensively practiced checklist code responses. Simulator
+; sessions displayed checklist codes at mission-realistic timing, training
+; crews to recognize codes, execute procedures, and maintain mission flow.
+; Armstrong, Aldrin, and Collins trained hundreds of hours responding to
+; these exact checklist codes before Apollo 11's flight.
+;
+; COMMENT-ONLY READERS: Checklist codes are how the Apollo computer asked
+;        astronauts to flip switches or perform manual tasks. Instead of
+;        displaying long instructions on the small DSKY screen, the computer
+;        showed a 5-digit code number. The astronauts recognized the code
+;        from their training and printed checklists, performed the action
+;        (like "switch to automatic mode" or "perform alignment"), then
+;        pressed PROCEED to tell the computer they were done. This system
+;        let the computer coordinate mission timing while astronauts handled
+;        physical operations.
+;
+; CODE-ALONG READERS: Checklist codes are displayed by calling display
+;        routines (DSPLAY, BANKCALL to NVSUBUSY, etc.) with the 5-digit
+;        code loaded in appropriate erasable memory locations. The display
+;        routine formats the code for DSKY register R1 and typically uses
+;        V05 N09 (display and wait for PROCEED) or V04 N06 (display and
+;        request option entry). The calling program then executes TC ENDIDLE
+;        or similar wait instruction, suspending until crew presses PROCEED.
+;        Understanding checklist code flow requires tracing: program decision
+;        → checklist code selection → display routine call → DSKY update →
+;        crew action → PROCEED detection → program continuation. See
+;        PINBALL_GAME_BUTTONS_AND_LIGHTS.agc for PROCEED key handling and
+;        DISPLAY_INTERFACE_ROUTINES.agc for register formatting logic.
+; ============================================================================
+
 #               CHECKLIST CODES FOR 504
 
 #               PLEASE REPORT ANY DEFICIENCIES IN THIS LIST TO JOHN SUTHERLAND
@@ -982,6 +1485,171 @@
 #		                  KEY IN DENOTES KEY IN OF DATA THRU THE DSKY
 
 # Page 26
+
+; ============================================================================
+; SECTION: OPTION CODES - Crew Decision Selection System
+;
+; This section documents the complete catalog of option codes used by
+; Comanche 055 (Command Module flight software) to request astronaut
+; decision input during mission operations. Option codes differ from
+; checklist codes: instead of requesting a predefined action, option codes
+; ask the crew to choose between multiple operational alternatives.
+;
+; OPTION CODE ARCHITECTURE:
+; When software reaches a decision point requiring crew judgment, it displays
+; an option code in DSKY register R1 (via Verb 04 Noun 06) and requests the
+; astronaut to select their preferred option by loading a choice code into
+; register R2. The interaction sequence:
+; 1. AGC displays option code in R1 (flashing, indicating input required)
+; 2. Crew references option code meaning from training or checklist
+; 3. Crew evaluates mission context and decides which option to select
+; 4. Crew keys in option number to R2 via DSKY numeric keys and ENTER
+; 5. AGC validates the option selection
+; 6. AGC executes the selected operational branch
+; 7. Program continues based on crew's choice
+;
+; OPTION CODE vs CHECKLIST CODE DISTINCTION:
+; - CHECKLIST CODES: Request specific predefined action ("perform alignment")
+; - OPTION CODES: Request crew choice between alternatives ("preferred, 
+;   nominal, or current orientation?")
+;
+; Option codes acknowledge that some mission decisions require human judgment
+; based on factors the AGC cannot assess: visual observations, system status
+; indications, mission priorities, ground controller recommendations, etc.
+; The AGC provides the computational framework and presents the decision
+; point, but defers the choice to astronaut expertise.
+;
+; OPTION CODE CATEGORIES BY PURPOSE:
+; Options span diverse operational domains:
+; - IMU orientation selection (preferred, nominal, REFSMMAT)
+; - Navigation state update methods (optical marks, radar data, ground uplink)
+; - Burn targeting options (time vs propellant optimization)
+; - Display format preferences (inertial, stabilization, local vertical)
+; - Program sequence alternatives (continue, skip, repeat)
+; - Alignment method selection (auto optics, manual marks, platform)
+; - Entry targeting options (primary, backup, manual)
+;
+; Each option code defines valid input ranges. For example, option code 00001
+; (IMU orientation) accepts R2 inputs: 1=PREF, 2=NOM, 3=REFSMMAT. Invalid
+; entries trigger operator error (OPER ERR light) and request re-entry.
+;
+; HISTORICAL CONTEXT - APOLLO 11 MISSION:
+; Throughout Apollo 11's mission, option codes enabled crew control over
+; operational decisions:
+;
+; - During translunar navigation, option codes allowed Michael Collins to
+;   choose which celestial bodies to mark with the sextant for state vector
+;   updates. The AGC presented options, Collins selected based on star
+;   visibility and geometric strength.
+;
+; - During lunar orbit operations, option codes let Collins choose IMU
+;   alignment strategies. Based on time availability and mission phase, he
+;   could select faster nominal alignments or slower precision alignments.
+;
+; - During pre-entry preparations, option codes allowed the crew to select
+;   entry targeting options. With variable weather at splashdown sites,
+;   they could bias the entry corridor for different landing zones.
+;
+; The option code system embodied Apollo philosophy: automation handles
+; routine calculations, but humans retain decision authority for judgment
+; calls. This preserved crew agency while leveraging computer precision.
+;
+; VERB 04 NOUN 06 INTERACTION PROTOCOL:
+; Option code displays use V04 N06 (Display Component 1, Monitor Components
+; 2 and 3). The display sequence:
+; - R1: Option code (flashing to indicate input required)
+; - R2: Blank initially, awaits crew numerical entry
+; - R3: May display additional context (timing, quantity, etc.)
+;
+; The flashing R1 signals "this is not just information—I need your input."
+; After crew enters their choice in R2 and presses ENTER, R1 stops flashing,
+; confirming acceptance. If the entry is invalid, OPER ERR illuminates and
+; R1 continues flashing until valid input received.
+;
+; OPTION INPUT VALIDATION:
+; Each option code defines acceptable input ranges. Software validates crew
+; entries against these ranges:
+; - Numeric range validation (e.g., 1-3 for three-option choices)
+; - Semantic validation (e.g., don't select radar option when radar failed)
+; - Context validation (e.g., certain options only valid in specific orbits)
+;
+; Invalid entries don't crash the program or proceed with bad data. The AGC
+; displays OPER ERR, clears the invalid entry, and re-flashes R1 requesting
+; correct input. This error handling prevented crew data entry mistakes from
+; propagating into mission-critical calculations.
+;
+; TRAINING AND CREW PROFICIENCY:
+; Astronauts memorized common option codes and their meanings through
+; extensive simulator training. During Apollo 11's mission, Armstrong, Aldrin,
+; and Collins responded to option codes reflexively, having practiced each
+; decision point hundreds of times. The option codes served as compact
+; communication protocol between well-trained crews and software.
+;
+; Option codes also appeared in crew checklists with explanatory text. For
+; less-common options or complex decisions, astronauts could reference
+; printed documentation. The 5-digit code linked computer display to detailed
+; procedure documentation.
+;
+; GROUND CONTROL COORDINATION:
+; Option code displays were visible to Mission Control via telemetry. When
+; an option code flashed on the spacecraft DSKY, ground controllers saw the
+; same code in their displays. This enabled:
+; - Ground advice on option selection when requested
+; - Ground awareness of crew decisions for coordinated planning
+; - Post-mission analysis of option choices vs outcomes
+;
+; During Apollo 11, Houston monitored option code displays and often
+; radioed recommendations, especially for navigation and trajectory decisions.
+; The crew retained final authority but benefited from ground analysis.
+;
+; PROGRAM APPLICABILITY:
+; Option codes appear throughout mission software:
+; - P50 series (IMU alignment): IMU orientation, alignment method, star
+;   selection, optics mode
+; - P20 series (Navigation): Update method, reference body, mark quantity
+; - P30/P40 series (Maneuvers): Burn targeting, gimbal control, propellant
+;   budget
+; - P60 series (Entry): Target selection, entry mode, lift vector strategy
+;
+; The same option code may appear in multiple programs if the decision context
+; recurs. For example, IMU orientation selection (code 00001) appears in
+; P51, P52, P53 alignment programs and various maneuver programs.
+;
+; DECISION AUTHORITY AND RESPONSIBILITY:
+; Option codes formalized decision authority. When an option code appeared,
+; the computer explicitly transferred decision-making to the crew. This clear
+; authority handoff prevented confusion about who (computer or human) was
+; controlling each mission aspect. The AGC never guessed at crew intent—it
+; asked explicitly and waited for authoritative input.
+;
+; COMMENT-ONLY READERS: Option codes are how the Apollo computer asked
+;        astronauts to make decisions during the mission. When the computer
+;        reached a choice point—like "which way should I orient the spacecraft?"
+;        or "which navigation method do you want to use?"—it displayed an
+;        option code and waited for the astronaut to pick an option number.
+;        Unlike checklist codes that requested specific actions, option codes
+;        presented multiple alternatives and let the crew choose based on
+;        their judgment of the situation. This system kept humans in control
+;        of important decisions while letting the computer handle calculations.
+;
+; CODE-ALONG READERS: Option codes are displayed using V04 N06 (display R1,
+;        load R2/R3). The calling program loads the option code into DSPTEM1
+;        (or similar erasable), sets the display flash flag, and calls the
+;        display interface routine. The display system formats R1 with the
+;        option code (flashing) and blanks R2 awaiting crew entry. After crew
+;        keys in their selection and presses ENTER, the KEYBOARD interrupt
+;        handler processes the entry, validates it against acceptable range,
+;        and either stores the option in program-specific erasable (valid) or
+;        triggers OPER ERR (invalid). The calling program polls for completion
+;        or gets resumed by display system, reads the selected option from
+;        erasable, and branches accordingly (TC indexed by option, computed
+;        CADR, or switch table). Understanding option code flow requires
+;        tracing: program decision point → V04 N06 display → KEYBOARD input
+;        processing → validation → option storage → program branch selection.
+;        See DISPLAY_INTERFACE_ROUTINES.agc for V04 N06 formatting and
+;        PINBALL_GAME_BUTTONS_AND_LIGHTS.agc for ENTER key processing and
+;        validation logic.
+; ============================================================================
 
 #          OPTION CODES FOR 504
 
