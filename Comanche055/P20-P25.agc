@@ -34,6 +34,30 @@
 #	This AGC program shall also be referred to as
 #			Colossus 2A
 
+; ============================================================================
+; FILE: P20-P25.agc
+; MODULE: TROUBLE Subsystem (Mission Programs)
+; MISSION PHASE: rendezvous
+;
+; TL;DR: Complete rendezvous navigation suite providing relative state estimation,
+;        radar tracking integration, and targeting computation for spacecraft
+;        rendezvous operations. Programs P20 (Rendezvous Navigation), P22 (Orbital
+;        Navigation), and P23 (Cislunar Midcourse Navigation) with supporting
+;        routines R21/R23 (sighting marks), R22 (tracking data processing),
+;        R57 (optics calibration), R60/R61 (attitude maneuvers). Critical during
+;        Apollo 11 CM/LM rendezvous operations in lunar orbit July 21, 1969.
+;
+; COMMENT-ONLY READERS: These programs guided the Lunar Module back to the
+;        Command Module after lunar surface operations, enabling safe docking.
+;        Follow the narrative to understand how optical tracking and radar data
+;        combined to determine relative position and velocity for rendezvous.
+;
+; CODE-ALONG READERS: Study comprehensive rendezvous navigation architecture
+;        integrating sextant optics, VHF ranging, state vector estimation, and
+;        targeting algorithms. Examine Kalman filter implementation, coordinate
+;        transformations, and real-time data processing for orbital rendezvous.
+; ============================================================================
+
 # Page 562
 # RENDEZVOUS NAVIGATION PROGRAM 20
 #
@@ -90,12 +114,39 @@
 		EBANK=	ESTROKER
 		COUNT*	$$/P20
 
+; ============================================================================
+; PROGRAM P20 - RENDEZVOUS NAVIGATION
+;
+; After the Lunar Module (Eagle) completed its historic landing and surface
+; operations on July 20, 1969, it needed to rendezvous and dock with the
+; Command Module (Columbia) orbiting overhead. P20 controlled this critical
+; rendezvous navigation process.
+;
+; This program points the Command Module's sextant optics at the Lunar Module,
+; tracks its position using optical sighting marks, and incorporates VHF ranging
+; data to determine the relative state vector (position and velocity). The crew
+; initiates P20 by keying V37E20E on the DSKY.
+;
+; During Apollo 11's rendezvous on July 21, 1969, Michael Collins in the CM
+; used P20 to track Eagle as it ascended from the lunar surface. The optical
+; tracking data was crucial for verifying the radar-based navigation solution
+; and ensuring a safe rendezvous trajectory.
+; ============================================================================
+
 PROG20		TC	BANKCALL
 		CADR	R02BOTH		# IMU STATUS CHECK
 					# BLOCKING OF UPLINK IS DONE BY UPLINK PRG
+; P20 initialization begins by verifying IMU (Inertial Measurement Unit) status.
+; The IMU provides the stable platform reference needed for accurate optical
+; sighting measurements.
+
 		CAF	ZERO
 		TS	TRKMKCNT	# ZERO REND TRACKING MARK COUNTER
 		TS	VHFCNT		# ZERO REND VHF RNG MRK COUNTER
+; Initialize tracking counters to zero. TRKMKCNT counts optical sighting marks
+; taken through the sextant. VHFCNT counts VHF ranging measurements from the
+; radio transponder. Both data sources feed the navigation filter.
+
 		TC	UPFLAG		# SET PREF TRACK ATT FLAG
 		ADRES	PRFTRKAT	# BIT 10 FLAG 5
 		TC	DOWNFLAG	# LEM TO BE UPDATED.  VEHUPFLG RESET.
@@ -145,6 +196,9 @@ P20.3		CALL
 		TC	2PHSCHNG
 		OCT	00072
 		OCT	00111
+; P20 main tracking loop. This section runs continuously while P20 is active,
+; coordinating attitude maneuvers and optical tracking operations.
+
 PIKUP20		CAF	PRIO14		# ALLOW HIGHER PRIO THAN LAMBERT
 		TC	PRIOCHNG
 		CAF	BIT5		# IS TRACK FLAG SET
@@ -156,26 +210,54 @@ PIKUP20		CAF	PRIO14		# ALLOW HIGHER PRIO THAN LAMBERT
 		MASK	STATE	+3	# IS REFSMFLG SET
 		EXTEND
 		BZF	ENDOFJOB
+
+; At this point, the Command Module is ready to begin optical tracking.
+; R61 computes the preferred attitude that points the sextant toward the
+; Lunar Module's predicted position.
+
 		CAF	ZERO
 		TS	R61CNTR		# INITIALIZE R61 COUNTER
 		TC	BANKCALL
-		CADR	R61CSM
+		CADR	R61CSM		# Compute preferred tracking attitude
+
+; Configure targeting to the Lunar Module (vs other potential targets like
+; stars or landmarks). During Apollo 11, this ensured the sextant pointed
+; at Eagle ascending from the lunar surface.
+
 		EBANK=	QMIN
 		CAF	EBANK5
 		TS	EBANK
 		TC	UPFLAG		# SET TARGET FLAG TO LEM
 		ADRES	TARG1FLG	# BIT 10 FLAG 1
+
+; R52 implements automatic optics positioning. The sextant automatically
+; slews to track the target, allowing the crew to take optical sighting marks
+; by pressing the MARK button when the crosshairs align with the LM.
+
 P20R52JB	TC	INTPRET
 		CALL
 			R52		# SET UP AUTO OPTICS JOB
 		EXIT
 		TC	BANKCALL
-		CADR	MKRLEES
+		CADR	MKRLEES		# Release optics control
 		CAF	ONE		# HOLD PRESENT ATTITUDE
-		TS	HOLDFLAG
+		TS	HOLDFLAG	# Maintain current spacecraft orientation
 		TC	ENDOFJOB
 OCT203		OCT	00203
 FIRST3		EQUALS	FURST3
+
+; ============================================================================
+; TRANSITION: From P20 Rendezvous Navigation to P22 Orbital Navigation
+;
+; P20 focuses on relative navigation between two spacecraft (CM and LM) during
+; rendezvous operations. P22 shifts to a different navigation mode: determining
+; the spacecraft's absolute position in lunar or Earth orbit using landmark
+; tracking or star sightings.
+;
+; While P20 answers "Where is the other spacecraft relative to me?", P22
+; answers "Where am I in my orbit?" Both programs use the sextant optics but
+; for fundamentally different navigation objectives.
+; ============================================================================
 
 # Page 565
 # ORBITAL NAVIGATION PROGRAM 22
@@ -187,17 +269,43 @@ FIRST3		EQUALS	FURST3
 		EBANK=	LANDMARK
 		COUNT*	$$/P22
 
+; ============================================================================
+; PROGRAM P22 - ORBITAL NAVIGATION
+;
+; P22 enables the crew to improve knowledge of the spacecraft's orbit by
+; taking optical sightings of landmarks on the lunar or Earth surface. The
+; program controls spacecraft attitude to point the sextant at pre-selected
+; landmarks, processes the sighting data, and updates the state vector
+; (position and velocity).
+;
+; This program was essential during lunar orbit when radio tracking from
+; Earth was unavailable on the Moon's far side. By sighting known landmarks,
+; the navigation system could autonomously determine orbital parameters and
+; detect any deviations from the planned trajectory.
+;
+; Crew initiation: V37E22E on DSKY
+; ============================================================================
+
 PROG22		TC	DOWNFLAG	# RESET RNDVZFLG BIT 7 FLAG 0
-		ADRES	RNDVZFLG
+		ADRES	RNDVZFLG	# Not in rendezvous mode for P22
+
+; P22 begins with IMU status verification, just as P20 does. Accurate
+; inertial reference is critical for any optical navigation.
+
 		TC	BANKCALL
 		CADR	R02BOTH		# IMU STATUS CHECK
+
+; The program now computes the geometry needed for landmark tracking. The
+; sextant must be positioned to view the landmark at the precise moment the
+; orbital ground track passes over it.
+
 		TC	INTPRET		# COMPUTE ANGLE BETWEEN Y AND VXR SM
 		RTB
-			LOADTIME
+			LOADTIME	# Get current mission time
 		STCALL	TDEC1
 			CSMCONIC	# INTEGRATE TO PRESENT TIME
 		VLOAD	VXV		# CROSS PRODUCT BETWEEN V AND R
-			VATT
+			VATT		# Velocity and position vectors
 			RATT
 		UNIT	DOT
 			REFSMMAT +6
@@ -1507,6 +1615,27 @@ INITB		STORE	W +90D,1	# CLEAR 54 - 89
 #
 # DEBRIS -- CURRENT VAC AREA, CRS61.1 ERASABLES, ITEMP1, P21TIME
 
+; ============================================================================
+; CRS61.1 IMPLEMENTATION - Preferred Tracking Attitude Computation
+;
+; This routine computes the preferred tracking attitude for the Command
+; Module to maintain during rendezvous operations. The CSM must orient its
+; optics to track the Lunar Module while maintaining proper antenna pointing.
+; During Apollo 11's rendezvous on July 21, 1969, this routine continuously
+; updated the tracking attitude as Columbia maneuvered to acquire Eagle after
+; its ascent from the lunar surface.
+;
+; COMMENT-ONLY READERS: The computer calculates the exact spacecraft
+; orientation needed to keep the optical instruments pointed at the LM while
+; the high-gain antenna maintains Earth communication. This attitude is
+; continuously updated as the spacecraft orbits.
+;
+; CODE-ALONG READERS: The routine performs coordinate transformations from
+; inertial to body frames, computes line-of-sight vectors, and calculates
+; gimbal angles needed for optics pointing. Results are stored in CPHI,
+; CTHETA, CPSI (Euler angles) and THETAD for display on DSKY.
+; ============================================================================
+
 		BANK	24
 		SETLOC	P20S4
 		BANK
@@ -1514,12 +1643,21 @@ INITB		STORE	W +90D,1	# CLEAR 54 - 89
 		EBANK=	CDUXD
 		COUNT*	$/CRS61
 
+; CRS61.1 Entry Point - Begin Preferred Tracking Attitude Calculation
+; Saves return address and initializes push-down list pointer for subsequent
+; vector calculations. The routine will compute the desired gimbal angles
+; to track the LM from the CSM's current orbital position.
+
 CRS61.1		STQ	SETPD
-			Q611
-			0
+			Q611		; Save return address in Q611
+			0		; Initialize push-down list at pointer 0
 		RTB
 # Page 593
 			LOADTIME	# LOAD CLOCK TIME2,1 INTO MPAC.
+
+; Store current time and call R63 to extrapolate CSM and LM state vectors
+; to the current time. This provides the relative positions needed to compute
+; the line-of-sight vector from CSM to LM.
 
 STORT		STCALL	P21TIME		# STORE CLOCK TIME FOR SUBR R63
 			R63		# SUBR TO CALC DCDU (T=PRESENT,PASS1)
@@ -1529,248 +1667,555 @@ STORT		STCALL	P21TIME		# STORE CLOCK TIME FOR SUBR R63
 
 		EXIT
 		TC	STEP2CK
+
+; AUTO Mode Check - Verify spacecraft is in automatic attitude control mode.
+; The DAP (Digital Autopilot) must be in AUTO mode to accept computed attitude
+; commands. During rendezvous, the crew can switch between AUTO mode (computer
+; control) and MANUAL mode (hand controller) at any time.
+
 AUTOCK		CAF	PRIO30
 		EXTEND
-		RXOR	CHAN31
-		MASK	FURST3
+		RXOR	CHAN31		; Read mode bits from channel 31
+		MASK	FURST3		; Check bits 15-13 for AUTO mode
 		EXTEND			# AUTO MODE SELECTED (BITS 15-13=011)
 		BZF	DAPCK		#	YES -- CONTINUE.
-		TC	ASET
+		TC	ASET		; Not AUTO mode, exit routine
+
+; DAP Check - Verify no manual control stick input present.
+; If astronaut is moving the rotational hand controller (RHC), the computer
+; must not fight the manual inputs. STIKFLAG indicates hand controller usage.
 
 DAPCK		CS	FLAGWRD1	# IS STIKFLAG SET (I.E., IS SOMEONE ON RHC)
-		MASK	STIKBIT
-		CCS	A
-		TC	STEP3CK
-ASET		CAF	ZERO
+		MASK	STIKBIT		; Isolate stick flag bit
+		CCS	A		; Check if stick active
+		TC	STEP3CK		; Stick not active, continue
+ASET		CAF	ZERO		; Stick active or not AUTO, exit
 		TS	MPAC
 		TC	INTPRET		# EXIT CRS61.1
 		GOTO
 			Q611
 
 STEP2CK		TC	BANKCALL
-		CADR	UPACTOFF
+		CADR	UPACTOFF	; Turn off uplink activity light
+
+; ============================================================================
+; CDULOOP - CDU Angle Difference Check Loop
+;
+; This loop checks all three gimbal angles (X, Y, Z) to verify that the
+; difference between actual CDU readings and desired tracking angles does not
+; exceed 10 degrees. If any angle difference is too large, the routine checks
+; if manual stick input is present. This prevents excessive autopilot commands
+; and allows smooth transition between automatic and manual control modes.
+;
+; COMMENT-ONLY READERS: The computer verifies that its desired tracking angles
+; are reasonably close to the spacecraft's current orientation. If the angles
+; differ by more than 10 degrees, it checks whether the astronaut is manually
+; controlling the spacecraft before proceeding.
+;
+; CODE-ALONG READERS: Loops through three angles using DTHETASM as index
+; counter (2, 1, 0 for X, Y, Z gimbals). For each axis, computes difference
+; between actual CDU (CDUX/Y/Z) and desired angle (THETAD+offset). Uses
+; double-precision subtraction and absolute value to check against 10-degree
+; threshold (DEGREE10 constant).
+; ============================================================================
 
 		CAF	TWO		# SET TEMPORARY INDEX DTHETASM = 2
-CDULOOP		TS	DTHETASM
-		INDEX	DTHETASM
+CDULOOP		TS	DTHETASM	; Initialize loop counter (counts down 2,1,0)
+		INDEX	DTHETASM	; Use index for CDU access
 		CA	CDUX		# SET A = ACTUAL CDU (ACDU).
-		EXTEND
+		EXTEND			; Prepare for extended instruction
 		INDEX	DTHETASM	# SET INDEX TO ACCESS DESIRED CDU (DCDU).
 		MSU	THETAD		# A = DIFF = ACDU - DCDU.
 		TS	MPAC		# RETURN TO INTERPRETER FOR 10 DEGREE CK.
 		TC	INTPRET		# (DP APPROX SP OK FOR ROUGH CHECK)
-		ABS	DSU
+		ABS	DSU		; Take absolute value and subtract threshold
 			DEGREE10	# IS (ACDU - DCDU) MORE THAN 10 DEGREES.
 		BPL	EXIT		# NO -- OK, CONTINUE CHECKING OTHER ANGLES.
-			STKTEST		# TEST STICK FLAG
+			STKTEST		# YES -- angle too large, test stick flag
 		CCS	DTHETASM	# HAVE ALL 3 ANGLE DIFFS BEEN CHECKED.
 		TC	CDULOOP		# NO -- DIM COUNT, CHECK NEXT ANGLE DIFF.
-		TC	AUTOCK
-STKTEST		EXIT
-		CS	FLAGWRD1
-		MASK	STIKBIT
+		TC	AUTOCK		; All angles checked and OK, proceed to AUTO check
+
+; STKTEST - Handle Large Angle Difference Condition
+; When desired and actual gimbal angles differ by more than 10 degrees, check
+; if the astronaut is manually controlling the spacecraft. If stick is active,
+; illuminate the uplink activity light to indicate computer cannot update
+; attitude. If stick is not active, allow R63 to execute and update state.
+
+STKTEST		EXIT			; Return to native mode
+		CS	FLAGWRD1	; Read flag word 1
+		MASK	STIKBIT		; Isolate stick flag bit
 # Page 594
-		CCS	A
+		CCS	A		; Check stick flag status
 		TC	MANUEXIS	# STIKFLAG IS NOT SET (DO R63)
-		CAF	BIT3
+		CAF	BIT3		; Stick is active, prepare light command
 		EXTEND			# STIKFLG IS SET
 		WOR	DSALMOUT	# TURN ON UPACTY LIGHT
 
 		TC	ASET		# EXIT AND SET R61CNTR
-STEP3CK		TC	INTPRET
-		SETPD
+
+; STEP3CK - Continue to DAP Input Calculations
+; All angle checks passed and spacecraft is in automatic mode with no manual
+; stick input. Now proceed to calculate the autopilot inputs needed for
+; precision tracking: relative angular rates and gimbal angle corrections.
+
+STEP3CK		TC	INTPRET		; Enter interpretive mode for vector math
+		SETPD			; Initialize pushdown list pointer
 			0		# *
 					# NOW HAVE DCDUS STORED IN T(SAVEDCDU).
 					# GO CALC OTHER DAP INPUTS (DELCDU,WBODY)
-CRS61.2		VLOAD	VSU
-			DCDU
-			SAVEVEL		# DV = VL - VC
+
+; ============================================================================
+; CRS61.2 - Relative Angular Rate and DAP Input Computation
+;
+; This section computes the angular rate at which the line-of-sight to the
+; LM is changing (omega theta) and converts this to gimbal rate commands for
+; the autopilot. The computation involves:
+; 1. Computing relative velocity vector (LM velocity - CM velocity)
+; 2. Finding perpendicular component of velocity to line-of-sight
+; 3. Dividing by range to get angular rate
+; 4. Transforming to spacecraft coordinates
+; 5. Computing gimbal angle increments for next time step
+;
+; COMMENT-ONLY READERS: The computer calculates how fast the line-of-sight to
+; the LM is rotating, then tells the autopilot how quickly to move the gimbals
+; to keep the optics pointed at the LM as both spacecraft continue orbiting.
+;
+; CODE-ALONG READERS: Uses unit vector cross products to find component of
+; relative velocity perpendicular to line-of-sight. Normalizes both numerator
+; (delta-V) and denominator (range) before division to maintain precision in
+; scaled fixed-point arithmetic. Result is angular rate omega-theta in
+; stable-member coordinates, then transformed through REFSMMAT to current
+; gimbal frame. Final output is DELCDU (gimbal increments) for DAP.
+; ============================================================================
+
+CRS61.2		VLOAD	VSU		; Load LM state vector
+			DCDU		; Current LM position/velocity
+			SAVEVEL		# DV = VL - VC (relative velocity)
 		UNIT	VCOMP		# V(MPAC)=-UNITDV. VAC36D=ABSDV.
+					; Unit vector of relative velocity (normalized)
+					; VCOMP negates to get -UNITDV
+					; Absolute magnitude saved in 36D
 		VXV	VXSC		# (-UNITDV)CROSS(UNITLOS).
-			SAVEPOS
+			SAVEPOS		; Cross product with unit line-of-sight
 			RVCS/RDS	# (UNITLOS B1)(UNITDV B1)(CONST B4)=CROSS.
+					; Scale factor RVCS/RDS converts units
+					; Result is perpendicular component scaled B6
 		PUSH			# HOLD CROSS IN PUSHLIST0.  SCALED B6.
+					; Cross product vector saved for later use
 		DLOAD	NORM		# OBTAIN ABS VALUE OF LOS.
 			P21TIME		# P21TIME IS TEMP STORE FOR ABSLOS.
-			X1
+					; Absolute range to LM (denominator)
+			X1		; Normalize and save scale in X1
 		PUSH			# NORM ABSLOS(DENOM) AND HOLD IN PUSH1.
+					; Normalized range saved in pushlist
 
-		DLOAD	NORM
+		DLOAD	NORM		; Load absolute delta-V magnitude
 			36D		# NORM ABS VALUE OF DV(NUM).
-			S1
+					; Magnitude of relative velocity (numerator)
+			S1		; Normalize and save scale in S1
 
 		XSU,1	SR1		# X1 = X1(N DENOM)-S1(N NUM).
+					; Compute scale difference for division
+					; X1 now contains net normalization factor
 			S1		# SR1 TO AVOID OFLOW ON DOV.
+					; Shift right 1 bit to prevent overflow
 		DDV	VXSC		# ABSDV(MPAC)/ABSLOS(PUSH1) = QUOT.
+					; Divide |delta-V| by |range| = angular rate
+					; Then multiply by cross product vector
 		SXA,1			# QUOT(MPAC) X CROSS(PUSH0)
 			Q6111		# SAVE SCALE OF RESULT (R-15,1X).
 					# X1= NORM OF QUOT. QTUOT SCALE B7-B29=B-22
 					# CROSS IS SCALED B6.  NEED SL1 TO RECOVER
 					# SR1 SO THAT -22+6+1=-15.  MPAC NOW HOLDS
 					# ORTHO LOS RATE (OMEGA TH, B-15,X1).
+					; Angular rate perpendicular to LOS computed
+					; Result: omega-theta in stable-member frame
+
+; Transform Angular Rate to Stable-Member Coordinates
+; The angular rate calculated above is in the reference coordinate frame.
+; Now transform it through the REFSMMAT (Reference Stable Member Matrix)
+; to express it in current stable-member (inertial platform) coordinates.
+
 		MXV	VSL1		# OBTAIN RATE IN SM COORDS (OMEGTHSM) AND
 			REFSMMAT	# ADJUST FOR REFSMMAT SCALE OF B1.
+					; Matrix multiply by REFSMMAT transformation
+					; Shift left 1 to adjust for B1 scaling
 		STORE	20D		# OMEGTHSM = VAC20D
 					# DELTA THETA SM = OMEGTHSM * .1B-3.
-		VXSC
-			TENTH
+					; Angular rate now in stable-member frame
+		VXSC			; Compute angle increment for this time step
+			TENTH		; Multiply by 0.1 seconds (100ms cycle)
 		STORE	DTHETASM	# STORE SM INCREM ANGLES FOR SMCDURES.
-		CALL
+					; Angle change in 100ms stored for conversion
+
+; Convert Stable-Member Angles to Gimbal Increments
+; The SMCDURES subroutine transforms the stable-member angle changes into
+; the three gimbal angle increments (inner, middle, outer) needed by the DAP.
+
+		CALL			; Compute trig functions for current gimbals
 			CDUTRIG		# OBTAIN SIN,COSCDUS FOR SMCDURES.
 		SETPD	CALL		# SMCDURES USES PUSH
-			0
+			0		; Reset pushdown list
 			SMCDURES	# OBTAIN DELCDU IN V(DCDU).
+					; Output: DELCDU = gimbal increments
 # Page 595
+
+; Recover Proper Scaling for Gimbal Increments
+; The DELCDU values must be scaled correctly for the DAP. Reload the
+; normalization factor saved earlier and apply variable shift to recover
+; the proper scale factor of halfrevs (180 degrees per bit).
+
 		LXA,1			# RELOAD X1
-			Q6111
+			Q6111		; Normalization factor from division
 		VLOAD	VSL*		# RECOVER SCALE.
 			DCDU		# (B-15,X1) + TENTH(B-3) + HALFREVS(B1)
 			0 -17D,1	# EQUALS B-17D,1 TO OBTAIN HALFREVS B0.
+					; Variable shift left to denormalize
 		STORE	14D		# HOLD DELS IN V(VAC14D) FOR AUTOPILOT.
+					; Gimbal increments ready for DAP
+
+; Transform Angular Rate to Navigation Base (Body) Coordinates
+; For the autopilot to command thruster firings, the angular rate must be
+; expressed in spacecraft body coordinates. Transform from stable-member
+; through current gimbal angles to navigation base, then to control axes.
 
 		CALL			# COMPUTES SINES AND COSINES FOR *SMNB*
-			CDUTRIG
+			CDUTRIG		; Trig functions for SM-to-NB transform
 		VLOAD	CALL		# LOAD VECTOR AND CALL TRANSFORMATION
 			20D		# VECTOR FOR TRG*SMNB INTO MPAC
+					; Angular rate in stable-member coords
 			*SMNB*		# OBTAIN ANG. RATE REFERRED TO NB (BODY)
-		MXV
+					; Transformation through gimbal angles
+		MXV			; Further transform to control coordinates
 			MBDYTCTL	# CONVERT RATE(OMEGA) TO CONTROL COORDS.
+					; Accounts for control axis orientation
 		VXSC			# MULT. BY 0.8 TO RESCALE REVS TO 450 DEG.
 			POINT8		# RECOVER SCALE.
+					; DAP uses 450-degree scaling (1.25 revs)
 		LXA,1	VSL*		# RELOAD X1 TO RECOVER NORMALIZ.
 			Q6111		# (B-15,X1) + MBDYTCTL(B1) = B-14D,1 TO
 			0 -14D,1	# OBTAIN REVS SCALED AT 450 DEGREES.
+					; Final scale: 450 deg = full scale
 
-CRS61.2A	EXIT
-		INHINT
+; ============================================================================
+; CRS61.2A - Transfer Computed Values to DAP
+;
+; Exit interpretive mode and transfer the computed gimbal commands and angular
+; rates to the Digital Autopilot (DAP) variables. This must be done with
+; interrupts inhibited to ensure atomic update of the multi-word values.
+;
+; COMMENT-ONLY READERS: The calculated gimbal angles and rotation rates are
+; now transferred to the autopilot, which will command the actual gimbal motors
+; and RCS thrusters to keep the optics tracking the LM.
+;
+; CODE-ALONG READERS: CDUXD/CDUYD/CDUZD receive desired gimbal angles (target
+; positions). WBODY/WBODY1/WBODY2 receive line-of-sight angular rates in body
+; coordinates. DAP uses DELCDU for rate feedforward and WBODY for rate damping.
+; ============================================================================
+
+CRS61.2A	EXIT			; Exit interpretive mode to native AGC
+		INHINT			; Inhibit interrupts for atomic transfer
 		CAF	ZERO		# TRANSFER DESIRED GIMBAL ANGLES
 		TS	CDUXD	+1	# FROM T(SAVEDCDU) TO V(CDUXD).
+					; Zero low-order words (double precision)
 		TS	CDUYD	+1
 		TS	CDUZD	+1
-		CA	SAVEDCDU
-		TS	CDUXD
-		CA	SAVEDCDU +1
-		TS	CDUYD
-		CA	SAVEDCDU +2
-		TS	CDUZD
+		CA	SAVEDCDU	; Load saved desired X gimbal angle
+		TS	CDUXD		; Store to DAP target X angle
+		CA	SAVEDCDU +1	; Load saved desired Y gimbal angle
+		TS	CDUYD		; Store to DAP target Y angle
+		CA	SAVEDCDU +2	; Load saved desired Z gimbal angle
+		TS	CDUZD		; Store to DAP target Z angle
+
+; Transfer Angular Rate Vector to DAP Body Rate Variables
+; The WBODY vector contains the line-of-sight angular rate in spacecraft body
+; coordinates, scaled in revolutions per second at 450 degrees full scale.
+; The DAP uses this for rate damping and smooth tracking.
 
 		EXTEND			# TRANSFER OMEGA CONTROL (ANG. LOS RATE)
 		DCA	MPAC		# FROM V(MPAC) TO V(WBODY)
-		DXCH	WBODY
+					; Load X component (double precision)
+		DXCH	WBODY		; Store X angular rate to DAP
 		EXTEND
-		DCA	MPAC	+3
-		DXCH	WBODY1
-		EXTEND
-		DCA	MPAC	+5
-		DXCH	WBODY2
+		DCA	MPAC	+3	; Load Y component
+		DXCH	WBODY1		; Store Y angular rate to DAP
+		EXTEND			; Continue double precision transfer
+		DCA	MPAC	+5	; Load Z component
+		DXCH	WBODY2		; Store Z angular rate to DAP
+					; Complete 3-axis angular rate vector
+
+; Transfer Gimbal Angle Increments
+; The DELCDU values computed earlier contain the incremental gimbal angle
+; changes for the next 100ms cycle. The DAP adds these to current gimbal
+; angles to generate smooth tracking commands.
 
 		EXTEND			# TRANSFER CDU INCREMENTS
 		INDEX	FIXLOC		# FROM V(VAC14D) TO V(DELCDUX)
-		DCA	14D
-		DXCH	DELCDUX
-		EXTEND
-		INDEX	FIXLOC
-		DCA	16D
+		DCA	14D		; Load X gimbal increment (double precision)
+		DXCH	DELCDUX		; Store to DAP X increment variable
+		EXTEND			; Continue transfer with indexing
+		INDEX	FIXLOC		; Use bank-switching for vector access
+		DCA	16D		; Load Y gimbal increment
 # Page 596
-		DXCH	DELCDUY
-		EXTEND
-		INDEX	FIXLOC
-		DCA	18D
-		DXCH	DELCDUZ
+		DXCH	DELCDUY		; Store to DAP Y increment variable
+		EXTEND			; Continue transfer
+		INDEX	FIXLOC		; Final component with indexing
+		DCA	18D		; Load Z gimbal increment
+		DXCH	DELCDUZ		; Store to DAP Z increment variable
+					; Complete gimbal increment transfer
+
+; Signal Data Ready and Release Interrupts
+; Set HOLDFLAG to -1 to signal the DAP that new tracking data is available.
+; The autopilot will begin using these values immediately. Re-enable interrupts
+; and continue with preferred tracking attitude computation.
+
 		CS	ONE		# NOW DAP VARIABLES LOADED.  SET HOLDFLAG.
 		TS	HOLDFLAG	# TO -1.
-		RELINT
-		TC	ASET
-MANUEXIS	TC	INTPRET
+					; Flag indicates DAP should use new values
+		RELINT			; Release interrupts - atomic update complete
+		TC	ASET		; Jump to attitude set routine
+
+; ============================================================================
+; MANUEXIS / MANUEXIT - Manual Attitude Maneuver Exit Paths
+;
+; These routines handle cases where the spacecraft gimbal angles deviate too
+; far from the desired tracking attitude. When actual gimbal angles exceed the
+; desired angles by more than 10 degrees, manual attitude correction is needed.
+; The routine stores the desired gimbal configuration for KALCMANU (Kalman
+; maneuver routine) and returns control with a special flag.
+;
+; COMMENT-ONLY READERS: If the optics cannot track the LM because the spacecraft
+; pointing is too far off, this signals the need for a manual attitude correction.
+;
+; CODE-ALONG READERS: SAVEDCDU contains desired gimbal angles. These are stored
+; to CPHI/CTHETA/CPSI for the Kalman steering routine, with MPAC+0=1 as error flag.
+; ============================================================================
+
+MANUEXIS	TC	INTPRET		; Re-enter interpretive mode
 MANUEXIT	TLOAD			# ENTER FROM STEP2.  ACDU-DCDU EXCEEDS
 			SAVEDCDU	# 10 DEG. STORE DCDU(T) IN CPHI,CTHETA,
+					; Load desired gimbal configuration
 		STORE	CPHI		# CPSI FOR KALCMANU.
+					; Store for manual maneuver routine
 		SLOAD	GOTO		# SPECIAL RETURN (MPAC+0 = 1)
 			LOONE		# OCTAL 00001
-			Q611
+					; Load constant 1 as error indicator
+			Q611		; Return to calling routine
+
+; ============================================================================
+; R63 - State Vector Extrapolation and Line-of-Sight Computation
+;
+; This subroutine computes desired gimbal angles (DCDUS) at a specified time
+; by extrapolating both CSM and LM state vectors forward, computing the
+; line-of-sight vector between them, and determining the spacecraft attitude
+; required for optical tracking. Essential for rendezvous navigation where
+; the two spacecraft are in different orbits with constantly changing geometry.
+;
+; COMMENT-ONLY READERS: This calculates where to point the Command Module's
+; optics to track the Lunar Module at any future time during rendezvous.
+;
+; CODE-ALONG READERS: Sequence: 1) Extrapolate CSM position via CSMCONIC,
+; 2) Extrapolate LM position via LEMCONIC, 3) Compute unit line-of-sight vector,
+; 4) Transform to stable member coordinates, 5) Compute tracking gimbal angles.
+; ============================================================================
 
 R63		STQ	DLOAD		# SUBR TO CALC DCDUS(T)
-			Q6111
-			P21TIME
-		STCALL	TDEC1
-			CSMCONIC
+			Q6111		; Save return address
+					; Will jump back here when complete
+			P21TIME		; Load extrapolation target time
+					; Time at which to compute geometry
+		STCALL	TDEC1		; Store as integration target time
+			CSMCONIC	; Extrapolate CSM orbit to P21TIME
+
+; Hold Extrapolated CSM State Vector
+; After CSMCONIC returns, RATT and VATT contain CSM position and velocity
+; at P21TIME. Save these for later line-of-sight computation.
+
 HOLDATT		VLOAD			# HOLD EXTRAPOLATED CSM POSITION AND
 			RATT		# VELOCITY
-		STOVL	SAVEPOS
-			VATT
-		STORE	SAVEVEL
+					; Load CSM position vector (Earth-centered)
+		STOVL	SAVEPOS		; Store position for LOS calculation
+			VATT		; Load CSM velocity vector
+					; Velocity in meters/centisecond scaled
+		STORE	SAVEVEL		; Save CSM velocity for later use
+
+; Extrapolate LM State Vector
+; Now compute the LM state vector at the same time P21TIME. This gives us
+; the simultaneous positions of both spacecraft for geometry calculations.
+
 CALCLEM		DLOAD			# EXTRAPOLATE LEM STATE VECTOR TO SAVE
 			P21TIME		# TIME AS CSM USING LEMCONIC
-		STCALL	TDEC1
-			LEMCONIC
-		VLOAD
-			VATT
+					; Load same target time
+		STCALL	TDEC1		; Store integration target time
+			LEMCONIC	; Extrapolate LM orbit to P21TIME
+					; Returns with RATT=LM pos, VATT=LM vel
+
+; Compute Line-of-Sight Vector Between CSM and LM
+; Calculate the unit vector pointing from the CSM toward the LM. This is the
+; direction the optics must point to acquire and track the target spacecraft.
+; During Apollo 11 rendezvous on July 21, 1969, this computation ran continuously
+; as the LM Eagle climbed from the lunar surface toward Columbia in orbit.
+
+		VLOAD			; Load LM velocity vector
+			VATT		; Needed for rate calculations later
 		STOVL	DCDU		# STORE VATT IN DCDU TEMPORARILY
+					; Temporary storage in display variable
 			RATT		# LOS = RL RC
-		VSU	UNIT
-			SAVEPOS
+					; Load LM position vector
+		VSU	UNIT		; Subtract CSM position, normalize
+			SAVEPOS		; (LM position) - (CSM position)
+					; Result: unit line-of-sight vector
 		STORE	SAVEPOS		# SAVE UNITLOS FOR CRS61.2 RATE CALC.
-		MXV	VSL1
+					; Saved for angular rate computation
+
+; Transform Line-of-Sight to Stable Member Coordinates
+; Convert the line-of-sight vector from basic reference frame to the IMU
+; stable member coordinate system. This is necessary because gimbal angles
+; are referenced to the stable member, not inertial space.
+
+		MXV	VSL1		; Matrix multiply, shift left 1 bit
 			REFSMMAT	# CONVERT TO STABLE MEMBER
-		STODL	POINTVSM
+					; Reference to Stable Member Matrix
+		STODL	POINTVSM	; Store transformed LOS vector
 			36D		# HOLD ABS VAL OF LOS (VAC 36D)
+					; Load magnitude of LOS (in meters)
 		STORE	P21TIME		# IN D(P21TIME) FOR CRS61.2 RATE CALC.
-		VLOAD
-			UNITX
+					; Save for rate calculation (distance needed)
+
+; Compute Tracking Attitude for X-Axis Optics
+; Calculate the spacecraft gimbal angles that would point the +X body axis
+; (sextant/telescope axis) at the target LM. This gives the crew one tracking
+; option using the primary optics.
+
+		VLOAD			; Load unit X-axis vector
+			UNITX		; Spacecraft +X body axis
+					; Direction of sextant/telescope boresight
 		STCALL	SCAXIS		# TRACK AXIS UNIT VECTOR
+					; Set as tracking axis for computation
 			VECPOINT	# FOR +X-AXIS TRACKING ATTITUDE
+					; Compute gimbal angles for this axis
 		STORE 	CPHIX		# STORE ANGLES FOR N96 DISPLAY
-		VLOAD
-			PRFUNIT
+					; Save for crew display (Noun 96)
+					; Shows X-axis tracking attitude option
+
+; Compute Preferred Tracking Attitude
+; Calculate gimbal angles for the preferred tracking axis. This is typically
+; chosen for best visibility, minimal gimbal motion, or optimal communications
+; geometry during the tracking pass.
+
+		VLOAD			; Load preferred tracking axis
+			PRFUNIT		; Preferred axis unit vector
+					; Pre-computed optimal tracking direction
 # Page 597
-		STCALL	SCAXIS
-			VECPOINT
+		STCALL	SCAXIS		; Set as tracking axis
+			VECPOINT	; Compute gimbal angles for preferred axis
+					; Returns MPAC with computed angles
 		STORE	PRAXIS		# STORE ANGLES FOR N95 DISPLAY
-		BOFF
-			PRFTRKAT
-			CRSTOR1
+					; Save preferred axis attitude for crew
+					; Noun 95 shows this tracking option
+
+; Select Attitude Based on Preferred Tracking Flag
+; If PRFTRKAT flag is set, use the preferred tracking attitude just computed.
+; If flag is clear, use the X-axis tracking attitude computed earlier.
+; This allows the crew or program to select the most appropriate tracking mode.
+
+		BOFF			; Branch on flag off
+			PRFTRKAT	; Preferred tracking attitude flag
+			CRSTOR1		; If clear, use X-axis attitude
+
+; Store Preferred Attitude for Display and Return
+; The preferred tracking attitude is the selected mode. Store gimbal angles
+; for crew display (Noun 18) and return to calling routine.
+
 CRSTOR		STORE	THETAD		# STORE ANGLES FOR N18 DISPLAY
-		GOTO
-			Q6111
-CRSTOR1		VLOAD
-			UNITX
-		STORE	SCAXIS
-		TLOAD	GOTO
-			CPHIX
-			CRSTOR
+					; Noun 18: desired gimbal angles
+					; Crew can see commanded attitude
+		GOTO			; Return to saved address
+			Q6111		; Jump back to calling routine
+
+; Alternate Path: Use X-Axis Tracking Attitude
+; When preferred tracking mode is not selected, fall back to X-axis tracking.
+; This provides an alternate tracking geometry if preferred axis isn't suitable.
+
+CRSTOR1		VLOAD			; Load X-axis unit vector again
+			UNITX		; Spacecraft +X body axis
+		STORE	SCAXIS		; Store as selected tracking axis
+		TLOAD	GOTO		; Load pre-computed X-axis angles
+			CPHIX		; Angles computed earlier (Noun 96)
+			CRSTOR		; Jump to storage and return routine
+
+; ============================================================================
+; P20-P25 CONSTANTS AND COORDINATE TRANSFORMATION MATRICES
+;
+; This section defines critical constants used throughout the rendezvous
+; navigation programs, including the preferred tracking axis unit vector,
+; angular rate conversion factors, gimbal angle thresholds, and body-to-
+; control axis rotation matrices.
+;
+; COMMENT-ONLY READERS: These precisely calibrated numbers define how the
+; spacecraft tracks the LM and processes navigation measurements.
+;
+; CODE-ALONG READERS: All constants use fixed-point scaling indicated by
+; B-n notation. PRFUNIT defines 55° tracking axis. MBDYTCTL is 7.25° rotation
+; matrix compensating for offset between body and control reference frames.
+; ============================================================================
+
 PRFUNIT		2DEC	.40957602	# 55 DEG TRACK AXIS UNIT VECTOR
-
+					; X-component: cos(55°) = 0.5736
+					; Component in spacecraft +X direction
 		2DEC	0.0		# FOR USE WITH VECPOINT
-
-		2DEC	.28678822
+					; Y-component: 0 (lies in X-Z plane)
+					; No rotation about Y-axis
+		2DEC	.28678822	# Z-component: sin(55°) = 0.8192
+					; Preferred axis tilted 55° from +X
+					; Optimized for visibility and gimbal motion
 
 DEGREE10	DEC	.05556		# 10 DEG IN REVS		STEP2
+					; 10°/360° = 0.02778 revolutions
+					; Threshold for ACDU-DCDU deviation check
+
 RVCS/RDS	2DEC	15.915494 B-4	# 100/2PI REV-CSEC/RAD-SEC.
+					; Conversion: radians/sec to rev/centisec
+					; Used for angular rate scaling
 
 TENTH		2DEC	.1 B+3		# .1 B-3 (TO SCALE ANG. RATE TO .1 INREMS)
+					; Scale factor 0.1 for angular rates
+					; Converts to 0.1 inertial reference units
 
-MAT1B1		2DEC	1.0 B-1
+MAT1B1		2DEC	1.0 B-1		; Matrix element constant
+					; Unity scaled by 2^-1 for matrix operations
+
+; Body-to-Control Axis Rotation Matrix (7.25° about X-axis)
+; Compensates for misalignment between spacecraft body axes and control axes.
+; This 3x3 rotation matrix transforms vectors from body coordinates to the
+; control reference frame used by the digital autopilot.
 
 MBDYTCTL	2DEC	.5		# 		7.25 DEG NEGATIVE
-
+					; First row, first column: 1.0 (X unchanged)
 		2DEC	0		#		X-AXIS ROTATION MATRIX
-
+					; First row, second column: 0
 		2DEC	0		#		CONVERTS BODY TO CTL
-
+					; First row, third column: 0
 		2DEC	0		#		AXES.  CAME AS QUADROT
-
+					; Second row, first column: 0
 		2DEC	.99200495 B-1	# COS7.25 B1	BUT SCALED B
-
+					; Second row, second column: cos(7.25°)
 		2DEC	-.12619897 B-1	# -SIN7.25 B1
-
-		2DEC	0
-
+					; Second row, third column: -sin(7.25°)
+		2DEC	0		; Third row, first column: 0
 		2DEC	.12619897 B-1	# SIN7.25 B1
-
+					; Third row, second column: sin(7.25°)
 		2DEC	.99200495 B-1	# COS7.25 B1
+					; Third row, third column: cos(7.25°)
 
 LOONE		OCT	00001		# TO SET MPAC = 00001 FOR SPECIAL EXIT.
+					; Constant 1 used as error indicator
+					; Signals manual attitude correction needed
+
 FURST3		EQUALS	13,14,15	# CONSTANT FOR AUTOCK (OCT 70000).
+					; Address pointer for autopilot routine
+					; Points to erasable memory locations
 
 # Page 598
 # ..... S22.1 ORBITAL NAVIGATION ROUTINE
@@ -2752,6 +3197,17 @@ VB06N18		VN	0618
 
 R63COMP		EQUALS	R63
 
+; ============================================================================
+; TRANSITION: From P22 Orbital Navigation to P23 Cislunar Midcourse Navigation
+;
+; Having completed orbital rendezvous operations around Earth or Moon, the
+; spacecraft now transitions to deep space navigation during translunar or
+; transearth flight. P23 enables optical navigation when the vehicle is far
+; from any gravitational body, using star-planet angle measurements to
+; determine position and velocity in cislunar space. This was critical during
+; Apollo 11's coast phases when ground tracking was limited or unavailable.
+; ============================================================================
+
 # Page 619
 # PROGRAM NAME:  P23 CISLUNAR MIDCOURSE NAVIGATION
 # MOD NO:
@@ -2785,161 +3241,299 @@ R63COMP		EQUALS	R63
 # DEBRIS:  NO USABLE DEBRIS IS GENERATED.  RENDWFLG IS RESET FOR P20 UPON
 # COMPLETION OF P23.  RUPTREGS AND ERASABLES USED BY DISPLAYS ARE DEBRIS.
 
+; ----------------------------------------------------------------------------
+; P23 CISLUNAR MIDCOURSE NAVIGATION PROGRAM
+;
+; COMMENT-ONLY READERS: This program guided Apollo 11 through the vast
+; emptiness between Earth and Moon during the translunar and transearth coast
+; phases. When the spacecraft was far from both bodies, ground tracking became
+; less accurate. The crew used the sextant to measure angles between stars
+; and the Earth or Moon horizon or landmarks. These optical measurements
+; updated the spacecraft's position and velocity, ensuring accurate course
+; to the Moon and safe return to Earth. The computer processed each sighting
+; mark to refine the navigation solution, keeping the spacecraft on its
+; narrow corridor through space.
+;
+; CODE-ALONG READERS: P23 implements autonomous optical navigation for cislunar
+; flight using star-planet angle measurements. The program coordinates sextant
+; optics positioning via R52/R53, processes mark data through measurement
+; incorporation algorithms (INCORP1/INCORP2), and updates the state vector
+; using Kalman filtering techniques. Study the integration of horizon detection
+; (HORIZ subroutine), line-of-sight vector computation, coordinate
+; transformations between inertial and body reference frames, and real-time
+; state estimation for deep space navigation. P23 distinguishes between
+; Earth and Moon observations (LUNAFLAG), handles both horizon and landmark
+; sightings, and performs optics calibration (R57) when needed.
+; ----------------------------------------------------------------------------
+
 		BANK	31
 		SETLOC	RT23
 		BANK
 		COUNT	31/S23
 		EBANK=	W
-P23		TC	DOWNFLAG
-		ADRES	RNDVZFLG
+; P23 ENTRY POINT - CISLUNAR NAVIGATION INITIALIZATION
+;
+; The spacecraft is coasting through cislunar space, far from Earth and Moon.
+; Ground tracking is limited at this distance. The program prepares for optical
+; navigation measurements that will update the state vector using star-planet
+; angle observations. The crew will sight through the sextant, measuring angles
+; between known stars and the Earth or Moon horizon to refine position and
+; velocity estimates.
 
-		TC	2PHSCHNG
-		OCT	00004		# LEAVE GROUP 4
-		OCT	00012		# ENTER GROUP 2
-		CAF	PRIO13
+P23		TC	DOWNFLAG
+		ADRES	RNDVZFLG	; Clear rendezvous flag (not in rendezvous mode)
+
+		TC	2PHSCHNG	; Phase change for restart protection
+		OCT	00004		; LEAVE GROUP 4
+		OCT	00012		; ENTER GROUP 2
+		CAF	PRIO13		; Set priority level 13 for this job
 		TS	PHSPRDT2
-		TC	INTPRET
+		TC	INTPRET		; Enter interpretive mode for vector operations
+
+; Initialize navigation parameters and flags for optical measurement processing.
+; MARKINDX tracks number of marks taken. TARG1FLG and TARG2FLG control optics
+; targeting. STARIND selects star catalog entry. BESTI tracks best star selection.
+; R57FLAG controls optics calibration. V94FLAG enables crew termination option.
+
 		SSP	CLEAR
-			MARKINDX
+			MARKINDX	; Mark index = 1 (first sighting)
 			1
 			TARG2FLG	# TARGET FLAG USED R52 AND R53
 		CLEAR	SSP
-			TARG1FLG
-			STARIND
+			TARG1FLG	; Clear primary target flag
+			STARIND		; Star index = 0 (automatic selection)
 			0
 		SSP	CLEAR
-			BESTI
+			BESTI		; Best star index = 0
 			0
-			R57FLAG		# SET = DO NOT REPERFORM R57
+			R57FLAG		# SET = DO NOT REPERFORM R57 (optics calib)
 		CLEAR	EXIT
-			V94FLAG		# SET = ALLOW V94
+			V94FLAG		# SET = ALLOW V94 (crew can terminate)
+
+; Main P23 loop begins. Check IMU alignment status and either calibrate optics
+; (if IMU not aligned) or proceed directly to measurement acquisition.
+
 P23.00		TC	INTPRET
 # Page 620
+; Check IMU alignment status. If IMU is aligned (REFSMFLG set), proceed to
+; measurement. If not aligned, perform optics calibration routine R57 first.
+; R53 provides preferred tracking attitude for optical measurements.
+
 		BON	CALL
 			REFSMFLG	# SET NOW AS INPUT, NORMALLY EXTERNAL CONT
 			P23.05		# WHEN ALIGNED, PERFORM MEASUREMENT
 			R57		# DO OPTICS CALIBRATION IF IMU NOT ALIGNED.
 		CALL
-			R53
+			R53		; Set preferred attitude for tracking
 		GOTO
 			P23.60
+
+; CREW INPUT SECTION - DSKY DISPLAY V05N70
+;
+; The DSKY displays "PLEASE PERFORM" with Noun 70 requesting crew input.
+; The astronaut enters three parameters identifying the sighting:
+;   R1: Star code (0-37 from star catalog, or 0 for manual optics positioning)
+;   R2: Horizon identifier (1=Earth horizon, 2=Moon horizon, 0=no horizon)
+;   R3: Landmark identifier (1=landmark, 2=landmark on other body, 0=none)
+;
+; During Apollo 11's translunar coast, Michael Collins in the Command Module
+; used this display to enter star-Earth and star-Moon angle measurements,
+; refining the trajectory to ensure accurate lunar orbit insertion.
+
 P23.05		CLEAR	EXIT
 			SAVECFLG	# USED TO SAVE SPACE IN P23.65
-P23.06		CAF	V05N70
-		TC	BANKCALL	# IDENTIFICATION:  STAR, HOR  IDENT.
-		CADR	GOFLASH
-		TC	GOTOPOOH	# TERMINATE
-		TC	P23.15
-		TC	-5		# REDISPLAY
+P23.06		CAF	V05N70		; Display verb 05, noun 70 (please perform)
+		TC	BANKCALL	; IDENTIFICATION:  STAR, HOR  IDENT.
+		CADR	GOFLASH		; Flash display and await crew input
+		TC	GOTOPOOH	# TERMINATE (crew pressed TERMINATE key)
+		TC	P23.15		; PROCEED - validate crew entries
+		TC	-5		# REDISPLAY (crew wants to re-enter data)
+; VALIDATION OF CREW ENTRIES
+;
+; The program validates that the crew entered valid combinations:
+; - Cannot specify both landmark AND horizon (invalid combination)
+; - Must specify either landmark OR horizon (not neither)
+; - If landmark code is 2, set LUNAFLAG (observing lunar landmark)
+; - If landmark code is 1, clear LUNAFLAG (observing Earth landmark)
+; - Star code must be 0-37 (within star catalog range)
+;
+; Invalid entries produce OPERATOR ERROR and return to input display.
+
 P23.15		CA	LANDMARK	# IF C=2, LUNAFLAG=1.  IF C=1, LUNAFLAG=0
 		EXTEND
-		BZF	P23.151
+		BZF	P23.151		; No landmark, check horizon entry
 		CA	HORIZON
 		EXTEND
-		BZF	+2
-		TC	R23.10		# OPERATOR DSKY ERROR
-		CA	LANDMARK
+		BZF	+2		; No horizon - valid (landmark only)
+		TC	R23.10		# OPERATOR DSKY ERROR - both specified
+		CA	LANDMARK	; Load landmark code for validation
 		TC	P23.152
+
+; Check horizon entry if no landmark specified
 P23.151		CA	HORIZON
 		EXTEND
-		BZF	R23.10
+		BZF	R23.10		; Error - neither landmark nor horizon
+
+; Validate landmark/horizon code is 1 or 2, set LUNAFLAG accordingly
 P23.152		MASK	BITS7-9		# IS C EQUAL TO 1 OR 2
-		AD	NEG100
+		AD	NEG100		; Subtract 100 octal (64 decimal)
 		EXTEND
-		BZF	P23.16
-		AD	NEG100
+		BZF	P23.16		; Code = 1 (Earth) - clear LUNAFLAG
+		AD	NEG100		; Subtract another 100 octal
 		EXTEND
-		BZF	+2
-		TC	R23.10
-		TC	UPFLAG
+		BZF	+2		; Code = 2 (Moon) - set LUNAFLAG
+		TC	R23.10		; Error - invalid code
+		TC	UPFLAG		; Set LUNAFLAG for lunar observation
 		ADRES	LUNAFLAG
 		TCF	+3
-P23.16		TC	DOWNFLAG
+
+P23.16		TC	DOWNFLAG	; Clear LUNAFLAG for Earth observation
 		ADRES	LUNAFLAG
+
+; Validate star code is within catalog range (0 to 37)
 		CA	STARCODE	# IS STARCODE GREATER THAN OR
 		EXTEND			# EQUAL TO 0 AND LESS THAN 37
-		BZF	P23.176
+		BZF	P23.176		; Star code = 0 (manual optics)
 		EXTEND
-		BZMF	R23.10
-		AD	NEG37
+		BZMF	R23.10		; Error - negative star code
+		AD	NEG37		; Check if star code > 37
 		EXTEND
-		BZMF	+2
-		TC	R23.10
+		BZMF	+2		; Within range, continue
+		TC	R23.10		; Error - star code too large
 # Page 621
 
-		TC	INTPRET
-P23.17		SLOAD	BZE
+; STAR VECTOR RETRIEVAL FROM STAR CATALOG
+;
+; If the crew specified a star code (not 0), retrieve the star's unit vector
+; from the onboard star catalog stored in low memory (fixed memory below
+; bank 0). The star catalog contains precise inertial coordinates for 37
+; navigation stars used throughout Apollo missions. The star vector will be
+; used to compute the line-of-sight from the sextant to the star.
+
+		TC	INTPRET		; Enter interpretive mode for vector ops
+P23.17		SLOAD	BZE		; Load star code
 			STARCODE
-			P23.175
-		PUSH
-		SLOAD	DMP
-			SPSIX
-		LXA,1	SXA,1
+			P23.175		; If zero, skip star vector retrieval
+		PUSH			; Save star code on stack
+		SLOAD	DMP		; Load and multiply by 6
+			SPSIX		; Each star catalog entry is 6 words
+		LXA,1	SXA,1		; Load index register with offset
 			MPAC +1
 			BESTI		# BESTI = 6 X STAR NUMBER
 		CALL
 			LOWMEMRY	# NEEDED TO RETRIEVE STAR VECTOR FROM LOW
 		STORE	STARSAV2	# STORE FOR R53,P23.  US(IN P23)=STARSAV2
 P23.175		EXIT
+
+; HORIZON TYPE PROCESSING
+;
+; If the crew specified a horizon observation, determine whether it is a
+; "normal" horizon (Earth or Moon limb visible from space) or a "reflected"
+; horizon (horizon visible in spacecraft window reflection). The horizon
+; type affects the geometric computation used to determine the angle.
+;
+; NORFHOR flag: 0 = normal horizon, 1 = reflected horizon
+
 P23.176		CA	HORIZON
 		EXTEND
-		BZF	P23.20
-		MASK	BITS4-6
-		AD	-OCT10
+		BZF	P23.20		; No horizon - landmark observation
+		MASK	BITS4-6		; Extract horizon type bits
+		AD	-OCT10		; Check if type = 1 (normal)
 		EXTEND
-		BZF	P23.18
-		AD	-OCT10
+		BZF	P23.18		; Type 1 - normal horizon
+		AD	-OCT10		; Check if type = 2 (reflected)
 		EXTEND
-		BZF	+2
-		TC	R23.10
-		TC	UPFLAG
+		BZF	+2		; Type 2 - reflected horizon
+		TC	R23.10		; Error - invalid horizon type
+		TC	UPFLAG		; Set reflected horizon flag
 		ADRES	NORFHOR
 		TC	P23.30
-P23.18		TC	DOWNFLAG
+
+P23.18		TC	DOWNFLAG	; Clear flag for normal horizon
 		ADRES	NORFHOR
 		TC	P23.30
-P23.20		TC	INTPRET
+
+; LANDMARK OBSERVATION PROCESSING
+;
+; When observing a landmark (no horizon specified), call P22SUBRB to compute
+; the landmark's predicted position in the sextant field of view based on
+; the current state vector and landmark coordinates.
+
+P23.20		TC	INTPRET		; Enter interpretive mode
 		CALL
-			P22SUBRB
+			P22SUBRB	; Compute landmark line-of-sight
 		EXIT
+
+; OPTICS POSITIONING PREPARATION
+;
+; Prepare to position the sextant optics. If star code = 0 (manual optics),
+; skip to LDPLANET. Otherwise, continue with automatic optics positioning
+; using star catalog data retrieved earlier.
+
 P23.30		TC	INTPRET
-		SLOAD	BZE
+		SLOAD	BZE		; Load star code
 			STARCODE
-			LDPLANET
-P23.31		BON	EXIT
+			LDPLANET	; If zero, skip to planet/body processing
+; SIGHTING MARK REQUEST
+;
+; Display V50N25 to the crew, requesting them to mark the sighting when the
+; star and target (horizon or landmark) are aligned in the sextant. The crew
+; can PROCEED when ready to continue with automatic optics positioning, or
+; TERMINATE to exit P23. If SAVECFLG is set (data already saved), skip the
+; display and proceed directly to final processing.
+
+P23.31		BON	EXIT		; Check if data already saved
 			SAVECFLG
-			P23.85
-		CAF	V50N25P
+			P23.85		; Skip to final processing
+		CAF	V50N25P		; Display V50 N25 "PLEASE MARK"
 		TC	BANKCALL
 		CADR	GOPERF1		# GOPERF1 BLANKS OUT R2 AND R3
-		TC	GOTOPOOH
+		TC	GOTOPOOH	; Crew selected TERMINATE
 		TC	V94ENTER	# PROCEED.  AUTOCONTROL CMC
 P23.55		TC	INTPRET
 		GOTO
-			P23.56
+			P23.56		; Continue to optics positioning
 # Page 622
+
+; ============================================================================
+; VERB 94 - MARK PROCESSING (CREW PRESSES MARK BUTTON)
+;
+; When the crew presses the MARK button on the DSKY while observing through
+; the sextant, this routine captures the precise time and optics angles.
+; The line-of-sight vector from the sextant to the observed target is
+; computed in spacecraft body coordinates, then transformed to the stable
+; member (inertial) reference frame using the REFSMMAT matrix.
+;
+; This mark data will be processed by the navigation filter to update the
+; spacecraft state vector, improving position and velocity knowledge during
+; the cislunar coast phase when ground tracking accuracy degrades.
+; ============================================================================
 
 # VERB 94 BEGINS HERE
 V94ENTER	TC	INTPRET
 		RTB
-			LOADTIME	# READ CLOCK
-		STCALL	MARKTIME
+			LOADTIME	# READ CLOCK - capture mark time
+		STCALL	MARKTIME	; Save time, call POINTAXS
 			POINTAXS	# RETURN LOS IN RCLL AND MPAC
-		MXV	UNIT
-			REFSMMAT
-		STOVL	POINTVSM
-			JCAXIS
-		STORE	SCAXIS
+		MXV	UNIT		; Transform LOS to stable member coords
+			REFSMMAT	; Using reference matrix
+		STOVL	POINTVSM	; Store transformed LOS vector
+			JCAXIS		; Load spacecraft axis data
+		STORE	SCAXIS		; Save for R60 attitude maneuver
 		EXIT
+
+; Prepare for R60 attitude maneuver routine
+; R60 will compute preferred attitude for next sighting
+
 		TC	DOWNFLAG	# CLEAR AND GO TO VECPOINT IN R60
 		ADRES	3AXISFLG	# BIT 6 FLAG 5
-		CAF	R60ADRS
-		TS	TEMPFLSH
-		TC	PHASCHNG
+		CAF	R60ADRS		; Load R60 routine address
+		TS	TEMPFLSH	; Store for phase change
+		TC	PHASCHNG	; Initiate phase change
 		OCT	00012
-R60CALL		TC	BANKCALL
+R60CALL		TC	BANKCALL	; Call R60 preferred attitude routine
 		CADR	R60CSM
-		TC	PHASCHNG
+		TC	PHASCHNG	; Complete phase change
 		OCT	04022
 		TC	INTPRET
 		BON
@@ -2983,116 +3577,209 @@ P23.60		EXIT
 		TC	GOTOPOOH	# TERMINATE
 		TC	P23.65		# STORE DATA
 		TC	-5		# REDISPLAY
+
+; DATA STORAGE AND LOOP CONTROL
+;
+; If crew selected PROCEED after R60, save the mark data by setting SAVECFLG,
+; then loop back to request another sighting (P23.15). This allows multiple
+; marks to refine the navigation solution. If SAVECFLG is already set,
+; proceed directly to final processing (P23.85).
+
 P23.65		TC	INTPRET
-		SET	EXIT
+		SET	EXIT		; Set data saved flag
 			SAVECFLG
-		TC	P23.15
-P23.85		CLEAR	CALL
-			RENDWFLG
-			POINTAXS
+		TC	P23.15		; Loop back for another mark
+
+P23.85		CLEAR	CALL		; Final processing entry
+			RENDWFLG	; Clear rendezvous flag
+			POINTAXS	; Compute final pointing axis
 		GOTO
-			R23.55
+			R23.55		; Continue to incorporation
+
+; ============================================================================
+; POINTAXS SUBROUTINE - COMPUTE LINE-OF-SIGHT VECTOR
+;
+; This critical subroutine computes the line-of-sight vector from the
+; spacecraft to the observed target (star, horizon, or landmark) at the
+; mark time. The computation involves:
+; 1. Integrating the CSM state vector to the mark time
+; 2. Computing target position (planet center, horizon point, or landmark)
+; 3. Computing the unit vector from spacecraft to target
+; 4. Transforming the vector to sextant coordinates
+;
+; The result is used by the navigation filter to incorporate the measurement
+; and update the state vector estimate.
+; ============================================================================
 
 # WE BEGIN CALCULATIONS HERE
 # POINTAXIS SUBROUTINE
 
-POINTAXS	STQ
+POINTAXS	STQ			; Save return address
 			POINTEX
-R23.05		BON	DLOAD
-			ORBWFLAG
-			R23.1
-			WMIDPOS
-		STCALL	0
+R23.05		BON	DLOAD		; Check W-matrix initialization
+			ORBWFLAG	; First pass flag
+			R23.1		; Already initialized
+			WMIDPOS		; Load W-matrix position
+		STCALL	0		; Store and call initialization
 			INITIALW	# INITIALIZE W-MATRIX FIRST PASS IN P23
+
+; Integrate CSM state vector to mark time
+; The mark time was captured when crew pressed MARK button
+
 R23.1		CALL
 			SETINTG		# SETUP FOR CSM INTEGRATION
-		BOF	SET
+		BOF	SET		; Check if already set up
 			ORBWFLAG
 			R23.2
-			DIM0FLAG
-R23.2		SET	CALL
+			DIM0FLAG	; Set dimension flag
+R23.2		SET	CALL		; Set flag and integrate
 			ORBWFLAG
 			INTEGRV		# INTEGRATE CSM STATE VEC. TO MARKTIME
 		EXIT
-		TC	PHASCHNG
+		TC	PHASCHNG	; Phase change for restart protection
 		OCT	04022
 		TC	INTPRET
 		CALL
 			RECT.1		# PICKUP CSM STATE VECTOR FROM PERM
-		BOFF
+		BOFF			; Check sphere of influence
 			ZMEASURE	# IN SPHERE OF INFLUENCE OF PRIMARY BODY
-			R23.3
+			R23.3		; Primary body (Earth or Moon)
 # Page 624
-		DLOAD	CALL
+
+; If in sphere of influence of secondary body (Moon during cislunar coast),
+; compute Moon position at mark time and adjust spacecraft position relative
+; to Moon center. This accounts for the changing gravitational reference frame.
+
+		DLOAD	CALL		; Load mark time
 			MARKTIME
-			LUNPOS
-		BON	VCOMP
+			LUNPOS		; Compute Moon position
+		BON	VCOMP		; Check if Moon-centered flag set
 			CMOONFLG
 			+1
-		VAD
+		VAD			; Add Moon position to adjust frame
 			RZC
-		STORE	RZC
-R23.3		SLOAD	BHIZ
+		STORE	RZC		; Store adjusted spacecraft position
+
+; Compute target position (horizon point or landmark)
+; LANDMARK variable determines observation type:
+;   LANDMARK = 0: Horizon sighting (limb of planet)
+;   LANDMARK ≠ 0: Surface landmark at specific lat/long
+
+R23.3		SLOAD	BHIZ		; Load landmark identifier
 			LANDMARK	# IF LANDMARK = 0, USE HORIZ SUBR
-			R23.4
-		SET
-			ERADFLAG
-		DLOAD	CALL
+			R23.4		; Branch if zero (horizon observation)
+		SET			; Landmark observation
+			ERADFLAG	; Set Earth radius flag
+		DLOAD	CALL		; Load mark time
 			MARKTIME
-			LALOTORV
+			LALOTORV	; Convert lat/long to position vector
 		GOTO
 			R23.5
-R23.4		CALL
-			HORIZ
-R23.5		VSU	SETPD
-			RZC
-			0
+R23.4		CALL			; Horizon observation
+			HORIZ		; Compute horizon point on limb
+
+; Compute line-of-sight vector from spacecraft to target
+; Result is unit vector in stable member (inertial) coordinates
+
+R23.5		VSU	SETPD		; Subtract spacecraft position
+			RZC		; Target position - S/C position
+			0		; Set pushdown pointer
 		GOTO
-			POINTEX
+			POINTEX		; Return via saved address
 # Page 625
-R23.55		UNIT	PUSH		# RCLL IS IN MPAC
-		VLOAD
+
+; ============================================================================
+; R23.55 - MEASUREMENT INCORPORATION PREPARATION
+;
+; After obtaining the line-of-sight vector (RCLL) to the observed target,
+; this section prepares the geometry for measurement incorporation into the
+; navigation filter. It computes:
+; 1. Unit vectors for the computed line-of-sight (UCLSTAR) and the
+;    sextant line-of-sight (USSTAR), accounting for aberration and velocity
+; 2. The angle between these vectors, which represents the measurement error
+; 3. A basis vector (BVECTOR) orthogonal to the measurement, used in the
+;    Kalman filter update equations
+;
+; The computed angle difference drives the state vector correction.
+; ============================================================================
+
+R23.55		UNIT	PUSH		# RCLL IS IN MPAC - normalize to unit
+		VLOAD			; Load RCLL magnitude squared
 			34D		# RCLL * RCLL
 		STOVL	30D		# PUSH 30-31 =RCLL*RCLL 32-33=ABVAL RCLL
-			VZC
-		VXSC	VSR
+			VZC		; Load spacecraft velocity
+
+; Compute UCLSTAR: computed line-of-sight unit vector
+; Corrected for velocity aberration (light travel time effect)
+
+		VXSC	VSR		; Scale velocity by 1/c (speed of light)
 			ONE/C
-			15D
-		VAD			# PUSH UP RCLL(UNIT)
-		UNIT
-		STOVL	UCLSTAR
-			VZC
-		VSR2	VSU
-			VESO
-		VXSC	VSR
+			15D		; Shift for scaling
+		VAD			# PUSH UP RCLL(UNIT) - add velocity correction
+		UNIT			; Normalize to unit vector
+		STOVL	UCLSTAR		; Store computed unit LOS vector
+			VZC		; Reload velocity
+
+; Compute USSTAR: sextant-observed line-of-sight unit vector
+; Also corrected for velocity aberration
+
+		VSR2	VSU		; Shift and subtract velocity at mark
+			VESO		; Velocity at sextant observation
+		VXSC	VSR		; Scale by 1/c
 			ONE/C
-			13D
-		VAD	UNIT
-			US
-		STORE	USSTAR
-		DOT	SL1
-			UCLSTAR
+			13D		; Shift for scaling
+		VAD	UNIT		; Add correction and normalize
+			US		; Add sextant unit vector
+		STORE	USSTAR		; Store sextant unit LOS vector
+
+; Compute measurement geometry vectors
+; BVECTOR is orthogonal to measurement, used in state update
+
+		DOT	SL1		; Dot product of two unit vectors
+			UCLSTAR		; Gives cosine of angle between them
 		PUSH	VLOAD		# PD 0,1 = USSTAR(DOT)UCLSTAR
 			UCLSTAR
-		VXSC	VCOMP
-		VSL1	VAD
+		VXSC	VCOMP		; Scale and complement
+		VSL1	VAD		; Shift and add
 			USSTAR
-		UNIT
-		STOVL	BVECTOR		# USSTAR - COSQ(UCLSTAR)
-			ZEROVECS
-		STORE	BVECTOR +6
-		STODL	BVECTOR +12D
-			0
-		ACOS	DCOMP
-		PUSH	DLOAD
+		UNIT			; Normalize
+		STOVL	BVECTOR		# USSTAR - COSQ(UCLSTAR) - orthogonal vector
+			ZEROVECS	; Load zero vector
+		STORE	BVECTOR +6	; Clear second component
+		STODL	BVECTOR +12D	; Clear third component
+			0		; Load dot product result
+		ACOS	DCOMP		; Arc cosine gives angle, complement
+		PUSH	DLOAD		; Save angle
 			ZEROVECS
 		EXIT
+
+; ============================================================================
+; MEASUREMENT VARIANCE COMPUTATION
+;
+; This section computes the measurement variance (uncertainty) for the
+; optical sighting. The variance depends on the sextant trunnion angle
+; and includes contributions from:
+; 1. Spacecraft velocity effects on the line-of-sight
+; 2. Optical resolution limits of the sextant
+; 3. Crew manual tracking capability
+; 4. Range to target (RCLL magnitude)
+;
+; The computed variance is used by the Kalman filter (INCORP1) to weight
+; this measurement against the current state vector estimate. Higher
+; variance means less trust in this measurement, lower means more trust.
+; ============================================================================
+
 		CA	VARSUBL		# PUT FIXED INTO ERASABLE FOR MSU
 		TS	L		# INSTRUCTION COMING UP
 		CA	TRUNION		# REQUIRED TO CHANGE 2'S COMPLEMENT
 		EXTEND			# TRUNION TO 1'S COMPLEMENT
 		MSU	L		# TRUNION (2'S)-00000 CONVERTS TRUNION TO
 		TS	MPAC		# 1'S.  VARSUBL=00000.
+
+; Convert sextant trunnion angle to measurement angle (DELTAQ)
+; The trunnion angle represents the sextant shaft rotation and must be
+; converted to the actual measurement angle accounting for optics geometry.
+
 		TC	INTPRET
 		PUSH	SLOAD		# PUSH IS DP.  WHEN BDSU IS EXECUTED, 2ND
 			TRUNBIAS	# HALF OF PUSHLIST IS GUARANTEED ZERO FROM
@@ -3104,66 +3791,177 @@ R23.55		UNIT	PUSH		# RCLL IS IN MPAC
 			32D
 		DMP	SL3
 			PI/4.0
-		BOFF	SL2
-			CMOONFLG
+		BOFF	SL2		; Scale based on sphere of influence
+			CMOONFLG	; Different scaling for lunar vs Earth
 			R23.51
-R23.51		STODL	DELTAQ
+R23.51		STODL	DELTAQ		; Store measurement angle
 			30D		# RCLL * RCLL
-		DMP	RTB
-			TRUNVAR
-			TPMODE
-		TAD
+
+; Compute measurement variance based on range and trunnion angle
+; Variance increases with range (more uncertainty at greater distances)
+; and varies with trunnion angle due to optical geometry.
+
+		DMP	RTB		; Multiply by trunion variance factor
+			TRUNVAR		; Trunnion-dependent variance
+			TPMODE		; Round to triple precision mode
+		TAD			; Add base variance
 			VARSUBL
-		STORE	VARIANCE
-		CLEAR	CALL
+		STORE	VARIANCE	; Store total measurement variance
+
+; ============================================================================
+; INCORP1 CALL - INCORPORATE OPTICAL MEASUREMENT INTO STATE VECTOR
+;
+; This is the critical moment where the optical sighting measurement is
+; incorporated into the navigation solution. INCORP1 is the Kalman filter
+; measurement update routine that:
+; 1. Computes the state transition matrix from the last update
+; 2. Propagates the error covariance forward in time
+; 3. Computes the Kalman gain based on measurement variance
+; 4. Updates the state vector (position and velocity) estimate
+; 5. Updates the error covariance matrix
+;
+; The result is an improved estimate of the spacecraft trajectory that
+; combines the previous state knowledge with the new optical measurement.
+; During Apollo 11's translunar coast, these updates refined the trajectory
+; to ensure precise lunar orbit insertion.
+; ============================================================================
+
+		CLEAR	CALL		; Clear dimension flag and call filter
 			DMENFLG
-			INCORP1
+			INCORP1		; *** KALMAN FILTER UPDATE ***
+
+; ============================================================================
+; DISPLAY STATE VECTOR CORRECTIONS TO CREW
+;
+; After the Kalman filter update, show the crew how much the state vector
+; was corrected. DELTAX contains the position correction (first 3 components)
+; and DELTAX+6 contains the velocity correction (last 3 components).
+;
+; These corrections indicate the quality of the navigation solution:
+; - Small corrections: Prior trajectory estimate was accurate
+; - Large corrections: Significant trajectory error was present
+;
+; The crew evaluates whether corrections are reasonable before accepting.
+; ============================================================================
+
 		CALL
-			GRP2PC
-		VLOAD	ABVAL
-			DELTAX +6
+			GRP2PC		; Convert to display units
+
+; Compute velocity correction magnitude
+; During translunar coast, velocity errors accumulate as position errors.
+; The Kalman filter corrects both simultaneously based on the optical mark.
+
+		VLOAD	ABVAL		; Load velocity correction vector
+			DELTAX +6	; DELTAX components 4-6 (velocity)
 		BOF	SR2		# DISPLAY IS 2-27 IF IN LUNAR SPHERE.
-			CMOONFLG
+			CMOONFLG	; Scale differently for lunar vs Earth
 			R23.52
-R23.52		STOVL	N49DISP +2
-			DELTAX
-		ABVAL
-		BOF	SR2
+R23.52		STOVL	N49DISP +2	; Store velocity magnitude in R2
+
+; Compute position correction magnitude
+; Position corrections show accumulated navigation error since last update.
+
+			DELTAX		; DELTAX components 1-3 (position)
+		ABVAL			; Compute position correction magnitude
+		BOF	SR2		; Scale based on sphere of influence
 			CMOONFLG
 			R23.53
-R23.53		STORE	N49DISP
+R23.53		STORE	N49DISP		; Store position magnitude in R1
 		EXIT
-R23.6		CAF	V6N49
+
+; ============================================================================
+; CREW DISPLAY - V06N49 STATE VECTOR CORRECTION MAGNITUDES
+;
+; Display shows the Kalman filter corrections:
+; R1: Position correction magnitude (nautical miles or km)
+; R2: Velocity correction magnitude (feet/sec or m/s)
+; R3: (blank)
+;
+; Crew interpretation during Apollo 11 translunar coast:
+; - Position corrections typically 1-10 nautical miles
+; - Velocity corrections typically 0.1-1.0 feet/second
+; - Large corrections may indicate:
+;   * Poor prior state vector (needs more marks)
+;   * Bad measurement (crew should reject with RECYCLE)
+;   * Major trajectory change (e.g., midcourse correction executed)
+;
+; Crew options:
+; TERMINATE (V34): Abort navigation update, return to P00
+; PROCEED: Accept correction, continue P23 for more marks
+; RECYCLE: Reject correction, return to P23 for another mark
+; ============================================================================
+
+R23.6		CAF	V6N49		; Display correction magnitudes
 		TC	BANKCALL
-		CADR	GOFLASHR
-		TC	GOTOPOOH
-		TC	R23.7		# INCORPORATE DATA
-		TC	GOTOPOOH
+		CADR	GOFLASHR	; Flash display with recycle option
+		TC	GOTOPOOH	; Crew selected terminate
+		TC	R23.7		# INCORPORATE DATA - proceed accepted
+		TC	GOTOPOOH	; Recycle selected, return to P00
+
+; Blank out R3 display register (not used for this display)
+
 		CAF	BIT3		# BLAN OUT R3
-		TC	BLANKET
-		TC	PHASCHNG
+		TC	BLANKET		; Blank the register
+		TC	PHASCHNG	; Phase change for restart protection
 		OCT	00012
-		TC	ENDOFJOB
+		TC	ENDOFJOB	; Release control, await next mark
+
+; Crew selected PROCEED - accept the state vector correction
+; Complete the Kalman filter cycle with INCORP2
+
 R23.7		TC	INTPRET
-R23.8		SET	CALL
-			VEHUPFLG
-			INCORP2
+R23.8		SET	CALL		; Set vehicle update flag
+			VEHUPFLG	; Indicates state vector was updated
+			INCORP2		; Complete incorporation cycle
 		EXIT
-R23.END		TC	GOTOPOOH
+R23.END		TC	GOTOPOOH	; Return to P00 idle program
 
 # Page 627
-R23.10		TC	FALTON
-		TC	P23.06
-HORIZ		STQ	SETPD
-			SRRETURN
-			0
+
+; ============================================================================
+; R23.10 - RESTART ENTRY POINT FOR OPTICS POSITIONING
+;
+; This entry point is used when P23 is restarted after an interruption
+; (e.g., priority program execution, alarm condition). The FALTON call
+; enables the fail light system before resuming optics positioning.
+; ============================================================================
+
+R23.10		TC	FALTON		; Enable fail light monitoring
+		TC	P23.06		; Resume optics positioning sequence
+
+; ============================================================================
+; HORIZ - HORIZON MEASUREMENT GEOMETRY COMPUTATION
+;
+; This subroutine computes the horizon-relative coordinate system for
+; measurements where the sextant is pointed at the Earth or Moon horizon
+; rather than at a specific target spacecraft or landmark.
+;
+; Horizon measurements are used for:
+; 1. Altitude determination above Earth/Moon surface
+; 2. Spacecraft attitude verification using local vertical reference
+; 3. Navigation updates when no other targets are available
+;
+; The computation transforms the optical axis orientation (AXO, AYO, AZO)
+; into a horizon-referenced frame accounting for the spacecraft attitude
+; and the gravitational field direction.
+; ============================================================================
+
+HORIZ		STQ	SETPD		; Store return address
+			SRRETURN	; Save subroutine return location
+			0		; Set push-down list pointer to 0
+
+; Build horizon reference vector components
+; The horizon plane is perpendicular to the local vertical (radius vector
+; from planet center to spacecraft). The optical axis components (AXO, AYO)
+; define the line-of-sight in navigation base coordinates.
+
 		DLOAD	PDDL		# PUSH 0-1 = -AYO SCALED B0
-			-AYO
-			AXO
+			-AYO		; Negative Y-axis component
+			AXO		; X-axis optical component
 		PDDL	PDVL		# PUSH 2-3 = +AX SCALED B0
-			DPPOSMAX
-			US
-		VXV	UNIT
+			DPPOSMAX	; Maximum positive value (placeholder)
+			US		; Unit spacecraft position vector
+		VXV	UNIT		; Cross product to get perpendicular
 			RZC
 		STOVL	UBAR2
 		VXV	UNIT		# PUSH UP
@@ -3179,11 +3977,18 @@ HORIZ		STQ	SETPD
 			0		# UBAR1 DOT UZ
 		STCALL	ALPHAV +4
 			GETERAD
+; Calculate horizon altitude parameters.
+; BH = planet radius at spacecraft position + horizon altitude
+; AH = Earth equatorial radius + horizon altitude
 		DAD	PDDL		# MPAC HAS RADIUS OF FISCHER ELLIPSOID
 			HORIZALT	# PUSH 0-1 = BH SCALED B29
 			AEARTH
 		DAD	PUSH		# PUSH 2-3 = AH B29
 			HORIZALT
+
+; Transform position and unit vectors into horizon reference frame.
+; RH = horizon position vector in UBAR0 frame
+; USH = unit sight vector in UBAR0 frame
 HORIZ.1		VLOAD	MXV
 			RZC		# B29
 			UBAR0		# B1
@@ -3195,12 +4000,15 @@ HORIZ.1		VLOAD	MXV
 			2		# AH
 		STODL	34D
 			4		# XH
+
+; Calculate horizon geometry parameter A = (XH/AH)² + (YH/AH)²
+; This determines intersection with ellipsoidal horizon surface.
 		CALL
 			DIVIDE
 		SR*	DMP
 			8D,1		# NOW SCALED B9
 			MPAC
-		STODL	30D
+		STODL	30D		; Store (XH/AH)² term
 			0
 # Page 628
 		STODL	34D
@@ -3210,9 +4018,12 @@ HORIZ.1		VLOAD	MXV
 		SR*	DMP
 			8D,1		# B9
 			MPAC		# B18
+
+; A = (XH/AH)² + (YH/AH)²  represents squared horizontal distance parameter
+; If A >= 1, horizon is visible; if A < 1, spacecraft is below horizon plane
 		DAD	PUSH		# PUSH 16-17 =A SCALED B18
 			30D
-		DSU	SQRT
+		DSU	SQRT		; SQRT(A-1) gives horizon distance factor
 			1.0B18
 		PDDL			# PUSH 18-19 SQRT(A-1) B9
 			16D
@@ -3234,8 +4045,12 @@ HORIZ.1		VLOAD	MXV
 			DIVIDE
 		SR*
 			8D,1
-		STODL	28D
+		STODL	28D		; Store SQRT(A-1)/A for later use
 			0		# BH
+
+; Calculate horizon vector parameters ALPHA and BETA.
+; These define the two possible horizon intersection points in the
+; horizontal plane (tangent points to the ellipsoidal surface).
 		STODL	34D
 			2		# AH
 		CALL
@@ -3245,7 +4060,7 @@ HORIZ.1		VLOAD	MXV
 			28D		# SQRT(A-1)/A
 		DMP	SL1
 			6		# YH
-		PDDL
+		PDDL			; PUSH 24-25 = ALPHA
 			2		# AH
 		STODL	34D
 			0
@@ -3255,15 +4070,20 @@ HORIZ.1		VLOAD	MXV
 			0,1
 # Page 629
 			28D		# SQRT (A-1)/A
-		DMP	SL1
+		DMP	SL1		; BETA = (BH/AH)*(SQRT(A-1)/A)*XH
 			4		# XH
+; Compute two candidate horizon vectors by combining position components
+; with ALPHA and BETA parameters. These represent the two tangent points
+; where the line of sight grazes the horizon ellipsoid.
+; Candidate 1: X1 = XH/A + ALPHA, Y1 = YH/A - BETA
+; Candidate 2: X2 = XH/A - ALPHA, Y2 = YH/A + BETA
 		PDDL	DAD
 			20D		# XH/A
 			24D		# ALPHA
 		PDDL	DSU
 			22D		# YH/A
 			26D		# BETA
-		PUSH	SETPD
+		PUSH	SETPD		; Save Candidate 1, reset PD
 			16D
 		DLOAD	DSU
 			20D		# XH/A
@@ -3275,141 +4095,198 @@ HORIZ.1		VLOAD	MXV
 			ZEROVECS
 		STOVL	32D		# ZERO THIRD COMP. OF T-0 VECTOR
 			28D
-		VSU	UNIT
+
+; Select correct horizon vector by evaluating which candidate (T0 or T1)
+; provides the best viewing angle. Calculate unit vectors from spacecraft
+; to each horizon point, then take dot product with sight vector USH.
+; The candidate with the larger dot product is closer to the sight line.
+		VSU	UNIT		; T0 - RH, then normalize
 			4		# RH VECTOR
-		DOT	PDVL		# PUSH 22-23 A-SUB-ZERO
+		DOT	PDVL		# PUSH 22-23 A-SUB-ZERO = (T0-RH)/|T0-RH| . USH
 			10D		# USH VECTOR
 			16D		# T1 VECTOR
-		VSU	UNIT
+		VSU	UNIT		; T1 - RH, then normalize
 			4		# RH VECTOR
-		DOT	PUSH		# PUSH 24-25 A-SUB-ONE
+		DOT	PUSH		# PUSH 24-25 A-SUB-ONE = (T1-RH)/|T1-RH| . USH
 			10D
-		BDSU	BMN
+		BDSU	BMN		; Compare A-SUB-ONE vs A-SUB-ZERO
 			22D		# A-SUB-ZERO
-			HORIZ.3
-		BON
+			HORIZ.3		; If A-SUB-ONE < A-SUB-ZERO, use T0
+		BON			; Check NORFHOR flag
 			NORFHOR
 			HORIZ.4
-HORIZ.2		VLOAD	GOTO
+; Branch logic based on comparison results and NORFHOR flag state.
+; HORIZ.2: Select T0 vector (first candidate)
+; HORIZ.3: Conditional branch based on NORFHOR flag
+; HORIZ.4: Select T1 vector (second candidate)
+; HORIZ.5: Transform selected vector and return
+HORIZ.2		VLOAD	GOTO		; Use T0 as horizon vector
 			28D		# T-0 VECTOR
 			HORIZ.5
-HORIZ.3		BON	GOTO
+HORIZ.3		BON	GOTO		; NORFHOR on? Use T0, else use T1
 			NORFHOR
 			HORIZ.2
 			HORIZ.4
-HORIZ.4		VLOAD
+HORIZ.4		VLOAD			; Use T1 as horizon vector
 			16D		# T1 VECTOR
-HORIZ.5		VXM	VSL1
-			UBAR0
-		GOTO
+HORIZ.5		VXM	VSL1		; Transform to desired coordinate frame
+			UBAR0		; via UBAR0 matrix
+		GOTO			; Return to caller
 			SRRETURN
+; HORIZ.6: Initialize horizon calculation with Moon radius.
+; This entry point loads the lunar radius and branches to main calculation.
 HORIZ.6		DLOAD	PUSH
 # Page 630
-			RADMOON
-		PUSH	GOTO
+			RADMOON		; Load Moon radius
+		PUSH	GOTO		; Push twice (for BH and CH) and continue
 			HORIZ.1
-DIVIDE		NORM	SR1
-			X1
-		STODL	36D
-			34D
-		NORM	BDDV
+
+; DIVIDE: Utility subroutine for normalized division of two values.
+; Normalizes both dividend (34D) and divisor (36D) to maximize precision,
+; then performs division and adjusts result scaling based on normalization.
+; Returns quotient with exponent adjustment via RVQ.
+DIVIDE		NORM	SR1		; Normalize dividend, shift right 1
+			X1		; X1 holds normalization count
+		STODL	36D		; Store normalized dividend
+			34D		; Load divisor
+		NORM	BDDV		; Normalize divisor and divide
+			S1		; S1 holds normalization count
+			36D		; Divide by normalized dividend
+		XSU,1	RVQ		; Adjust exponent: subtract X1 from S1
 			S1
-			36D
-		XSU,1	RVQ
-			S1
+; ============================================================================
+; RECT.1: Rectangular coordinate transformation routine
+; Handles CSM state vector scaling for different planet/moon scenarios.
+; Sets ZMEASURE flag based on whether measurement planet matches primary planet.
+; Adjusts scaling of position (RZC) and velocity (VZC) vectors appropriately.
+; ============================================================================
 RECT.1		BOFF	AXT,2		# SR TO SET ZMEASURE = 0 IF MEASUREMENT
 			CMOONFLG	#   PLANET AND PRIMARY PLANET ARE THE SAME.
 			RECT.3		#     OTHERWISE = 1
-		DEC	-2
+		DEC	-2		; Index=-2 for different scaling path
 		BOFF			#       VEC. AND SCALE B29 AND B7
-			LUNAFLAG
+			LUNAFLAG	; Check if lunar operations active
 			RECT.4
-RECT.2		CLEAR	GOTO
+RECT.2		CLEAR	GOTO		; Clear ZMEASURE (same planet)
 			ZMEASURE
 			RECT.5
-RECT.3		AXT,2	BOFF
+RECT.3		AXT,2	BOFF		; Index=0 for same-planet case
 			0
 			LUNAFLAG
 			RECT.2
-RECT.4		SET
+RECT.4		SET			; Set ZMEASURE (different planets)
 			ZMEASURE
-RECT.5		VLOAD	VSR7
+RECT.5		VLOAD	VSR7		; Load CSM position delta
 			DELTACSM	# SCALED B22 OR B18
-		VSR*	VAD
+		VSR*	VAD		; Additional scaling via index register
 			0,2
 			RCVCSM		# SCALED B29 OR B27
-		VSR*
+		VSR*			; Scale CSM position vector
 			0,2
-		STOVL	RZC		# NOW SCALED B29
-			NUVCSM		# SCALED B3 OR B-1
-		VSR4	VSR*
+		STOVL	RZC		# NOW SCALED B29 - Store as position
+			NUVCSM		# SCALED B3 OR B-1 - Load velocity delta
+		VSR4	VSR*		; Shift right 4, then by index
 			0,2
-		VAD	VSR*
+		VAD	VSR*		; Add CSM velocity and scale
 			VCVCSM		# SCALED B7 OR B5
 			0,2
-		STORE	VZC		# NOW SCALED B7
-		RVQ
+		STORE	VZC		# NOW SCALED B7 - Store as velocity
+		RVQ			; Return to caller
 ONE/C		2DEC*	.333564049 E-6 B+21*
 
+; ============================================================================
+; CONSTANTS SECTION: Physical parameters and fixed values for P20-P25
+; ============================================================================
+
+; Physical planetary constants scaled for AGC fixed-point arithmetic
 AEARTH		2DEC	6378166 B-29	# A AXIS OF EARTH (METERS B-29)
 
 RADMOON		2DEC	1738090 B-29	# RADIUS MOON IN METERS
 
 # Page 631
 
-TRUN19		OCT	01604
-TRUN19A		OCT	00000
-1.0B18		2DEC	1.0 B-18
+; Truncation and scaling constants for numerical precision management
+TRUN19		OCT	01604		; Truncation constant for B-19 scaling
+TRUN19A		OCT	00000		; Extended truncation value
+1.0B18		2DEC	1.0 B-18	; Unity scaled at B-18
 
-VARSUBL		DEC	0
-VARSUBL3	2DEC*	3.4299040 E+6 B-26*
+; Variable subroutine constants for measurement processing
+VARSUBL		DEC	0		; Variance subroutine selector
+VARSUBL3	2DEC*	3.4299040 E+6 B-26*	; Variance calculation parameter
 
-TRUNVAR		2DEC	2.5 E-9 B+18
+TRUNVAR		2DEC	2.5 E-9 B+18	; Truncation variance threshold
 
-V6N49		VN	0649
-V05N70		VN	0570
-V05N71		VN	0571
-OCT00077	OCT	00077
-V50N25P		OCT	00202
-SPSIX		OCT	00006
+; DSKY verb/noun combinations for crew interface
+V6N49		VN	0649		; Display format V06N49
+V05N70		VN	0570		; Display format V05N70
+V05N71		VN	0571		; Display format V05N71
+OCT00077	OCT	00077		; Octal constant for bit masking
+V50N25P		OCT	00202		; Program selection constant
+SPSIX		OCT	00006		; SPS-related constant
+
+; Tracking axis orientation vector for optics alignment
+; Defines centerline of sextant/scanning telescope in CSM coordinates
 JCAXIS		2DEC	.2688190620	# 1/2(SIN 32.523 DEG)  TRACK AXIS
 
-		2DEC	0
+		2DEC	0		; Zero component
 
 		2DEC	.4215878460	# 1/2(COS 32.523 DEG)
 
-R60ADRS		CADR	R60CALL +3
-NEG37		DEC	-37
-BITS7-9		OCT	700
-BITS4-6		OCT	70
+; Miscellaneous program addresses and bit patterns
+R60ADRS		CADR	R60CALL +3	; Entry point for R60 routine
+NEG37		DEC	-37		; Negative constant for calculations
+BITS7-9		OCT	700		; Bit mask for bits 7-9
+BITS4-6		OCT	70		; Bit mask for bits 4-6
 		SETLOC	RT53
 		BANK
-LOWMEMRY	VLOAD*	RVQ
-			CATLOG,1
+
+; ============================================================================
+; LOWMEMRY: Vector loading utility for catalog access
+; Loads vector from indexed catalog location using interpreter.
+; Used for accessing star catalog or other vector tables.
+; ============================================================================
+LOWMEMRY	VLOAD*	RVQ		; Load indexed vector from catalog, return
+			CATLOG,1	; Index register 1 selects catalog entry
 		BANK	37
 		SETLOC	P23S1
 		BANK
+
+; ============================================================================
+; LDPLANET: Load planet vector for navigation when stars unavailable
+; Purpose: Allows vector to planet to be stored in STARSAV2 when stored
+;          stars are not visible during optical navigation operations.
+; Context: During P23 cislunar navigation, crew may select planet vector
+;          as alternative sighting target if preferred stars are obscured.
+; EBANK=5 requirement for STAR data structure compatibility.
+; ============================================================================
 LDPLANET	EXIT			# KEEP THIS OPEN SUBROUTINE IN EBANK=5
 		CAF	VNPLAN23	# BECAUSE STAR IS EBANK=5
 		TC	BANKCALL	# LDPLANET ALLOWS VECTOR TO PLANET TO BE
 		CADR	GOFLASH		# STORED IN STARSAV2 IF STORED STARS ARE
-		TC	GOTOPOOH	# NOT VISIBLE
-		TC	+2
-		TC	-5
-		TC	INTPRET
-		VLOAD
+		TC	GOTOPOOH	# NOT VISIBLE - Terminate on POOH request
+		TC	+2		; Proceed past termination point
+		TC	-5		; Loop back for retry
+		TC	INTPRET		; Enter interpreter for vector operations
+		VLOAD			; Load planet vector
 			STARSAV3
-		VXSC	UNIT
-			1/SQR3
-		STORE	STARSAV2
+		VXSC	UNIT		; Scale and normalize to unit vector
+			1/SQR3		; 1/sqrt(3) scaling factor
+		STORE	STARSAV2	; Store as star substitute
 		GOTO
-			P23.31
-VNPLAN23	VN	0688
+			P23.31		; Continue P23 processing
+VNPLAN23	VN	0688		; V06N88 for planet vector display
 		BLOCK	02
+
+; ============================================================================
+; GOTOV56: P20 program termination via V56 (terminate tracking)
+; Purpose: P20 terminates by calling V56 instead of standard GOTOPOOH.
+; Context: Provides clean exit from rendezvous tracking operations,
+;          ensuring proper cleanup of tracking flags and display state.
+; ============================================================================
 GOTOV56		EXTEND			# P20 TERMINATES BY GOTOV56 INSTEAD OF
 # Page 632
-		DCA	VB56CADR	#	GOTOPOOH
-		TCF	SUPDXCHZ
+		DCA	VB56CADR	#	GOTOPOOH - Load V56 address
+		TCF	SUPDXCHZ	; Transfer control to V56 handler
 		EBANK=	WHOCARES
 VB56CADR	2CADR	TRACKTRM
 
@@ -3420,110 +4297,141 @@ VB56CADR	2CADR	TRACKTRM
 		SETLOC	ENDPINS1
 		BANK
 		COUNT*	$$/EXTVB
-V67CALL		TC	INTPRET
-		CALL
-			V67WW
-		EXIT
-V06N99DS	CAF	V06N99A
-		TC	BANKCALL
-		CADR	GOXDSPF
-		TCF	ENDEXT
-		TC	V06N9933
-		TC	V06N99DS
-V06N9933	TC	INTPRET
-		SLOAD	BHIZ		# IF R3 OF V67 = 0 EXIT
-			WWOPT
-			+3
-		GOTO
-			V6N99INP
-		EXIT
-		TCF	ENDEXT
-V6N99INP	LXA,1	LXA,2
-			WWPOS
-			WWVEL
-		SLOAD	DSU
-			WWOPT
-			V67DEC2
-		BHIZ	BPL
-			V67WORB
-			V67WMID
-		SXA,1	SXA,2
-			WRENDPOS
-			WRENDVEL
-		GOTO
-			V67EXITX
-V67WORB		SXA,1	SXA,2
-			WORBPOS
-			WORBVEL
-		GOTO
-			V67EXITX
-V67WMID		SXA,1	SXA,2
-# Page 633
-			WMIDPOS
-			WMIDVEL
-V67EXITX	CLEAR	CLEAR
-			ORBWFLAG
-			RENDWFLG
-		EXIT
-		TCF	ENDEXT
-V67WW		STQ	BOV
-			S2
-			+1
-		CALL
-			INTSTALL
-		SSP	DLOAD
-			S1
-		DEC	6
-			ZEROVECS
-		STORE	WWPOS
-		STORE	WWVEL
-		STORE	WWOPT
-		AXT,1
-		DEC	36
-NXPOSVEL	VLOAD*	VSQ
-			W +36D,1
-		DAD
-			WWPOS
-		STORE	WWPOS
-		VLOAD*	VSQ
-			W +90D,1
-		DAD
-			WWVEL
-		STORE	WWVEL
-		TIX,1	SQRT
-			NXPOSVEL
-		STODL	WWVEL
-			WWPOS
-		SQRT
-		STORE	WWPOS
-		BOV	GOTO
-			+2
-			V67XXX
-		DLOAD
-			DPPOSMAX
-		STORE	WWPOS
-		STORE	WWVEL
-V67XXX		DLOAD	DSU
-			WWPOS
-			FT99999
-		BMN	DLOAD
-			+3
-			FT99999
-# Page 634
-		STORE	WWPOS
-		LXA,1	SXA,1
-			S2
-			QPRET
-		EXIT
-		TC	POSTJUMP
-		CADR	INTWAKE
-WWPOS		=	RANGE
-WWVEL		=	RRATE
-WWOPT		=	RTHETA
-V06N99A		VN	0699
-FT99999		2DEC	30479 B-19
 
-V67DEC2		2DEC	2 B-14
+; ============================================================================
+; V67CALL: W-matrix (state vector weighting) display and selection routine
+; Purpose: Extended verb V67 allows crew to display and modify state vector
+;          weighting factors for navigation updates during rendezvous operations.
+; Context: Crew uses V67N99 to select which state vector (orbital, mid-course,
+;          or rendezvous) receives updates from optical or radar measurements.
+; ============================================================================
+V67CALL		TC	INTPRET		; Enter interpreter for V67 processing
+		CALL
+			V67WW		; Call W-matrix computation
+		EXIT
+V06N99DS	CAF	V06N99A		; Display V06N99 format
+		TC	BANKCALL
+		CADR	GOXDSPF		; Go to extended verb display flasher
+		TCF	ENDEXT		; Terminate on POOH request
+		TC	V06N9933	; Process V06N99 input
+		TC	V06N99DS	; Loop back for new display
+V06N9933	TC	INTPRET		; Process crew input
+		SLOAD	BHIZ		# IF R3 OF V67 = 0 EXIT
+			WWOPT		; Load W-matrix option selector
+			+3		; Branch if zero (exit)
+		GOTO
+			V6N99INP	; Continue input processing
+		EXIT
+		TCF	ENDEXT		; Terminate extended verb
+; ============================================================================
+; V6N99INP: W-matrix input processor
+; Determines which state vector receives updates based on crew V67 input.
+; Options: Orbital W-matrix, Mid-course W-matrix, or Rendezvous W-matrix.
+; Stores index values for position and velocity weighting factors.
+; ============================================================================
+V6N99INP	LXA,1	LXA,2		; Load current W indices
+			WWPOS		; Position weighting index
+			WWVEL		; Velocity weighting index
+		SLOAD	DSU		; Load option and compare
+			WWOPT		; V-matrix option selector
+			V67DEC2		; Constant for option decode
+		BHIZ	BPL		; Branch on option value
+			V67WORB		; Option 0: Orbital W-matrix
+			V67WMID		; Option 1+: Mid-course W-matrix
+		SXA,1	SXA,2		; Option 2: Rendezvous W-matrix
+			WRENDPOS	; Store rendezvous position index
+			WRENDVEL	; Store rendezvous velocity index
+		GOTO
+			V67EXITX
+V67WORB		SXA,1	SXA,2		; Select orbital W-matrix
+			WORBPOS		; Store orbital position index
+			WORBVEL		; Store orbital velocity index
+		GOTO
+			V67EXITX
+V67WMID		SXA,1	SXA,2		; Select mid-course W-matrix
+# Page 633
+			WMIDPOS		; Store mid-course position index
+			WMIDVEL		; Store mid-course velocity index
+V67EXITX	CLEAR	CLEAR		; Clear W-matrix selection flags
+			ORBWFLAG	; Orbital W-matrix flag
+			RENDWFLG	; Rendezvous W-matrix flag
+		EXIT
+		TCF	ENDEXT		; Return to extended verb handler
+; ============================================================================
+; V67WW: W-matrix magnitude computation for crew display
+; Computes the RMS (root-mean-square) magnitude of W-matrix position and
+; velocity weighting factors for V67 display. Stalls integration during
+; computation to ensure consistent state vector data. Used during rendezvous
+; navigation to show crew the confidence level of state vector estimates.
+; ============================================================================
+V67WW		STQ	BOV		; Save return address and set overflow trap
+			S2		; Return address storage
+			+1		; Overflow handler address
+		CALL			; Stall integration for consistent data
+			INTSTALL	; Integration stall routine
+		SSP	DLOAD		; Initialize loop counter and zero vector
+			S1
+		DEC	6		; 6 iterations for W-matrix elements
+			ZEROVECS	; Load zero vector
+		STORE	WWPOS		; Initialize position magnitude accumulator
+		STORE	WWVEL		; Initialize velocity magnitude accumulator
+		STORE	WWOPT		; Initialize option accumulator
+		AXT,1			; Set index for W-matrix access
+		DEC	36		; Start at element 36
+;
+; Loop through W-matrix computing sum of squares for position and velocity
+; components. W-matrix stores covariance weighting factors used in state
+; vector updates. Higher magnitudes indicate higher confidence.
+;
+NXPOSVEL	VLOAD*	VSQ		; Load W position vector and square
+			W +36D,1	; W-matrix position elements (indexed)
+		DAD			; Add to running sum
+			WWPOS		; Position magnitude accumulator
+		STORE	WWPOS		; Update position sum
+		VLOAD*	VSQ		; Load W velocity vector and square
+			W +90D,1	; W-matrix velocity elements (indexed)
+		DAD			; Add to running sum
+			WWVEL		; Velocity magnitude accumulator
+		STORE	WWVEL		; Update velocity sum
+		TIX,1	SQRT		; Decrement index and loop if not zero
+			NXPOSVEL	; Next position/velocity pair
+		STODL	WWVEL		; Store final velocity magnitude and load position
+			WWPOS		; Position magnitude sum
+		SQRT			; Take square root for RMS value
+		STORE	WWPOS		; Store final position magnitude
+		BOV	GOTO		; Check for overflow
+			+2		; Skip to overflow handler
+			V67XXX		; No overflow, continue
+		DLOAD			; Overflow occurred, load maximum value
+			DPPOSMAX	; Maximum displayable value
+		STORE	WWPOS		; Clamp position to maximum
+		STORE	WWVEL		; Clamp velocity to maximum
+V67XXX		DLOAD	DSU		; Load position magnitude and compare to display limit
+			WWPOS
+			FT99999		; Maximum display value (99,999 feet)
+		BMN	DLOAD		; Branch if within display range
+			+3		; Within range, skip limiting
+			FT99999		; Load limit value
+# Page 634
+		STORE	WWPOS		; Clamp to display maximum
+		LXA,1	SXA,1		; Restore return address
+			S2		; Load saved return
+			QPRET		; Store for return
+		EXIT			; Exit interpreter
+		TC	POSTJUMP	; Return via postjump
+		CADR	INTWAKE		; Resume integration
+; W-matrix display variable equates (share storage with range/rate variables)
+WWPOS		=	RANGE		; W-matrix position magnitude (feet)
+WWVEL		=	RRATE		; W-matrix velocity magnitude (feet/second)
+WWOPT		=	RTHETA		; W-matrix option selector
+
+; V67 display verb/noun code
+V06N99A		VN	0699		; Verb 06, Noun 99 for W-matrix display
+
+; V67 display limits and constants
+FT99999		2DEC	30479 B-19	; Maximum display value (99,999 feet scaled)
+
+V67DEC2		2DEC	2 B-14		; Constant 2 for option decode
 
 		SBANK=	LOWSUPER
 
