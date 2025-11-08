@@ -29,6 +29,29 @@
 #	Assemble revision 001 of AGC program LMY99 by NASA 2021112-061
 #	16:27 JULY 14, 1969
 
+; ============================================================================
+; FILE: PHASE_TABLE_MAINTENANCE.agc
+; MODULE: Phase Table Management
+; MISSION PHASE: All phases (launch/earth-orbit/trans-lunar/lunar-orbit/
+;                descent/landing/ascent/rendezvous/trans-earth/re-entry)
+;
+; TL;DR: Manages program phase state for AGC restart protection system.
+;        Maintains phase tables that allow the computer to restart mission
+;        programs at safe points after power transients or system resets.
+;        Provides PHASCHNG routine for updating phase information and
+;        NEWMODEX/NEWMODEA for displaying current program mode on DSKY.
+;
+; COMMENT-ONLY READERS: This code ensures that if the guidance computer
+;        experiences a restart during critical mission operations (like
+;        lunar landing), it can resume at a safe checkpoint rather than
+;        starting over from scratch. Think of it as a sophisticated save
+;        system for the spacecraft's computer.
+; CODE-ALONG READERS: Implements three types of phase changes (Type A, B, C)
+;        encoded in octal parameters. Integrates with RESTART_TABLES.agc
+;        for actual restart data and EXECUTIVE.agc for job scheduling.
+;        Critical for 1202 alarm recovery during Apollo 11 descent.
+; ============================================================================
+
 # Page 1294
 # SUBROUTINE TO UPDATE THE PROGRAM NUMBER DISPLAY ON THE DSKY.
 
@@ -37,54 +60,98 @@
 		SETLOC	FFTAG1
 		BANK
 
-NEWMODEX	INDEX	Q		# UPDATE MODREG.  ENTRY FOR MODE IN FIXED.
-		CAF	0
-		INCR	Q
+; ============================================================================
+; MODE REGISTER UPDATE AND DISPLAY ROUTINES
+;
+; These routines update the MODREG (mode register) which holds the current
+; program number (P00-P99), and trigger the DSKY display to show the new
+; program mode to the crew. During Apollo 11's descent, the crew watched
+; program numbers transition from P63 (braking phase) through P64 (approach)
+; to P66 (landing) on their DSKY displays.
+; ============================================================================
 
-NEWMODEA	TS	MODREG		# ENTRY FOR MODE IN A.
-MMDSPLAY	CAF	+3		# DISPLAY MAJOR MODE.
-PREBJUMP	LXCH	BBANK		# PUTS BBANK IN L
-		TCF	BANKJUMP	# PUTS Q INTO A
-		CADR	SETUPDSP
+NEWMODEX	INDEX	Q		# UPDATE MODREG.  ENTRY FOR MODE IN FIXED.
+		CAF	0		# Load mode number from location after TC
+		INCR	Q		# Increment Q to skip mode parameter
+
+; Mode number now in A register. Store it and display to crew.
+NEWMODEA	TS	MODREG		# ENTRY FOR MODE IN A. Store program mode
+MMDSPLAY	CAF	+3		# DISPLAY MAJOR MODE. Prepare for display
+PREBJUMP	LXCH	BBANK		# PUTS BBANK IN L. Save bank register
+		TCF	BANKJUMP	# PUTS Q INTO A. Jump with bank switch
+		CADR	SETUPDSP	# Address of display setup routine
 
 # RETURN TO CALLER +3 IF MODE = THAT AT CALLER +1.  OTHERWISE RETURN TO CALLER +2.
 
-CHECKMM		INDEX	Q
-		CS	0
-		AD	MODREG
-		EXTEND
-		BZF	Q+2
-		TCF	Q+1		# NO MATCH
+; The CHECKMM routine allows program code to verify the current mode before
+; taking action. For example, during landing the computer checks whether
+; P66 (landing mode) is active before processing certain radar data.
 
-TCQ		=	Q+2 +1
+CHECKMM		INDEX	Q		# Check if current mode matches expected
+		CS	0		# Load complement of expected mode
+		AD	MODREG		# Add current mode (subtract via complement)
+		EXTEND			# Extended instruction follows
+		BZF	Q+2		# Branch if zero (mode match) to Q+2
+		TCF	Q+1		# NO MATCH - return to caller +2
+
+TCQ		=	Q+2 +1		# Symbolic definition: Q+3 return address
 
 		BANK	14
 		SETLOC	PHASETAB
 		BANK
 
 		COUNT*	$$/PHASE
-SETUPDSP	INHINT
-		DXCH	RUPTREG1	# SAVE CALLER'S RETURN 2CADR
-		CAF	PRIO30		# 	EITHER A TASK OR JOB CAN COME TO
-		TC	NOVAC		#	NEWMODE X
-		EBANK=	MODREG
-		2CADR	DSPMMJOB
+; SETUPDSP schedules a display job to update the DSKY major mode display.
+; This runs asynchronously via NOVAC so the calling program doesn't have to
+; wait for display hardware updates. The crew sees the new program number
+; appear on their DSKY within a fraction of a second.
 
-		DXCH	RUPTREG1
-		RELINT
-		DXCH	Z		# RETURN
+SETUPDSP	INHINT			# Disable interrupts during setup
+		DXCH	RUPTREG1	# SAVE CALLER'S RETURN 2CADR for job
+		CAF	PRIO30		# Priority 30 for display job
+		TC	NOVAC		# Schedule display job (no VAC area needed)
+		EBANK=	MODREG		# Set erasable bank to access MODREG
+		2CADR	DSPMMJOB	# Address of display job routine
 
-DSPMMJOB	EQUALS	DSPMMJB
+		DXCH	RUPTREG1	# Restore caller's return address
+		RELINT			# Re-enable interrupts
+		DXCH	Z		# RETURN to caller
+
+DSPMMJOB	EQUALS	DSPMMJB		# Display job defined elsewhere
 
 		BLOCK	02
 		SETLOC	FFTAG1
 		BANK
 
 # Page 1295
+; ============================================================================
+; PHASCHNG - PRIMARY RESTART PHASE CHANGE ROUTINE
+;
+; PHASCHNG is the heart of the AGC's restart protection system. During
+; Apollo 11's descent, when the 1202 program alarm occurred due to computer
+; overload, this system allowed the AGC to restart gracefully and continue
+; the landing rather than aborting. Without PHASCHNG, every computer restart
+; would have forced a mission abort.
+;
+; The routine provides three distinct ways to update phase information:
+; Type A (fixed), Type B (variable+fixed), and Type C (variable). Each
+; "group" (1-7) represents a major program area, and each "phase" within
+; a group represents a specific checkpoint within that program.
+; ============================================================================
+
 # PHASCHNG IS THE MAIN WAY OF MAKING PHASE CHANGES FOR RESTARTS.  THERE ARE THREE FORMS OF PHASCHNG, KNOWN AS TYPE
 # A, TYPE B, AND TYPE C.  THEY ARE ALL CALLED AS FOLLOWS, WHERE OCT XXXXX CONTAINS THE PHASE INFORMATION,
 #		TC	PHASCHNG
 #		OCT	XXXXX
+
+; UNDERSTANDING RESTART GROUPS AND PHASES:
+;
+; During a mission, multiple programs run concurrently (guidance, navigation,
+; display updates). Each major program area is assigned a "group" (1-7).
+; Within each group, execution progresses through numbered phases (0-127).
+; When a restart occurs, the AGC consults the phase tables to determine
+; what jobs, tasks, or longcalls should be restarted for each active group.
+
 # TYPE A IS CONCERNED WITH FIXED PHASE CHANGES, THAT IS, PHASE INFORMATION THAT IS STORED PERMANENTLY.  THESE
 # OPTIONS ARE, WHERE G STANDS FOR A GROUP AND .X FOR THE PHASE,
 #	G.0		INACTIVE, WILL NOT PERMIT A GROUP G RESTART
@@ -93,6 +160,12 @@ DSPMMJOB	EQUALS	DSPMMJB
 #			LONGCALL TO BE RESTARTED.
 #	G.ODD NOT .1	A SINGLE TABLE RESTART, CAN CAUSE EITHER A JOB, TASK, OR LONGCALL RESTART.
 #
+; TYPE A PHASE CHANGES - Fixed restart checkpoints:
+; G.0 = Group inactive (no restart permitted) - used when program completes
+; G.1 = Reactivate last display - ensures crew sees current program state
+; G.EVEN = Double table (two restart entries) - complex restart scenarios
+; G.ODD (not .1) = Single table (one restart entry) - simple restart point
+
 # THIS INFORMATION IS PUT INTO THE OCTAL WORD AFTER TC PHASCHNG AS FOLLOWS
 #	TL0 00P PPP PPP GGG
 # WHERE EACH LETTER OR NUMBER STANTS FOR A BIT.  THE G'S STAND FOR THE GROUP, OCTAL 1-7, THE P'S FOR THE PHASE,
@@ -225,15 +298,33 @@ DSPMMJOB	EQUALS	DSPMMJB
 
 		TCF	PHASJUMP
 
+; ============================================================================
+; TRANSITION: From 2PHSCHNG initialization to main PHASCHNG processing
+;
+; The 2PHSCHNG routine has extracted the first octal parameter and stored
+; group/phase information in temporary variables. Now control merges with
+; the main PHASCHNG entry point to process the phase change request. During
+; restart operations, this code determines which jobs, tasks, or programs
+; should be restarted and with what priority levels.
+; ============================================================================
+
 PHASCHNG	INHINT			# NORMAL PHASCHNG ENTRY POINT.
 		INDEX	Q
 		CA	0
 		INCR	Q
 PHSCHNGA	INHINT			# FIRST OCTAL PARAMETER IN A.
 # Page 1299
+; Store the octal phase parameter and mark this as a single PHASCHNG call
+; (not a 2PHSCHNG double phase change). The phase parameter encodes the
+; group number, phase information, and control bits for restart behavior.
 		TS	TEMPSW
 		CA	ONE
 		TS	TEMPSW2
+		
+; Transfer control to PHSCHNG2 in the switched erasable bank where phase
+; table storage occurs. This bank switching is necessary to access the
+; phase table arrays (PHASE1, -PHASE1, PHSPRDT1, PHSNAME1) which track
+; restart state for all seven restart groups.
 PHASJUMP	EXTEND
 		DCA	ADRPCHN2	# OFF TO SWITCHED BANK
 		DTCB
@@ -241,28 +332,50 @@ PHASJUMP	EXTEND
 		EBANK=	LST1
 ADRPCHN2	2CADR	PHSCHNG2
 
+; ============================================================================
+; ONEORTWO - Determine Phase Change Type and Process Parameters
+;
+; After storing phase information, control reaches this section which examines
+; control bits to determine if this is Type B or Type C phase change, whether
+; to use old or new priority values, and whether a 2CADR restart address is
+; explicitly provided. These variations allow PHASCHNG to support different
+; restart scenarios across the mission.
+; ============================================================================
+
 ONEORTWO	LXCH	TEMPBBCN
 		LXCH	BBANK
 		LXCH	TEMPBBCN
 
+; Check bit 13 to determine phase change type. If set, this is Type B which
+; has special priority handling. Otherwise it's Type C with inline parameters.
 		MASK	OCT14000	# SEE WHAT KIND OF PHASE CHANGE IT IS
 		CCS	A
 		TCF	CHECKB		# IT IS OF TYPE `B'.
 
+; For Type C, check bit 7 of phase value to see if new priority is provided
+; or if we should reuse the priority from the previous phase of this group.
 		CA	TEMPP
 		MASK	BIT7
 		CCS	A		# SHALL WE USE THE OLD PRIORITY
 		TCF	GETPRIO		# NO GET A NEW PRIORITY (OR DELTA T)
 
+; Reuse old priority (or delta-time) from PHSPRDT1 array for this restart
+; group. This maintains continuity when phase changes within same subsystem.
 OLDPRIO		NDX	TEMPG		# USE THE OLD PRIORITY (OR DELTA T)
 		CA	PHSPRDT1 -2
 		TS	TEMPPR
 
+; Check bit 8 of phase value to determine if explicit 2CADR is provided.
+; If bit 8 set, fetch 2CADR from inline parameter. Otherwise use caller's
+; return address as the restart entry point.
 CON1		CA	TEMPP		# SEE IF A 2CADR IS GIVEN
 		MASK 	BIT8
 		CCS	A
 		TCF	GETNEWNM
 
+; No explicit 2CADR provided. Use caller's return address (Q) and current
+; bank (BB) as the restart entry point. This is common for phase changes
+; within a single routine that wants to restart at the calling location.
 		CA	Q
 		TS	TEMPNM
 		CA	BB
@@ -270,18 +383,24 @@ CON1		CA	TEMPP		# SEE IF A 2CADR IS GIVEN
 		ROR	SUPERBNK
 		TS	TEMPBB
 
+; Transfer back to CON2 in switched bank to complete phase table updates.
 TOCON2		CA	CON2ADR		# BACK TO SWITCHED BANK
 		LXCH	TEMPBBCN
 		DTCB
 
 CON2ADR		GENADR	CON2
 
+; Fetch new priority (or delta-time) from inline parameter following the
+; TC PHASCHNG call. Increment Q to skip past this parameter for proper return.
 GETPRIO		NDX	Q		# DON'T CARE IF DIRECT OR INDIRECT
 		CA	0		# LEAVE THAT DECISION TO RESTARTS
 		INCR	Q		# OBTAIN RETURN ADDRESS
 # Page 1300
 		TCF	CON1 -1
 
+; Fetch explicit 2CADR (address and bank) from inline double-precision
+; parameter. This allows restart at arbitrary entry points for complex
+; phase transitions involving different subsystems or mission programs.
 GETNEWNM	EXTEND
 		INDEX	Q
 		DCA	0
@@ -311,18 +430,39 @@ BB		EQUALS	BBANK
 
 		EBANK=	PHSNAME1
 		COUNT*	$$/PHASE
+		
+; ============================================================================
+; PHSCHNG2 - Main Phase Change Processing Routine
+;
+; This routine executes in bank 14 with access to the phase table storage
+; arrays. It decodes the octal phase parameter into its component fields:
+; - Group number (bits 0-2): Identifies which restart group (1-7)
+; - Phase information (bits 3-9): Encodes the phase within the group
+; - Control bits (bits 10-15): Specify TBASE/LONGBASE setting and type
+;
+; The decoded information is stored in the phase tables to enable proper
+; restart behavior if a power failure or other restart condition occurs.
+; ============================================================================
+
 PHSCHNG2	LXCH	TEMPBBCN
+		
+; Extract group number (bits 0-2) by masking with OCT7 and doubling
+; to convert group number 1-7 into table index 2-14 (array stride of 2).
 		CA	TEMPSW
 		MASK	OCT7
 		DOUBLE
 		TS	TEMPG
 
+; Extract phase information (bits 3-9) by masking and scaling. The phase
+; value determines restart behavior: .0 = inactive, .1 = display restart,
+; .EVEN = double table restart, .ODD = single table restart.
 		CA	TEMPSW
 		MASK	OCT17770
 		EXTEND
 		MP	BIT12
 		TS	TEMPP
 
+; Extract control bits (bits 10-15) for TBASE/LONGBASE and type checking.
 		CA	TEMPSW
 		MASK	OCT60000
 		XCH	TEMPSW
@@ -330,15 +470,27 @@ PHSCHNG2	LXCH	TEMPBBCN
 		CCS	A
 # Page 1301
 		TCF	ONEORTWO
-
+		
+; Begin storing phase information into the phase table for this restart
+; group. The PHASE1 array maintains the current phase for each of the
+; seven restart groups, enabling the system to determine which jobs/tasks
+; to restart after a power failure or other restart condition.
 		CA	TEMPP		# START STORING THE PHASE INFORMATION
 		NDX	TEMPG
 		TS	PHASE1 -2
 
+; Check if this is a single PHASCHNG or a double 2PHSCHNG. For 2PHSCHNG,
+; TEMPSW2 will be zero and we need to store phase information for the second
+; restart group as well. This allows atomic updates of two restart groups,
+; critical when transitioning between major mission phases.
 BELOW1		CCS	TEMPSW2		# IS IT A PHASCHNG OR A 2PHSCHNG
 		TCF	BELOW2		# IT'S A PHASCHNG
 
 		TCF	+1		# IT'S A 2PHSCHNG
+		
+; For 2PHSCHNG, store the second group's phase information in -PHASE1 array.
+; The complement of TEMPP2 is stored to indicate the second phase is active.
+; This dual-phase mechanism allows coordinated restart of related subsystems.
 		CS	TEMPP2
 		LXCH	TEMPP2
 		NDX	TEMPG2
@@ -348,18 +500,27 @@ BELOW1		CCS	TEMPSW2		# IS IT A PHASCHNG OR A 2PHSCHNG
 		NOOP			# CAN'T GET HERE
 		TCF	BELOW2
 
+; Set TBASE for the second restart group using complement of current time.
+; This establishes timing reference for the second group's restart operations.
 		CS	TIME1
 		NDX	TEMPG2
 		TS	TBASE1 -2
 
+; Process control bits to determine if TBASE and/or LONGBASE should be set
+; for this restart group. TBASE provides timing reference for time-dependent
+; restarts, while LONGBASE supports extended mission phases like translunar
+; coast and lunar orbit operations.
 BELOW2		CCS	TEMPSW		# SEE IF WE SHOULD SET TBASE OR LONGBASE
 		TCF	BELOW3		# SET LONGBASE ONLY
 		TCF	BELOW4		# SET NEITHER
 
+; Set TBASE for this restart group to complement of current mission time.
+; Complement is used for AGC arithmetic conventions in time calculations.
 		CS	TIME1		# SET TBASE TO BEGIN WITH
 		NDX	TEMPG
 		TS	TBASE1 -2
 
+; Check if LONGBASE should also be set (both T-bit and L-bit enabled).
 		CA	TEMPSW		# SHALL WE NOW SET LONGBASE
 		AD	BIT14COM
 		CCS	A
@@ -367,34 +528,63 @@ BELOW2		CCS	TEMPSW		# SEE IF WE SHOULD SET TBASE OR LONGBASE
 BIT14COM	OCT	17777		# ***** CAN'T GET HERE *****
 		TCF	BELOW4		# NO WE NEED ONLY SET TBASE
 
+; Set LONGBASE to current double-precision mission time. LONGBASE provides
+; extended time reference for long-duration phases such as translunar coast,
+; lunar orbit operations, and transearth return. The double-precision TIME2
+; captures full mission elapsed time with higher resolution than TIME1.
 BELOW3		EXTEND			# SET LONGBASE
 		DCA	TIME2
 		DXCH	LONGBASE
 
+; Store complement of phase information in -PHASE1 array to complete phase
+; table update. The negative phase storage is used by restart logic to 
+; determine phase transitions and maintain restart protection during mission
+; operations. With phase tables updated, interrupts can be re-enabled safely.
 BELOW4		CS	TEMPP		# AND STORE THE FINAL PART OF THE PHASE
 		NDX	TEMPG
 		TS	-PHASE1 -2
 
+; Restore return address, re-enable interrupts, and return to caller using
+; DTCB (dual return to caller in bank). Phase change is now complete with
+; all restart tables properly updated.
 		CA	Q
 		LXCH	TEMPBBCN
 		RELINT
 		DTCB
 # Page 1302
+; ============================================================================
+; CON2 - Store Phase Information and Parameters
+;
+; This section completes phase table updates by storing the phase value,
+; priority (or delta-time), and 2CADR name information into the phase tables.
+; These values enable proper restart behavior by identifying which job or task
+; should execute and with what parameters when a restart occurs.
+; ============================================================================
+
 CON2		LXCH	TEMPBBCN
 
+; Store phase information in PHASE1 array for this restart group. The phase
+; value determines restart type: .0=inactive, .1=display, .EVEN=double table,
+; .ODD=single table restart.
 		CA	TEMPP
 		NDX	TEMPG
 		TS	PHASE1 -2
 
+; Store priority value (for jobs/tasks) or delta-time (for WAITLIST entries)
+; in PHSPRDT1 array. This determines restart scheduling and timing.
 		CA	TEMPPR
 		NDX	TEMPG
 		TS	PHSPRDT1 -2
 
+; Store 2CADR (address and bank) of restart routine in PHSNAME1 array. This
+; identifies which job, task, or LONGCALL should execute when this restart
+; group is activated by a restart condition.
 		EXTEND
 		DCA	TEMPNM
 		NDX	TEMPG
 		DXCH	PHSNAME1 -2
 
+; Continue to BELOW1 to check for 2PHSCHNG second group processing.
 		TCF	BELOW1
 
 		BLOCK	03
@@ -402,10 +592,23 @@ CON2		LXCH	TEMPBBCN
 		BANK
 
 		COUNT*	$$/PHASE
+		
+; ============================================================================
+; CHECKB - Type B Phase Change Priority Handling
+;
+; Type B phase changes use bit 12 to indicate whether a new priority value
+; should be fetched from an inline parameter or if the previous priority for
+; this restart group should be reused. This provides flexibility for Type B
+; phase changes that are triggered by 2PHSCHNG double-group updates.
+; ============================================================================
+
+; Check bit 12 of phase word. If set, fetch new priority from inline parameter.
+; If clear, reuse the priority stored in PHSPRDT1 from previous phase change.
 CHECKB		MASK	BIT12		# SINCE THIS IS OF TYPE B, THIS BIT WOULD
 		CCS	A		# BE HERE IF WE ARE TO GET A NEW PRIORITY
 		TCF	GETPRIO		# IT IS, SO GET NEW PRIORITY
 
+; Bit 12 clear - reuse old priority for this restart group.
 		TCF	OLDPRIO		# IT ISN'T, USE THE OLD PRIORITY.
 
 
