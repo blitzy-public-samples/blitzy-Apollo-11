@@ -28,6 +28,25 @@
 #	Assemble revision 001 of AGC program LMY99 by NASA 2021112-061
 #	16:27 JULY 14, 1969
 
+# ============================================================================
+# FILE: AOSTASK_AND_AOSJOB.agc
+# MODULE: Digital Autopilot System (DAPS3)
+# MISSION PHASE: All phases (ascent/descent/docked/orbital operations)
+#
+# TL;DR: Provides 1/ACCS interface between guidance programs and digital
+#        autopilot (DAP). Computes jet accelerations, reciprocal net 
+#        accelerations, deadbands, and minimum impulse zones whenever
+#        vehicle mass, configuration, or deadband settings change. Critical
+#        for RCS attitude control throughout all LM mission phases.
+#
+# COMMENT-ONLY READERS: This code manages how the computer controls the
+#        spacecraft's orientation using small thruster jets, updating
+#        calculations whenever the vehicle's mass or configuration changes.
+# CODE-ALONG READERS: Study mass-dependent acceleration computations,
+#        reciprocal calculations for control gains, and multi-axis deadband
+#        management. Note extensive use of MPAC temporary storage.
+# ============================================================================
+
 # Page 1485
 # PROGRAM NAME:		1/ACCS
 # PROGRAM WRITTEN BY: 	BOB COVELLI AND MIKE HOUSTON
@@ -89,6 +108,20 @@
 # IT IS POSSIBLE FOR MORE THAN ONE OF THESE JOBS TO BE SET UP CONCURRENTLY.  HOWEVER, SINCE THERE IS NO CHECK OF
 # NEWJOB, A SECOND MANIFESTATION CANNOT BE STARTED UNTIL THE FIRST IS COMPLETED.
 
+# ============================================================================
+# SECTION: Entry Points for 1/ACCS Computation
+#
+# The guidance computer must recalculate thruster control parameters whenever
+# the spacecraft's mass changes (due to fuel consumption), configuration
+# changes (docking, staging), or operational mode changes. These entry points
+# allow the 1/ACCS routine to be invoked either as part of system restart
+# (1/ACCSET) or as a scheduled background job (1/ACCJOB).
+#
+# During Apollo 11's descent, this code executed repeatedly as fuel was
+# consumed, continuously updating the thrust calculations that kept Eagle
+# oriented correctly during the powered descent to the lunar surface.
+# ============================================================================
+
 1/ACCSET	CAF	ZERO		# ENTRY FROM FRESH START/RESTART CODING.
 		TS	AOSQ		#	NULL THE OFFSET ESTIMATES FOR 1/ACCS.
 		TS	AOSR
@@ -100,6 +133,24 @@
 
 		TC	ENDOFJOB
 
+# ============================================================================
+# SECTION: Main 1/ACCS Routine - Vehicle Configuration Analysis
+#
+# This is the heart of the DAP interface system. The computer must know
+# the spacecraft's current mass, configuration (ascent stage, descent stage,
+# or docked with CSM), and operational mode to calculate correct thruster
+# firing patterns for attitude control.
+#
+# The routine examines hardware status bits, determines which equations
+# apply to the current configuration, and branches to the appropriate
+# computation sections. Mass affects how much angular acceleration each
+# thruster produces - as fuel is consumed, the spacecraft becomes lighter
+# and more responsive to thruster firings.
+# ============================================================================
+
+; Entry point to 1/ACCS thruster control recalculation. Sets up execution
+; environment and determines spacecraft configuration (docked vs LM-alone).
+
 1/ACCS		CA	EBANK6		# ***** EBANK SET BUT NOT RESTORED *****
 		TS	EBANK
 
@@ -107,6 +158,11 @@
 		TS	ACCRETRN
 
 # DETERMINE MASS OF THE LEM.
+
+; First critical step: determine LM mass by checking if CSM is docked.
+; In docked configuration (rendezvous complete), total spacecraft mass includes
+; CSM. For LM-alone operations (descent, landing, ascent before rendezvous),
+; only LM mass matters. Mass directly affects thruster acceleration effectiveness.
 
 		CA	DAPBOOLS	# IS THE CSM DOCKED
 		MASK	CSMDOCKD
@@ -121,12 +177,21 @@
 #	SET MPAC, WHICH INDICATES THE PROPER SET OF COEFFICIENTS FOR THE LEM-ALONE F(MASS) CALCULATIONS
 #	ENSURE THAT THE LEM MASS VALUE IS WITHIN THE ACCEPTABLE RANGE
 
+; Critical staging check: Has the LM separated its descent stage (staging event)?
+; After lunar surface ascent, the descent stage is jettisoned, leaving only the
+; lighter ascent stage. This dramatically changes mass and thruster configuration.
+; APSFLAG set = ascent configuration, clear = descent configuration.
+
 		INHINT
 		CAE	FLGWRD10	# DETERMINE WHETHER STAGED.
 		MASK	APSFLBIT
 		EXTEND
 		BZF	DPSFLITE
 # Page 1487
+; ASCENT CONFIGURATION: Descent stage jettisoned. Using Ascent Propulsion System
+; (APS) and ascent RCS quads. Lighter mass means more responsive control.
+; Always use 2 jets for roll control. Coefficient index = 12 (ascent tables).
+
 		CS	POSMAX		# ASCENT (OR ON LUNAR SURFACE)
 		TS	-2JETLIM	# ALWAYS 2 JETS FOR P-AXIS RATE COMMAND
 		CAF	OCT14		# INITIALIZE INDEX AT 12.
@@ -140,6 +205,10 @@
 		EXTEND
 		BZMF	F(MASS)
 
+; Mass limit violation handling: If computed mass exceeds acceptable range,
+; clamp to boundary value and correct total mass accounting. Prevents invalid
+; coefficient lookups and ensures stable control calculations.
+
 MASSFIX		ADS	LEMMASS		# STORE THE VIOLATED LIMIT AS LEMMASS.
 		ZL			#	ALSO CORRECT TOTAL MASS, ZEROING THE
 		CCS	DOCKTEMP	#	LOW-ORDER WORD.
@@ -147,6 +216,10 @@ MASSFIX		ADS	LEMMASS		# STORE THE VIOLATED LIMIT AS LEMMASS.
 		AD	LEMMASS		#		LEM ALONE:  MASS = LEMMASS
 		DXCH	MASS
 		TCF	F(MASS)
+
+; DESCENT CONFIGURATION: Full LM with descent stage attached. Using Descent
+; Propulsion System (DPS) and descent RCS configuration. Heavier, requires
+; 4-jet control for pitch/yaw when rate errors exceed 1.4°/sec. Index = 6.
 
 DPSFLITE	CS	BIT10		# FOUR JETS FOR P-AXIS RATE COMMAND ERRORS
 		TS	-2JETLIM	#	EXCEEDING 1.4 DEG/SEC (SCALED AT 45)
@@ -165,20 +238,56 @@ DPSFLITE	CS	BIT10		# FOUR JETS FOR P-AXIS RATE COMMAND ERRORS
 
 # COMPUTATION OF FUNCTIONS OF MASS
 
+# ============================================================================
+# SECTION: Mass-Dependent Jet Acceleration Computation
+#
+# The spacecraft's mass decreases continuously as fuel is consumed. This
+# affects how much rotational acceleration each RCS thruster produces when
+# fired. Lighter spacecraft = more angular acceleration per thrust pulse.
+#
+# The code uses polynomial curve fits (coefficients INERCONA, INERCONC)
+# to compute jet accelerations for roll (1JACC), pitch (1JACCQ), and
+# yaw (1JACCR) as functions of current mass. During Apollo 11's descent,
+# these values updated continuously as the descent engine consumed propellant,
+# ensuring precise attitude control throughout the powered descent phase.
+#
+# If docked with CSM, control branches to DOCKED routine for different inertia.
+# ============================================================================
+
+; Begin F(MASS) polynomial evaluation for LM-alone configuration.
+; Check if docked - if so, use completely different calculation path.
+
 F(MASS)		RELINT
 		CCS	DOCKTEMP
 		TCF	DOCKED		# DOCKED:  USE SEPARATE COMPUTATION.
+
+; LM-ALONE PATH: Compute jet accelerations using polynomial curve fits.
+; Formula: 1JACC(axis) = A/(MASS+C) + B
+; Three passes through loop: J=2 (yaw), J=1 (pitch), J=0 (roll)
+; MPAC indexes into coefficient tables (INERCONA, INERCONB, INERCONC)
+
 		CA	TWO
 STCTR		TS	MPAC 	+1	# J=2,1,0 FOR 1JACCR,1JACCQ,1JACC
 
+; Compute coefficient index JX. MPAC was initialized to 12 (ascent) or
+; 6 (descent). Decrement by 2 each loop: 10,8,6 (ascent) or 4,2,0 (descent).
+; This selects the appropriate polynomial coefficients for current stage.
+
 		CS	TWO
 		ADS	MPAC		# JX=10,8,6 OR 4,2,0 TO INDEX COEFS.
+
+; Polynomial evaluation: First compute denominator (MASS + C)
 
 STCTR1		CAE	LEMMASS
 		INDEX	MPAC
 		AD	INERCONC
 		TS	MPAC 	+2	# MASS + C
 # Page 1488
+
+; Retrieve coefficient A (double precision), divide by (MASS+C), add B.
+; Result is angular acceleration produced by one RCS jet firing on this axis,
+; scaled in radians/sec² at B0 for roll, B-1 for pitch/yaw.
+
 		EXTEND
 		INDEX	MPAC
 		DCA	INERCONA
@@ -189,6 +298,9 @@ STCTR1		CAE	LEMMASS
 		INDEX	MPAC 	+1	# 1JACC(J)=A(JX)/(MASS+C(JX) + B(JX)
 		TS	1JACC		# 1JACC(-1)=L,PVT-CG  SCALED AT 8 FEET
 
+; Loop control: Decrement J and repeat for next axis. After all three axes
+; computed (J becomes negative), branch based on configuration.
+
 		CCS	MPAC 	+1
 		TCF	STCTR
 		TCF	COMMEQS
@@ -197,18 +309,55 @@ STCTR1		CAE	LEMMASS
 # COEFFQ AND COEFFR ARE COMPUTED IN THIS SECTION.  THEY ARE USED TO RESOLVE Q-R COMPONENTS INTO NON-ORTHOGONAL
 # U AND V COMPONENTS (SEE ROT-TOUV SECTION).
 
+# ============================================================================
+# SECTION: Coupling Coefficient Computation (COMMEQS)
+#
+# The LM's thruster geometry creates coupling between axes - firing a pitch
+# thruster affects yaw slightly, and vice versa. This section computes
+# coefficients (COEFFQ, COEFFR) that account for this coupling when
+# resolving pitch-yaw (Q-R) control commands into actual thruster firing
+# patterns in the non-orthogonal U-V thruster axes.
+#
+# EPSILON measures coupling strength (1 - IQ/IR). These corrections ensure
+# that when the crew commands a pure pitch rotation, they get pure pitch,
+# not pitch-plus-unwanted-yaw. Critical for precise attitude control during
+# lunar landing when Armstrong needed exact spacecraft orientation.
+# ============================================================================
+
+; Begin computing coupling coefficients. First determine which inertia is larger:
+; yaw (1JACCR) or pitch (1JACCQ). The larger inertia determines which formula
+; variant to use for EPSILON calculation.
+
 COMMEQS		CS	1JACCR
 		AD	1JACCQ
 		EXTEND
 		BZMF	BIGIQ
+
+; CASE 1: IR > IQ (yaw inertia greater than pitch inertia)
+; Compute EPSILON = 1 - IQ/IR. This measures how much the axes are coupled.
+; EPSILON near 0 = nearly equal inertias, EPSILON near 0.42265 = maximum
+; allowed coupling asymmetry before numerical instability.
+
 		EXTEND			# EPSILON IS A MEASURE OF COUPLING AND IS
 		DV	1JACCQ		# DEFINED=1-IQ/IR FOR IR GREATER THAN IQ.
 		TS	EPSILON		# THE COMPUTED EXPRESSION IS EQUIVALENT
 		AD	-EPSMAX
 		EXTEND
 		BZMF	GOODEPS1
+
+; Clamp EPSILON to maximum allowed value (0.42265) to prevent coefficient
+; calculation overflow or control instability.
+
 		CS	-EPSMAX
 		TS	EPSILON		# EPSILON IS LIMITED TO A MAX. OF .42265
+
+; With EPSILON known, compute transformation coefficients using formulas:
+; COEFFR = 0.707 * (1 + 0.5*EPSILON)
+; COEFFQ = -0.707 * (1 + 0.5*EPSILON) * (1 - EPSILON)
+; These convert Q-R commands into U-V thruster firing commands accounting
+; for non-orthogonal thruster geometry. Factor 0.707 = 1/sqrt(2) from 45-deg
+; thruster cant angle geometry.
+
 GOODEPS1	CA	EPSILON
 		EXTEND
 		MP	0.35356
@@ -220,16 +369,32 @@ GOODEPS1	CA	EPSILON
 		MP	COEFFR
 		TS	COEFFQ
 		TCF	JACCUV
+
+; CASE 2: IQ > IR (pitch inertia greater than yaw inertia)
+; Similar calculation but with roles reversed. Compute EPSILON = 1 - IR/IQ.
+; For code convenience, -EPSILON is computed directly and used in formulas.
+
 BIGIQ		EXTEND			# EPSILON IS DEFINED AS 1-IR/IQ FOR IQ
 		DV	1JACCR		# GREATER THAN IR.  -EPSILON IS COMPUTED
 		TS	-EPSILON	# RATHER THAN EPSILON FOR CONVENIENCE
+
+; Check if -EPSILON exceeds negative of maximum allowed value and clamp if needed.
+; This ensures numerical stability in coefficient calculations.
+
 		CS	-EPSILON
 		AD	-EPSMAX
 		EXTEND
 		BZMF	GOODEPS2
 		CA	-EPSMAX
 		TS	-EPSILON	# EPSILON IS LIMITED TO A MAX. OF .42265
+
 # Page 1489
+
+; With -EPSILON known, compute transformation coefficients using alternate formulas:
+; COEFFQ = -0.707 * (1 + 0.5*EPSILON) [computed with -EPSILON for convenience]
+; COEFFR = 0.707 * (1 + 0.5*EPSILON) * (1 - EPSILON)
+; Same physical meaning as Case 1 but with pitch/yaw roles reversed.
+
 GOODEPS2	CA	-EPSILON
 		EXTEND
 		MP	0.35356
@@ -240,6 +405,23 @@ GOODEPS2	CA	-EPSILON
 		EXTEND
 		MP	COEFFQ
 		TS	COEFFR
+
+; ============================================================================
+; JACCUV: Transform Q-R accelerations into U-V thruster commands
+;
+; The LM has 16 RCS thrusters arranged in 4 quads, canted 45 degrees from the
+; spacecraft body axes. To convert desired pitch (Q) and yaw (R) rotations
+; into actual up (U) and forward (V) thruster firing commands, we must account
+; for this 45-degree geometry and the coupling effects.
+;
+; Transformation formulas:
+;   1JACCU = -COEFFQ * 1JACCQ + COEFFR * 1JACCR
+;   1JACCV = -COEFFQ * 1JACCQ + COEFFR * 1JACCR  (same as U for symmetric config)
+;
+; During Apollo 11's lunar descent and ascent, these acceleration values enabled
+; precise attitude control necessary for landing site selection and rendezvous.
+; ============================================================================
+
 JACCUV		CS	COEFFQ
 		EXTEND
 		MP	1JACCQ		# 1JACCQ IS SCALED AT PI/4
@@ -252,10 +434,23 @@ JACCUV		CS	COEFFQ
 		MP	BIT14		# SCALING CHANGED FROM PI/4 TO PI/2
 		TS	1JACCU
 		TS	1JACCV		# SCALED AT PI/2 RADIANS/SEC(2)
+
+; Check configuration: If in ascent (MPAC positive), skip gimbal calculations
+; since ascent engine is fixed (non-gimbaling). Zero ALLOWGTS and proceed to
+; 1/ACCONT for final acceleration computations.
+;
+; If in descent (MPAC negative/zero), continue to compute engine gimbal effects
+; on rotational acceleration (LRESC section). The descent engine gimbals to
+; vector thrust, creating time-varying torques that must be predicted.
+
 		CCS	MPAC		# COMPUTE L,PVT-CG IF IN DESCENT
 		CAF	ZERO		# ZERO SWITCHES AND GO TO 1/ACCONT IN
 		TS	ALLOWGTS	#	ASCENT
 		TCF	1/ACCONT -1
+
+; Descent mode: Set up MPAC for polynomial evaluation to compute gimbal effects.
+; MPAC = -2 and MPAC+1 = -1 are coefficients for the descent engine gimbal
+; moment arm calculation.
 
 		CS	TWO
 		TS	MPAC
@@ -269,6 +464,30 @@ JACCUV		CS	COEFFQ
 #	L = PIVOT TO CG DISTANCE OF ENGINE
 #	I = MOMENT OF INERTIA
 
+# ============================================================================
+# SECTION: Gimbal Rotation Rate Effects (LRESC)
+#
+# The descent engine can gimbal (tilt) to steer thrust direction during
+# powered descent. As the engine gimbal angle changes, this creates a
+# time-varying rotational acceleration that must be accounted for in the
+# autopilot's predictions.
+#
+# This section computes ACCDOTQ and ACCDOTR - the rate of change of angular
+# acceleration in pitch and yaw due to gimbal motion. The equation relates
+# engine thrust (T), moment arm from pivot to center of gravity (L), and
+# vehicle moment of inertia (I).
+#
+# During Apollo 11's descent, the engine gimbaled continuously to maintain
+# the proper attitude and trajectory. These calculations ensured the DAP
+# correctly anticipated attitude changes caused by gimbal motion, preventing
+# oscillations or instability during the critical landing phase.
+# ============================================================================
+
+; Begin computing gimbal effect on angular acceleration rate.
+; First, compute thrust force: T = ABDELV * MASS / g
+; where ABDELV is sensed acceleration from IMU PIPAs (navigation accelerometers).
+; This gives instantaneous thrust force in appropriate units for subsequent calcs.
+
 LRESC		CAE	ABDELV		# SCALED AT 2(13) CM/SEC(2)
 		EXTEND
 		MP	MASS		# SCALED AT B+16 KGS
@@ -279,17 +498,35 @@ LRESC		CAE	ABDELV		# SCALED AT 2(13) CM/SEC(2)
 # THE RATIO OF ACCELERATION FROM PIPAS TO ACCELERATION OF GRAVITY IS THE SAME IN METRIC OR ENGINEERING UNITS, SO
 # THAT IS UNCONVERTED.  2.20462 CONVERTS KG. TO LB.  NOW T IN IN A SCALED AT 2(14).
 
+; Now multiply thrust by moment arm (L, PVT-CG) to get torque capability.
+; L varies with mass as fuel depletes, changing center of gravity location.
+; This is the "T*L" term in the equation d(alpha)/dt = (T*L/I) * d(delta)/dt.
+
 		EXTEND
 		MP	L,PVT-CG	# SCALED AT 8 FEET.
 # Page 1490
+
+; Disable interrupts during critical computation to ensure atomic calculation
+; of gimbal acceleration rates without corruption by interrupt-driven updates.
+
 		INHINT
 		TS	MPAC
+
+; Compute yaw acceleration rate: ACCDOTR = (T * L * 1JACCR) / TORKJET1
+; where TORKJET1 contains the moment of inertia about the yaw (R) axis.
+; This gives the rate of change of angular acceleration as gimbal angle changes.
+
 		EXTEND
 		MP	1JACCR
 		TC	DVOVSUB		# GET QUOTIENT WITH OVERFLOW PROTECTION
 		ADRES	TORKJET1
 
 		TS	ACCDOTR		# SCALED AT PI/2(7)
+
+; Compute pitch acceleration rate: ACCDOTQ = (T * L * 1JACCQ) / TORKJET1
+; Same calculation for pitch axis. These values feed the DAP to predict
+; attitude changes caused by changing gimbal angles during descent throttle.
+
 		CA	MPAC
 		EXTEND
 		MP	1JACCQ
@@ -297,6 +534,11 @@ LRESC		CAE	ABDELV		# SCALED AT 2(13) CM/SEC(2)
 		ADRES	TORKJET1
 
 SPSCONT		TS	ACCDOTQ		# SCALED AT PI/2(7)
+
+; Scale acceleration rates by damping factor DGBF (typically 0.3) to create
+; gimbal rate feedback gains KQ and KRDAP. These gains determine how strongly
+; the DAP responds to gimbal motion-induced torques during descent throttling.
+
 		EXTEND
 		MP	DGBF		# .3ACCDOTQ SCALED AT PI/2(8)
 		TS	KQ
@@ -304,6 +546,10 @@ SPSCONT		TS	ACCDOTQ		# SCALED AT PI/2(7)
 		EXTEND
 		MP	DGBF
 		TS	KRDAP
+; Compute signed jerk terms QACCDOT and RACCDOT by reading gimbal drive bits
+; from hardware channel 12. These bits indicate gimbal motion direction (positive
+; or negative rotation). Loop processes both axes using indexed addressing.
+
 		EXTEND			# NOW COMPUTE QACCDOT, RACCDOT, THE SIGNED
 		READ	CHAN12		# JERK TERMS.  STORE CHANNEL 12. WITH GIMBAL
 		TS	MPAC 	+1	# DRIVE BITS 9 THROUGH 12 SET LOOP
@@ -311,45 +557,106 @@ SPSCONT		TS	ACCDOTQ		# SCALED AT PI/2(7)
 		TCF	LOOP3
 		CAF	ZERO		# ACCDOTQ AND ACCDOTR ARE NOT NEGATIVE,
 LOOP3		TS	MPAC		# BECAUSE THEY ARE MAGNITUDES
+; Check if gimbal is moving for current axis (pitch or yaw). GIMBLBTS masks
+; contain bit patterns for gimbal drive signals from hardware channel 12.
+
 		CA	MPAC 	+1
 		INDEX	MPAC		# MASK CHANNEL IMAGE FOR ANY GIMBAL MOTION
 		MASK	GIMBLBTS
 		EXTEND
 		BZF	ZACCDOT		# IF NONE, Q(R)ACCDOT IS ZERO.
+
+; Gimbal is moving. Determine direction: positive or negative rotation.
+; Direction determines sign of jerk term for DAP prediction accuracy.
+
 		CA	MPAC 	+1
 		INDEX	MPAC		# GIMBAL IS MOVING.  IS ROTATION POSITIVE.
 		MASK	GIMBLBTS +1
 		EXTEND
 		BZF	FRSTZERO	# IF NOT POSITIVE, BRANCH
+
+; Positive gimbal rotation creates negative angular acceleration rate.
+; This counterintuitive sign comes from thrust vector rotation direction.
+
 		INDEX	MPAC		# POSITIVE ROTATION, NEGATIVE Q(R)ACCDOT.
 		CS	ACCDOTQ
 		TCF	STACCDOT
+
+; Negative gimbal rotation creates positive angular acceleration rate.
+
 FRSTZERO	INDEX	MPAC		# NEGATIVE ROTATION, POSITIVE Q(R)ACCDOT.
 		CA	ACCDOTQ
 		TCF	STACCDOT
+
+; Gimbal not moving: zero jerk term.
+
 ZACCDOT		CAF	ZERO
 STACCDOT	INDEX	MPAC
 		TS	QACCDOT		# STORE Q(R)ACCDOT.
 		CCS	MPAC
 		TCF	LOOP3 	-1	# NOW DO QACCDOT.
 # Page 1491
+
+; Check if engine gimbal is available for use. USEQRJTS bit in DAPBOOLS
+; indicates whether gimbal trim control is enabled vs. fixed engine orientation.
+
 		CS	DAPBOOLS	# IS GIMBAL USABLE?
 		MASK	USEQRJTS
 		EXTEND
 		BZF	DOWNGTS		# NO. BE SURE THE GIMBAL SWITCHES ARE DOWN
+
+; Gimbal is usable. Check if Digital Autopilot (DAP) is currently running.
+; T5ADR contains address of active routine; compare to PAXISADR (DAP address).
+
 		CS	T5ADR		# YES.  IS THE DAP RUNNINT?
 		AD	PAXISADR
 		EXTEND
 		BZF	+2
 		TCF	DOWNGTS		# NO. BE SURE THE GIMBAL SWITCHES ARE DOWN
+
+; DAP is running. Check if Gimbal Trim System (GTS) has control authority.
+; INGTS flag indicates GTS active state.
+
 		CCS	INGTS		# YES.  IS GTS IN CONTROL?
 		TCF	DOCKTEST	# YES.  PROCEED WITH 1/ACCS.
+
+; GTS not yet in control. Call TIMEGMBL to null gimbal offset and compute
+; ALLOWGTS timing parameters before proceeding to docking configuration check.
+
 		TC	IBNKCALL	# NO. NULL OFFSET AND FIND ALLOWGTS
 		CADR	TIMEGMBL
+
+; ============================================================================
+; SECTION: DOCKTEST - Docking Configuration Check
+;
+; COMMENT-ONLY READERS: When the Lunar Module is docked to the Command Module,
+; the control characteristics change significantly. This check determines
+; whether to bypass detailed acceleration calculations that are unnecessary
+; in the docked configuration.
+;
+; CODE-ALONG READERS: DOCKTEMP flag indicates docking status. If docked (non-
+; zero), skip 1/ACCONT and proceed directly to return. This saves computational
+; cycles during docked operations when full DAP reconfiguration is not needed.
+; ============================================================================
 
 DOCKTEST	CCS	DOCKTEMP	# BYPASS 1/ACCONT WHEN DOCKED.
 		TCF	1/ACCRET
 		TCF	1/ACCONT
+
+; ============================================================================
+; SECTION: DVOVSUB - Safe Division with Overflow Protection
+;
+; COMMENT-ONLY READERS: Mathematical division operations in the AGC require
+; careful handling to prevent computational errors. This subroutine performs
+; division while detecting and safely handling overflow conditions that would
+; otherwise cause incorrect results or system failures.
+;
+; CODE-ALONG READERS: Single-precision division with three possible returns:
+; (1) Normal quotient if operation is valid, (2) NEGMAX if quotient overflows
+; negative, (3) POSMAX if quotient overflows positive or divisor is zero.
+; This overflow protection was critical during mission operations to prevent
+; invalid accelerations from propagating through the control system.
+; ============================================================================
 
 # Page 1492
 # SUBROUTINE:	DVOVSUB
@@ -465,6 +772,22 @@ GFACTM		OCT	337		# 979.24/2.20462 AT B+15
 .7071		DEC	.70711
 -.7071		DEC	-.70711
 -EPSMAX		DEC	-.42265
+
+; ============================================================================
+; SECTION: DOCKED - CSM-Docked Configuration Calculations
+;
+; COMMENT-ONLY READERS: When the Lunar Module docks with the Command/Service
+; Module in lunar orbit after ascent from the surface, the combined spacecraft
+; configuration has dramatically different mass and inertia properties. This
+; section recalculates the control parameters for the docked configuration,
+; accounting for the CSM's much larger mass and different center of gravity.
+;
+; CODE-ALONG READERS: Computes inertia coefficients and center-of-gravity
+; position for CSM-LM docked stack. Uses polynomial curve fits with separate
+; coefficients for CSM and LM contributions. COEFCTR=1 for inertia coefficients,
+; =7 for CG coefficients. MASSCTR=1 for CSM mass lookup, =0 for LM mass.
+; Scaling: inertia at B+16 kg-m², CG offset at 8 ft.
+; ============================================================================
 
 # CSM-DOCKED INERTIA COMPUTATIONS
 
@@ -588,6 +911,26 @@ EPSILON		EQUALS	MPAC 	+1
 		EBANK=	AOSQ
 
 		COUNT*	$$/DAPAO
+
+; ============================================================================
+; SECTION: 1/ACCONT - Detailed Acceleration Calculations and DAP Configuration
+;
+; COMMENT-ONLY READERS: After computing the spacecraft's basic mass properties,
+; the autopilot needs detailed acceleration values for each control axis and
+; firing mode. This extensive routine calculates how quickly the spacecraft
+; will respond to thruster firings in different configurations, accounting for
+; single-jet or dual-jet firings, drift mode versus powered flight, and the
+; changing geometry as fuel is consumed. These calculations enable precise
+; attitude control throughout all mission phases.
+;
+; CODE-ALONG READERS: Main continuation of 1/ACCS performing comprehensive
+; DAP reconfiguration. Computes reciprocal net accelerations (1/ANETP, 1/ANETU,
+; 1/ANETV) for P/U/V axes in both 1-jet and 2-jet modes, coast accelerations,
+; deadband values (DBVAL1/2/3), minimum impulse zone parameters (FLAT, ZONE3LIM),
+; and acceleration functions (ACCFCTZ1/ACCFCTZ5). Sets ACCSWU/ACCSWV flags
+; indicating when single-jet acceleration is insufficient. Critical for achieving
+; the precise attitude control that enabled lunar landing and rendezvous.
+; ============================================================================
 
  -1		TS	INGTS		# ZERO INGTS IN ASCENT
 1/ACCONT	CA	DB		# INITIALIZE DBVAL1,2,3
@@ -939,6 +1282,25 @@ DRFDB		CA	DBVAL1		# DRIFT DEADBANDS
 		CA	ACCRETRN
 		TC	BANKJUMP	# RETURN TO CALLER
 
+; ============================================================================
+; SECTION: Utility Subroutines - Mathematical Support Functions
+;
+; COMMENT-ONLY READERS: The complex thruster calculations require several
+; mathematical helper routines to handle special cases and perform numerical
+; operations. These utility functions compute reciprocals, handle minimum
+; acceleration thresholds, and manage cases where thruster performance falls
+; below acceptable limits - critical for maintaining spacecraft control under
+; all possible operating conditions including degraded modes.
+;
+; CODE-ALONG READERS: Collection of mathematical utility subroutines called
+; by 1/ACCONT. INVERT computes reciprocal (1/x) scaled at 2(7)/PI. DOWNGTS
+; clears GTS flags when useqrjts disabled. 1/ANET- and 1/NETMIN compute
+; reciprocal accelerations with AMIN threshold testing. DO1/NET+ performs
+; (1 + ANET/ACOAST) calculations. NETNEG handles below-threshold cases by
+; setting ANET=AMIN. FIXMIN adjusts acceleration values when jet failures
+; force use of single-jet or minimum acceleration modes. Return via Q or ARET.
+; ============================================================================
+
 INVERT		TS	HOLD		# ROUTINE TO INVERT -INPUT AT PI/2
 		CA	BIT9		# 1 AT 2(6)
 		ZL			# ZERO L FOR ACCURACY AND TO PREVENT OVFLO
@@ -946,10 +1308,21 @@ INVERT		TS	HOLD		# ROUTINE TO INVERT -INPUT AT PI/2
 		DV	HOLD
 		TC	Q		# RESULT AT 2(7)/PI
 
+; Gimbal Trim System (GTS) is not usable - either USEQRJTS bit indicates
+; engine gimbal unavailable, or Digital Autopilot is not running. Clear
+; all GTS control flags to ensure gimbal drive switches remain powered down.
+; This is a safety measure preventing unwanted engine deflection.
+
 DOWNGTS		CAF	ZERO		# ZERO SWITCHES WHEN USEQRJTS BIT IS UP
 		TS	ALLOWGTS	#	OR DAP IS OFF
 		TS	INGTS
 		TCF	DOCKTEST
+
+; Calculate reciprocal net acceleration (1/ANET). Net acceleration is
+; thrust minus coast acceleration, accounting for offset. Zero ACCSW
+; flag, save ANET, then test against minimum threshold (-.03R/S2 = 0.03
+; rad/sec² minimum). If below minimum, branch to NETNEG which sets ANET
+; to minimum value to prevent numerical problems with very small accelerations.
 
 1/ANET-		ZL
 		LXCH	ACCSW		# ZERO ACCSW
@@ -957,6 +1330,12 @@ DOWNGTS		CAF	ZERO		# ZERO SWITCHES WHEN USEQRJTS BIT IS UP
 		AD	-.03R/S2	# TEST FOR MIN VALUE
 		EXTEND
 		BZMF	NETNEG		# ANET LESS THAN AMIN, SO FAKE IT
+
+; Entry point after ANET validated or set to minimum. Compute ratio
+; ANET/ACOAST by multiplying ANET (with sign) by reciprocal coast
+; acceleration. INDEX by -SIGNAOS ensures correct sign combination:
+; negative AOS uses positive coast, positive AOS uses negative coast.
+
 1/NETMIN	CA	ANET
 		EXTEND
 		INDEX	-SIGNAOS
@@ -965,12 +1344,22 @@ DOWNGTS		CAF	ZERO		# ZERO SWITCHES WHEN USEQRJTS BIT IS UP
 # THE FOLLOWING CODING IS VALID FOR BOTH POS OR NEG
 #	VALUES OF AOS
 
+; Compute (1 + ANET/ACOAST) term needed for deadband calculations. This
+; represents ratio of net-to-coast acceleration plus unity. Save result,
+; then compute 1/ANET using INVERT subroutine. Store 1/ANET for later use.
+
 DO1/NET+	AD	BIT9		# 1 + ANET/ACOAST AT 2(6)
 		XCH	ANET		# SAVE AND PICK UP ANET
 		EXTEND
 		QXCH	ARET		# SAVE RETURN
 		TC	INVERT
 		TS	1/ANET		# 1/ANET AT 2(7)/PI
+
+; Compute acceleration function ACCFUN = -1/ANET² = (-1/ANET) / ANET.
+; This function characterizes autopilot response: how attitude error rate
+; changes with applied acceleration. Result scaled at 2(7)/PI for use in
+; deadband width and acceleration threshold calculations throughout DAP.
+
 		CS	BIT9		# -1 AT 2(6)
 DOACCFUN	EXTEND
 		MP	1/ANET		# -1/ANET AT 2(13)/PI
@@ -978,10 +1367,22 @@ DOACCFUN	EXTEND
 		DV	ANET		# ACCFUN AT 2(7)/PI
 		TC	ARET		# RETURN
 
+; Net acceleration below minimum threshold (0.03 rad/sec²). Set ANET to
+; minimum value (+.03R/S2) to prevent numerical instability and division
+; by near-zero. Return to 1/NETMIN+1 to complete calculation using this
+; minimum value. This ensures autopilot maintains stable control even when
+; available acceleration is very small due to low propellant or jet failures.
+
 NETNEG		CS	-.03R/S2	# ANET LESS THAN AMIN -- SET EQUAL TO AMIN
 		TS	ANET
 # Page 1505
 		TCF	1/NETMIN +1	# CONTINUE AS IF NOTHING HAPPENED.
+
+; Adjust ACCSW (acceleration switch flag) based on thruster failures.
+; SIGNAOS sign determines ACCSW value: negative AOS → ACCSW=+1, positive
+; AOS → ACCSW=-1. Then check jet failure status from CH5MASK to determine
+; if single-jet mode is required on U or V axis (INDEX by ACCSW to select
+; appropriate mask). This handles degraded control when thrusters fail.
 
 FIXMIN		CCS	SIGNAOS
 		CA	TWO		# IF AOS NEG, ACCSW = +1
@@ -991,13 +1392,31 @@ FIXMIN		CCS	SIGNAOS
 		INDEX	A		# IF ACCSW = -1, TEST FOR -U (-V) JET FAIL
 		CA	-UMASK 	+1
 		MASK	CH5MASK
+
+; Test result: if zero, no jet failures detected, proceed with normal
+; two-jet acceleration values. If non-zero, jet failure detected - must
+; use minimum single-jet acceleration to prevent autopilot instability.
+; Set ANET to minimum, branch to STMIN--1 to recalculate all functions.
+
 		EXTEND
 		BZF	+4
 		CS	-.03R/S2	# JET FAILURE -- CANNOT USE 2-JET VALUES
 		TS	ANET		# ANET = AMIN
 		TCF	STMIN- 	-1	# CALCULATE FUNCTIONS USING AMIN
+
+; No jet failure: use existing ACCFUN value from L register (result of
+; previous computation). Store as maximum values for minimum impulse jets.
+
 		CA	L		# L HAS ACCFUN
 		TCF	STMIN-		# STORE MAX VALUES FOR MIN JETS
+
+; ============================================================================
+; ERASABLE MEMORY ASSIGNMENTS FOR 1/ACCONT
+;
+; These assignments map 1/ACCONT working variables to executive temporary
+; storage areas. Critical: CANNOT do CCS NEWJOB instruction during 1/ACCS
+; execution because ACCSW uses VBUF location (executive temporary register).
+; ============================================================================
 
 # ERASABLE ASSIGNMENTS FOR 1/ACCONT
 
@@ -1051,14 +1470,45 @@ SIGNAOS		EQUALS	MPAC 	+7
 HOLD		EQUALS	MPAC 	+9D
 ACCRETRN	EQUALS	FIXLOC 	-1
 
+; ============================================================================
+; CONSTANTS FOR 1/ACCONT COMPUTATIONS
+; ============================================================================
+
+; Minimum impulse mode zone boundaries. ZONE3MAX defines the height of the
+; minimum impulse zone (17.5 milliseconds of acceleration for 2-jet firing,
+; 35 milliseconds for single jet). FLATVAL defines the width of the zone
+; at 45 degrees (0.8 radians/sec² when scaled). These define the "dead zone"
+; where autopilot uses minimum impulse bursts to conserve propellant.
+
 ZONE3MAX	DEC	.004375		# 17.5 MS (35 MS FOR 1 JET) AT 4 SECONDS
 FLATVAL		DEC	.01778		# .8 AT PI/4 RAD
+
+; Minimum acceleration threshold (0.03 rad/sec²). Negative value in scaled
+; fixed-point format (octal 77377 = -PI/2^7 scaled at PI/2). Used to prevent
+; autopilot instability when net acceleration drops below usable threshold
+; due to low propellant mass or jet failures.
+
 -.03R/S2	OCT	77377		# -PI/2(7) AT PI/2
+
+; Reciprocal constants for acceleration calculations. .0125RS = 1/80 rad/sec
+; (PI/2^8 scaled at PI/2) used in rate damping. 1/.03 = 33.33 (2^7/PI scaled
+; at 2^7/PI) is reciprocal of minimum acceleration threshold for fast division.
 
 .0125RS		EQUALS	BIT8		# PI/2(+8) AT PI/2
 1/.03		EQUALS	POSMAX		# 2(7)/PI AT 2(7)/PI
 
+; Address of P-axis control variables (used for bank calls and indexing).
+
 PAXISADR	GENADR	PAXIS
+
+; Jet failure detection masks. These four octal bit patterns are indexed by
+; UV axis indicator and ACCSW (acceleration switch) to test CH5MASK for
+; specific thruster pair failures. Each mask tests two jets:
+;   -UMASK (00110): Tests -U axis jets (bits 3 and 4)
+;   -V mask (00022): Tests -V axis jets (bits 1 and 5)
+;   +UMASK (00204): Tests +U axis jets (bits 2 and 7)
+;   +V mask (00041): Tests +V axis jets (bits 0 and 6)
+; Used in FIXMIN logic to detect failed thrusters and switch to single-jet mode.
 
 					# THE FOLLOWING 4 CONSTANTS ARE JET
 					# FAILURE MASKS AND ARE INDEXED
