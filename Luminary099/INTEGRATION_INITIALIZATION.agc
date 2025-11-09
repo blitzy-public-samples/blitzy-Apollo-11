@@ -27,6 +27,25 @@
 #	Assemble revision 001 of AGC program LMY99 by NASA 2021112-061
 #	16:27 JULY 14, 1969
 
+; ============================================================================
+; FILE: INTEGRATION_INITIALIZATION.agc
+; MODULE: Orbital Integration Initialization
+; MISSION PHASE: trans-lunar/lunar-orbit/descent/ascent/trans-earth
+;
+; TL;DR: Initializes numerical integration system for orbit propagation using
+;        Encke method with precision perturbations or Kepler conic sections.
+;        Sets up coordinate system transformations, initial conditions, state
+;        vector scaling, and rectification thresholds. Critical for accurate
+;        navigation state updates throughout cislunar flight phases.
+;
+; COMMENT-ONLY READERS: This module prepares the mathematics that keeps the
+;        spacecraft on course between Earth and Moon. Read to understand how
+;        the AGC transitions between different integration modes during flight.
+; CODE-ALONG READERS: Study Encke method initialization, coordinate frame
+;        setup, scaling transformations for Earth/Moon spheres, and the job
+;        stalling mechanism for background integration tasks.
+; ============================================================================
+
 # Page 1205
 # 1.0 INTRODUCTION
 # ----------------
@@ -464,6 +483,22 @@ SETBANK		CAF	INTBANK
 		EBANK=	RRECTCSM
 INTBANK		BBCON	INTEGRV
 
+; ============================================================================
+; SPECIAL PURPOSE ENTRY POINTS TO ORBITAL INTEGRATION
+;
+; These four routines provide convenient entry points for different types
+; of orbit integration. Each sets appropriate flags before calling the main
+; integration logic.
+;
+; COMMENT-ONLY READERS: The computer can track spacecraft position using
+; either high-precision calculations (PREC) that account for the Moon's
+; irregular shape, or faster approximate calculations (CONIC) that assume
+; perfect spheres. These entry points select the appropriate method.
+;
+; CODE-ALONG READERS: Study how flag combinations control integration method
+; (Encke vs Kepler), vehicle selection (CSM vs LM), and computation mode.
+; ============================================================================
+
 # SPECIAL PURPOSE ENTRIES TO ORBITAL INTEGRATION.  THESE ROUTINES PROVIDE ENTRANCES TO INTEGRATION WITH
 # APPROPRIATE SWITCHES SET OR CLEARED FOR THE DESIRED INTEGRATION.
 #
@@ -500,6 +535,12 @@ INTBANK		BBCON	INTEGRV
 # INPUT
 #	TDEC1		TIME TO INTEGRATE TO.  CSECS B-28
 
+; CSMPREC - Command/Service Module Precision Integration Entry Point
+; Performs high-accuracy Encke method integration of CSM state vector to
+; time TDEC1, including oblateness perturbations from Moon's irregular shape.
+; Used during translunar and transearth coast for navigation updates.
+; Register X1 saved to IRETURN for return linkage.
+
 CSMPREC		STQ	CALL
 			X1
 			INTSTALL
@@ -507,12 +548,22 @@ CSMPREC		STQ	CALL
 			IRETURN
 			VINTFLAG
 
+; Flag configuration for precision integration: PRECIFLG set indicates Encke
+; method, DIM0FLAG clear for 3-dimensional integration, INTYPFLG clear for
+; non-conic (precision) mode. Proceeds to main integration logic INTEGRV1.
+
 IFLAGP		SET	CLEAR
 			PRECIFLG
 			DIM0FLAG
 		CLRGO
 			INTYPFLG
 			INTEGRV1
+
+; LEMPREC - Lunar Module Precision Integration Entry Point
+; Performs Encke method integration of LM state vector with oblateness
+; perturbations. Critical during descent orbit, powered descent preparation,
+; and ascent rendezvous navigation. VINTFLAG cleared for LM (vs CSM).
+
 LEMPREC		STQ	CALL
 			X1
 			INTSTALL
@@ -521,16 +572,32 @@ LEMPREC		STQ	CALL
 			VINTFLAG
 			IFLAGP
 
+; CSMCONIC - Command/Service Module Conic Integration Entry Point
+; Fast Keplerian (two-body) integration assuming spherical gravity field.
+; Used for quick trajectory predictions where oblateness effects negligible.
+; Faster than CSMPREC but less accurate - acceptable for preliminary planning.
+
 CSMCONIC	STQ	CALL
 			X1
 			INTSTALL
 		SXA,1	SET
 			IRETURN
 			VINTFLAG
+
+; Flag configuration for conic integration: DIM0FLAG clear, INTYPFLG set
+; indicates Kepler's method (conic sections). State vector rectified before
+; solving Kepler's equation for fast two-body orbit propagation.
+
 IFLAGC		CLEAR	SETGO
 			DIM0FLAG
 			INTYPFLG
 			INTEGRV1
+
+; LEMCONIC - Lunar Module Conic Integration Entry Point
+; Fast Keplerian integration of LM state vector. Used for quick orbit checks
+; and trajectory planning when high precision unnecessary. During Apollo 11
+; rendezvous, provided rapid what-if calculations for crew and ground.
+
 LEMCONIC	STQ	CALL
 			X1
 			INTSTALL
@@ -539,6 +606,18 @@ LEMCONIC	STQ	CALL
 # Page 1215
 			VINTFLAG
 			IFLAGC
+
+; ============================================================================
+; INTEGRVS - General Purpose Integration with Supplied State Vector
+;
+; COMMENT-ONLY READERS: Programs can integrate any position and velocity
+; (not just permanent CSM/LM vectors) by providing their own state vector.
+; Used for "what-if" trajectory calculations and mission planning.
+;
+; CODE-ALONG READERS: Caller supplies state vector and sets integration type
+; flags. PBODY index determines gravitational body (0=Earth, 2=Moon) based
+; on MOONFLAG. State vector stored and rectified before integration begins.
+; ============================================================================
 
 INTEGRVS	SET	SSP
 			PRECIFLG
@@ -561,6 +640,20 @@ INTEGRVS	SET	SSP
 		SETGO
 			RPQFLAG
 			ALOADED
+
+; ============================================================================
+; INTEGRV - Navigation Program Integration Entry Point
+;
+; COMMENT-ONLY READERS: This is the primary entry used by P20-P25 navigation
+; programs to integrate spacecraft orbits. The calling program sets flags
+; to control whether precision or conic integration is used, which vehicle
+; to integrate, and whether to update the permanent state vector.
+;
+; CODE-ALONG READERS: Multiple entry points (INTEGRV, INTEGRV1, INTEGRV2)
+; serve different callers. INTEGRV for navigation programs, INTEGRV1 for
+; CSMPREC/LEMPREC, ALOADED from INTEGRVS. Study flag testing logic and
+; A-memory setup path selection via VINTFLAG (CSM vs LM).
+; ============================================================================
 
 # INTEGRV IS AN ENTRY TO ORBIT INTEGRATION WHICH PERMITS THE CALLER,
 # NORMALLY THE NAVIGATION PROGRAM, TO SET THE INTEG. FLAGS.  THE ROUTINE
@@ -607,6 +700,11 @@ INTEGRV2	SSP
 			VINTFLAG
 			PTOACSM
 			PTOALEM
+
+; ALOADED - Common integration path after state vector loaded into A-memory
+; Loads desired integration time (TDEC1) and branches to precision (TESTLOOP)
+; or conic (RVCON) integration based on INTYPFLG.
+
 ALOADED		DLOAD
 			TDEC1
 		STORE	TDEC
@@ -653,6 +751,25 @@ RECTOUT		SETPD	CALL
 			MOONFLAG
 			+2
 		DEC	-2
+
+; ============================================================================
+; INTEXIT - Integration Exit and Cleanup Routine
+;
+; COMMENT-ONLY READERS: When orbit integration completes (reaching desired time
+; or final radius), the computer performs cleanup: updating state vectors,
+; clearing operational flags, and preparing for the next navigation task. The
+; results are now available for guidance decisions or display to the crew.
+;
+; CODE-ALONG READERS: Common exit point from integration (precision or conic).
+; Reached when QUITFLAG set (time/radius reached) or error conditions detected.
+; SETPD 0 resets pushdown stack. BOV +1 handles overflow (skips next instruction).
+; Clears AVEMIDSW (allows downlink state vector update), PRECIFLG, and STATEFLG.
+; Loads IRETURN address from interpretive stack, exits to basic mode, stores
+; return address in QPRET (indexed by FIXLOC for CSM/LM distinction), then
+; calls INTWAKE to handle restart logic and release integration stall area.
+; Output state vector available in pushlist per calling sequence specification.
+; ============================================================================
+
 INTEXIT		SETPD	BOV
 			0
 			+1
@@ -667,6 +784,20 @@ INTEXIT		SETPD	BOV
 		INDEX	FIXLOC
 		TS	QPRET
 		TC	INTWAKE
+
+; ============================================================================
+; RVCON - Conic (Keplerian) Integration Path
+;
+; COMMENT-ONLY READERS: When high precision is unnecessary, the computer
+; uses Kepler's laws to quickly calculate orbital position. This assumes
+; perfect spherical gravity with no perturbations from Moon's irregular shape.
+; Much faster than precision integration.
+;
+; CODE-ALONG READERS: Computes time interval TAU = (TDEC - TET), rectifies
+; state vector, calls KEPPREP to solve Kepler's equation, updates TET, then
+; proceeds to RECTOUT for output formatting. See CONIC_SUBROUTINES.agc for
+; Kepler solver details.
+; ============================================================================
 
 # RVCON SETS UP ORBIT INTEGRATION TO DO A CONIC SOLUTION FOR POSITION AND
 # VELOCITY FOR THE INTERVAL (TET-TDEC)
@@ -685,6 +816,22 @@ RVCON		DLOAD	DSU
 			RECTOUT
 
 # Page 1218
+
+; ============================================================================
+; TESTLOOP - Precision (Encke Method) Integration Main Loop
+;
+; COMMENT-ONLY READERS: For accurate trajectories, the computer uses advanced
+; Encke method integration accounting for Moon's irregular gravity and other
+; perturbing forces. This loop repeatedly advances the orbit in small time
+; steps (DT/2), checking for completion or need to update the reference orbit.
+;
+; CODE-ALONG READERS: Main iteration loop for precision integration. Tests
+; QUITFLAG for termination, computes adaptive timestep DT/2 based on orbital
+; radius and gravitational parameter, checks RFINAL radius termination
+; condition. Each iteration calls POOHCHK which performs actual Encke step.
+; See ORBITAL_INTEGRATION.agc for Encke algorithm implementation.
+; ============================================================================
+
 TESTLOOP	BOF	CLRGO
 			QUITFLAG
 			+3
@@ -779,6 +926,26 @@ DT/2MIN		2DEC	3 B-20
 
 DT/2MAX		2DEC	4000 E2 B-20
 
+; ============================================================================
+; INTSTALL - Integration Stall/Synchronization Routine
+;
+; COMMENT-ONLY READERS: To prevent multiple integration calculations from
+; interfering with each other in shared memory, the computer includes a
+; "stall" mechanism. When a program wants to integrate, it must first check
+; if the integration area is available. If busy, the program waits its turn.
+; This ensures accurate trajectory calculations during critical mission phases.
+;
+; CODE-ALONG READERS: Entry point for integration synchronization using RASFLAG
+; as semaphore. Called via TC INTSTALL from interpretive mode. EXIT instruction
+; (line 910) switches to basic mode. Tests INTBITAB bits (octal 20100) in
+; RASFLAG to check if integration scratch area is available. If free (BZF),
+; proceeds to OKTOGRAB which sets INTFLBIT and returns to interpretive mode.
+; If busy, calls JOBSLEEP with WAKESTAL address, putting job on waitlist until
+; integration area freed. INTWAKE/INTWAKE0/INTWAKE1 handle restart recovery,
+; preserving QPRET return address across restarts. Critical for P20-P25
+; navigation programs that may have multiple concurrent integration requests.
+; ============================================================================
+
 INTSTALL	EXIT
 		CA	RASFLAG
 		MASK	INTBITAB	# IS THIS STALL AREA FREE
@@ -831,6 +998,18 @@ WAKESTAL	CADR	INTSTALL +1
 INTBITAB	OCT	20100
 
 # Page 1221
+
+; ============================================================================
+; TRANSITION: From Integration Synchronization to State Vector Management
+;
+; With synchronization mechanisms established, attention shifts to state
+; vector transitions between powered and coast flight phases. During Apollo 11's
+; mission, these routines managed critical handoffs: after descent engine burns,
+; after RCS maneuvers, and during trajectory updates. AVETOMID transfers
+; average-g computed positions to the integration state vector, while MIDTOAV1
+; and MIDTOAV2 extrapolate states forward for guidance and navigation use.
+; ============================================================================
+
 # AVETOMID
 #
 # THIS ROUTINE PERFORMS THE TRANSITION FROM A THRUSTING PHASE TO THE COAST
@@ -904,6 +1083,18 @@ INT/W		DLOAD	CALL
 			INTEGRV
 		GOTO
 			OTHERS		# NOW GO DO THE OTHER VEHICLE
+
+; ============================================================================
+; TRANSITION: From W-Matrix Integration to State Vector Extrapolation
+;
+; After computing updated navigation states, the AGC must extrapolate position
+; and velocity forward to support real-time guidance decisions. MIDTOAV1
+; integrates to a specified future time (TDEC1), while MIDTOAV2 integrates to
+; the current time plus a small delta. During Apollo 11's descent, these
+; routines provided Armstrong and Aldrin with continuously updated position
+; estimates, enabling the crew to monitor landing site approach and make the
+; critical decision to divert to a boulder-free touchdown zone.
+; ============================================================================
 
 # Page 1223
 # MIDTOAV1
@@ -1033,15 +1224,47 @@ TIMEDELT	2DEC	2000
 
 INTWAKUQ	=	INTWAK1Q	# TEMPORARY UNTIL NAME OF INTWAK1Q IS CHNG
 
+; ============================================================================
+; TRANSITION: From Time Management to State Vector Update Processing
+;
+; Having computed forward-integrated trajectories, the AGC must now commit
+; these calculations to permanent memory. INTWAKEU handles state vector update
+; requests from navigation programs, moving computed positions and velocities
+; (RRECT/VRECT) into the reference coordinate vectors (RCV/VCV). During Apollo
+; 11's mission, these updates followed optical navigation marks, radar tracking
+; measurements, and ground-computed state vectors uplinked from Mission Control.
+; The routine distinguishes between Earth and lunar sphere updates, and between
+; CSM and LM vehicle states, ensuring the correct coordinate transformations
+; and memory locations are used for each update scenario.
+; ============================================================================
+
+; State Vector Update Wake-Up Routine
+; Called when integration completes or when navigation programs request
+; permanent state vector updates. During Apollo 11, this executed after
+; optical navigation marks provided position fixes, after radar tracking
+; refined relative positions, and when Mission Control uplinked updated
+; state vectors based on ground tracking data.
+
 INTWAKEU	RELINT
 		EXTEND
 		QXCH	INTWAKUQ	# SAVE Q FOR RETURN
 
 		TC	INTPRET
 
+; Check if this wake-up is for a state vector update request.
+; UPSVFLAG values: 0 = no update, +1 = CSM Earth, +2 = CSM Moon,
+;                  -1 = LM Earth, -2 = LM Moon
+; If zero, skip to standard wake-up processing (INTWAKUP).
+
 		SLOAD	BZE		# IS THIS A CSM/LEM STATE VECTOR UPDATE
 			UPSVFLAG	# REQUEST.  IF NOT GO TO INTWAKUP.
 			INTWAKUP
+
+; Transfer computed rectangular coordinates to reference coordinate system.
+; RRECT and VRECT contain the integrated position and velocity vectors.
+; RCV and VCV are the permanent reference coordinate vectors used throughout
+; navigation computations. This transfer commits the integration results to
+; the primary navigation state.
 
 		VLOAD			# MOVE PRECT(6) AND VRECT(6) INTO
 			RRECT		#	RCV(6) AND VCV(6) RESPECTIVELY.
@@ -1049,6 +1272,14 @@ INTWAKEU	RELINT
 			VRECT		# NOW GO TO `RECTIFY +13D' TO
 		CALL			# STORE VRECT INTO VCV AND ZERO OUT
 			RECTIFY +13D	# TDELTAV(6),TNUV(6),TC(2), AND XKEP(2)
+; Determine gravitational sphere of influence (Earth vs. Moon).
+; The AGC must know which central body dominates gravity to select proper
+; coordinate transformations and perturbation models. During Apollo 11's
+; translunar coast, the spacecraft crossed the lunar sphere boundary at
+; approximately 61 hours mission elapsed time, requiring coordinate system
+; transformation from Earth-centered to Moon-centered reference frames.
+; X2 register is set to 0 for Earth sphere, 2 for lunar sphere.
+
 		SLOAD	ABS		# COMPARE ABSOLUTE VALUE OF `UPSVFLAG'
 			UPSVFLAG	# TO `UPDATE MOON STATE VECTOR CODE'
 		DSU	BZE		# TO DETERMINE WHETHER THE STATE VECTOR TO
@@ -1062,6 +1293,12 @@ INTWAKEU	RELINT
 INTWAKEM	AXT,2	SET		# LUNAR SPHERE OF INFLUENCE.
 		DEC	2
 			MOONFLAG
+; Determine which vehicle's state vector to update: CSM or LM.
+; Sign of UPSVFLAG indicates vehicle: positive = CSM, negative = LM.
+; During Apollo 11's mission, both vehicles maintained independent state
+; vectors while docked, then diverged after LM separation for descent.
+; Armstrong and Aldrin in Eagle tracked separate from Collins in Columbia.
+
 INTWAKEC	SLOAD	BMN		# COMMON CODING AFTER X2 INITIALIZED AND
 					# MOONFLAG SET (OR CLEARED).
 			UPSVFLAG	# IS THIS A REQUEST FOR A LEM OR CSM
@@ -1076,6 +1313,11 @@ INTWAKEC	SLOAD	BMN		# COMMON CODING AFTER X2 INITIALIZED AND
 INTWAKLM	CALL			# UPDATE LM STATE VECTOR
 			ATOPLEM
 
+; Clear flags and complete state vector update processing.
+; RENDWFLG is cleared after rendezvous navigation updates.
+; UPSVFLAG is reset to zero to indicate update complete.
+; INTWAKE0 releases any integration "grab" allowing other programs to proceed.
+
 INTWAKEX	CLEAR
 			RENDWFLG
 
@@ -1085,12 +1327,22 @@ INTWAKUP	SSP	CALL		# REMOVE `UPDATE STATE VECTOR INDICATOR'
 			INTWAKE0	# RELEASE `GRAB' OF ORBIT INTEG.
 		EXIT
 
+; Phase change for restart protection, then return to caller.
+; During critical mission phases (descent, rendezvous), phase changes ensure
+; that power transients or computer resets can recover navigation state.
+
 		TC	PHASCHNG
 		OCT	04026
 		TC	INTWAKUQ
 
 UPMNSVCD	OCT	2
 		OCT	0
+
+; Group 2 Phase Change Routine
+; Saves current Q register (return address) and performs phase change for
+; restart protection during Group 2 programs (P20-P25 navigation and
+; rendezvous programs). This ensures critical navigation computations can
+; be recovered after power transients or resets.
 
 GRP2PC		STQ	EXIT
 			GRP2SVQ
