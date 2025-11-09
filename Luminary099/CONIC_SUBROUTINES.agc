@@ -26,6 +26,29 @@
 #    Assemble revision 001 of AGC program LMY99 by NASA 2021112-061
 #    16:27 JULY 14, 1969
 
+; ============================================================================
+; FILE: CONIC_SUBROUTINES.agc
+; MODULE: Orbital Mechanics Core Library
+; MISSION PHASE: All phases (launch through re-entry)
+;
+; TL;DR: Implements fundamental orbital mechanics calculations using Keplerian
+;        two-body dynamics. Provides subroutines for propagating spacecraft
+;        state vectors along conic trajectories (ellipse, parabola, hyperbola),
+;        solving Lambert's problem for trajectory targeting, computing time-of-
+;        flight, and calculating apsides (periapsis/apoapsis). Foundation for
+;        all AGC navigation and guidance computations throughout the mission.
+;
+; COMMENT-ONLY READERS: This is the mathematical heart of spacecraft navigation.
+;        These routines compute where the spacecraft will be based on orbital
+;        mechanics laws, enabling trajectory planning for lunar orbit insertion,
+;        descent, ascent, and return to Earth.
+;
+; CODE-ALONG READERS: Study the implementation of Kepler's equation solver,
+;        Lambert problem iterative algorithms, and fixed-point scaled arithmetic
+;        for celestial mechanics. Note the universal treatment allowing Earth,
+;        Moon, or any celestial body as the central attracting mass.
+; ============================================================================
+
 # Page 1159
 # PROGRAM DESCRIPTION -- ENTIRE CONIC SUBROUTINE LOG SECTION	DATE - 1 SEPTEMBER 1967
 # MOD NO. - 0							LOG SECTION - CONIC SUBROUTINES
@@ -594,65 +617,115 @@
 
 		COUNT*	$$/CONIC
 		EBANK=	UR1
-KEPLERN		SETPD	BOV
+
+; ============================================================================
+; TRANSITION: From documentation to executable code
+;
+; The following subroutines implement the mathematical foundation for all
+; spacecraft trajectory computations. During Apollo 11's mission, these
+; routines executed continuously - calculating orbital positions during
+; trans-lunar coast, predicting the LM's descent trajectory, planning the
+; rendezvous between Eagle and Columbia, and computing the return path to
+; Earth. Every trajectory maneuver depended on these Keplerian calculations.
+; ============================================================================
+
+; ============================================================================
+; KEPLER SUBROUTINE - State Vector Propagation
+;
+; COMMENT-ONLY READERS: Given the spacecraft's current position and velocity,
+; this routine predicts where it will be after a specified time has elapsed.
+; It's like fast-forwarding the orbital motion mathematically. The AGC used
+; this constantly to predict future spacecraft positions for navigation and
+; guidance decisions.
+;
+; CODE-ALONG READERS: Solves Kepler's equation using Newton-Raphson iteration
+; to propagate a state vector (position RRECT, velocity VRECT) forward or
+; backward in time (DELT4). Handles all conic sections: ellipse, parabola,
+; hyperbola, and rectilinear motion. Uses scaled fixed-point arithmetic with
+; position scaled by 2^29 meters (Earth) or 2^27 meters (Moon), velocity
+; scaled by 2^7 m/cs (Earth) or 2^5 m/cs (Moon).
+;
+; Iterative algorithm: Solves f(X) = X - X0 - SL*sin(X) = 0 where X is the
+; universal anomaly. Each iteration costs ~0.083 seconds. Accuracy depends
+; on initial guess XKFPNEW. Handles forward/backward propagation and orbital
+; period modulo arithmetic for multi-revolution transfers.
+; ============================================================================
+
+
+; Initialize pushlist, load gravitational parameter from mutable table
+KEPLERN		SETPD	BOV			; Set pushdown pointer to 0, branch on overflow
 			0
 			+1
-		VLOAD*
+		VLOAD*				; Load MU (gravitational parameter) from mutable
 			MUTABLE,1
-		STOVL	14D
+		STOVL	14D			; Store MU, load position vector RRECT
 			RRECT
-		UNIT	SSP
-			ITERCTR
+
+; Compute unit position vector and initialize iteration counter
+		UNIT	SSP			; Normalize RRECT to unit vector
+			ITERCTR			; Set iteration counter to 20 (maximum iterations)
 			20D
-		STODL	URRECT
+		STODL	URRECT			; Store unit radial vector
 			36D
-		STOVL	R1
+		STOVL	R1			; Store scalar magnitude R = |RRECT|
 			RRECT
-		DOT	SL1R
-			VRECT
-		DMP	SL1R
-			1/ROOTMU	# 1/ROOTMU (-17 OR -14)
-		STOVL	KEPC1		# C1=R.V/ROOTMU (+17 OR +16)
-			VRECT
-		VSQ	DMPR
-			1/MU		# 1/MU (-34 OR -28)
-		DMP	SL3
-			R1
-		DSU	ROUND
-			D1/64
-		STORE	KEPC2		# C2=RV.V/MU -1 (+6)
 
-		BDSU	SR1R
-			D1/64
-		DDV
+; Compute Keplerian constants C1 and C2 from initial state
+; C1 = (R dot V) / sqrt(MU)  - indicates radial velocity component
+; C2 = (R * V^2) / MU - 1    - relates to orbital energy
+		DOT	SL1R			; R dot V (radial velocity component)
+			VRECT
+		DMP	SL1R			; Divide by sqrt(MU) with scaling
+			1/ROOTMU		; 1/ROOTMU (-17 OR -14)
+		STOVL	KEPC1			; C1=R.V/ROOTMU (+17 OR +16)
+			VRECT
+		VSQ	DMPR			; V squared
+			1/MU			; 1/MU (-34 OR -28)
+		DMP	SL3			; (R * V^2) / MU with scaling
 			R1
-		STORE	ALPHA		# ALPHA=(1-C2)/R1 (-22 OR -20)
+		DSU	ROUND			; Subtract 1 (scaled as D1/64)
+			D1/64
+		STORE	KEPC2			; C2=RV.V/MU -1 (+6)
 
-		BPL	DLOAD		# MAXIMUM X DEPENDS ON TYPE OF CONIC
+; Compute ALPHA parameter which determines conic type
+; ALPHA = (1 - C2) / R
+; ALPHA > 0: Ellipse (closed orbit)
+; ALPHA = 0: Parabola (escape trajectory)  
+; ALPHA < 0: Hyperbola (flyby trajectory)
+		BDSU	SR1R			; Compute (1 - C2)
+			D1/64
+		DDV				; Divide by R1
+			R1
+		STORE	ALPHA			; ALPHA=(1-C2)/R1 (-22 OR -20)
+
+; Determine maximum universal anomaly XMAX based on conic type
+; For hyperbola: XMAX = sqrt(-50/ALPHA)
+; For ellipse: XMAX = 2*pi/sqrt(ALPHA) (one complete orbit)
+		BPL	DLOAD			; Branch if ellipse (ALPHA > 0)
 			1REV
-			-50SC		# -50SC (+12)
-		DDV	BOV
+			-50SC			; Load -50 for hyperbolic case
+		DDV	BOV			; Divide by ALPHA
 			ALPHA
 			STOREMAX
-		SQRT	GOTO
+		SQRT	GOTO			; XMAX = sqrt(-50/ALPHA)
 			STOREMAX
 
-1REV		SQRT	BDDV
+1REV		SQRT	BDDV			; Ellipse case: sqrt(ALPHA)
 # Page 1175
-			2PISC		# 2PISC (+6)
+			2PISC			; Divide into 2*pi for period
 		BOV
 			STOREMAX
-STOREMAX	STORE	XMAX
-		DMP	PDDL
+STOREMAX	STORE	XMAX			; Store maximum X value
+		DMP	PDDL			; Compute orbital period (for ellipse)
 			1/ROOTMU
 			ALPHA
-		NORM	PDDL
+		NORM	PDDL			; Normalize ALPHA
 			X1
-		SL*	DDV
+		SL*	DDV			; Scale and divide
 			0 -6,1
-		BOV	BMN
+		BOV	BMN			; Check for modulo operation needed
 			MODDONE
-			MODDONE		# MPAC=PERIOD
+			MODDONE			; MPAC=PERIOD
 PERIODCH	PDDL	ABS		# 0D=PERIOD
 			TAU.
 		DSU	BMN
@@ -663,121 +736,145 @@ PERIODCH	PDDL	ABS		# 0D=PERIOD
 		STODL	TAU.
 		GOTO
 			PERIODCH
-MODDONE		SETPD	DLOAD
+; Initialize for iteration loop
+; If transfer time exceeds orbital period, modulo operation performed above
+MODDONE		SETPD	DLOAD			; Reset pushdown pointer
 			0
-			XKEPNEW
+			XKEPNEW			; Load initial guess for X
 		STORE	X
-		SIGN	BZE
+		SIGN	BZE			; Check sign of TAU (transfer time)
 			TAU.
 			BADX
-		BMN	ABS
+		BMN	ABS			; Branch if negative time
 			BADX
-		DSU	BPL
+		DSU	BPL			; Check if X exceeds XMAX
 			XMAX
 			BADX
-STORBNDS	DLOAD	BPL
+
+; Set iteration bounds based on transfer time direction
+STORBNDS	DLOAD	BPL			; Load transfer time TAU
 			TAU.
-			STOREMIN
-		DLOAD	DCOMP
-			XMAX
+			STOREMIN		; Positive time: forward propagation
+		DLOAD	DCOMP			; Negative time: backward propagation
+			XMAX			; Set bounds appropriately
 		STODL	XMIN
 			KEPZERO
 		STORE	XMAX
 		GOTO
 			DXCOMP
-STOREMIN	DLOAD
+STOREMIN	DLOAD				; Forward propagation bounds
 			KEPZERO
 		STORE	XMIN
+
+; Compute convergence tolerance EPSILONT based on transfer time
 DXCOMP		DLOAD	DMPR
 # Page 1176
 			TAU.
-			BEE22
+			BEE22			; Scale factor for tolerance
 		ABS
-		STODL	EPSILONT
+		STODL	EPSILONT		; Store convergence threshold
 			XPREV
-XDIFF		BDSU
+XDIFF		BDSU				; Compute change in X from previous
 			X
-		STORE	DELX
+		STORE	DELX			; Store delta-X for iteration
 
-KEPLOOP		DLOAD	DSQ
-			X		# X=XKEP
-		NORM	PUSH		# 0D=XSQ (+34 OR +32 -N1)	PL AT 2
-			X1
-		DMP	SRR*
+; ============================================================================
+; NEWTON-RAPHSON ITERATION LOOP
+; Solves Kepler's equation: f(X) = DELTIME(X) - TAU = 0
+; Uses derivative df/dX to compute correction: X_new = X_old - f/f'
+; Each iteration refines X until |DELTIME - TAU| < EPSILONT
+; ============================================================================
+
+KEPLOOP		DLOAD	DSQ			; Load current X, square it
+			X			; X=XKEP (universal anomaly)
+		NORM	PUSH			; Normalize and push to stack
+			X1			; 0D=XSQ (+34 OR +32 -N1)	PL AT 2
+		DMP	SRR*			; Multiply by ALPHA
 			ALPHA
 			0 -6,1
-		STCALL	XI		# XI=ALPHA XSQ (+6)
-			DELTIME
-		BOV	BDSU
-			TIMEOVFL	# UNLIKELY
-			TAU.
-		STORE	DELT		# DELT=DELINDEP
-		ABS	BDSU
+		STCALL	XI			; XI=ALPHA*XSQ (+6)
+			DELTIME			; Call DELTIME subroutine
+
+; DELTIME computes transfer time T corresponding to current X value
+; Returns: T (computed time), TC (derivative dT/dX), SL (sin/sinh term)
+		BOV	BDSU			; Check overflow
+			TIMEOVFL		; Overflow unlikely but handled
+			TAU.			; Subtract desired time
+		STORE	DELT			; DELT = T - TAU (error function)
+		ABS	BDSU			; Check convergence
 			EPSILONT
-		BPL	DLOAD
+		BPL	DLOAD			; If |DELT| < EPSILONT, converged
 			KEPCONVG
-			T
-		DSU	NORM
+			T			; Load computed time
+		DSU	NORM			; Compute T - TC
 			TC
 			X1
-		PDDL	NORM
+		PDDL	NORM			; Push to stack, load DELX
 			DELX
 			X2
-		XSU,1	DMP
+		XSU,1	DMP			; Scale and multiply
 			X2
 			DELT
 		SLR*	DDV
 			1,1
-		SR1	PUSH		# 0D=TRIAL DELX		PL AT 2
-		BPL	DLOAD
+		SR1	PUSH		# Trial correction: DELX = -DELT/(dT/dX)
+					# 0D=TRIAL DELX		PL AT 2
+
+; Check if trial DELX would move X outside valid bounds
+; Negative DELX: X decreasing, check against XMIN
+; Positive DELX: X increasing, check against XMAX
+		BPL	DLOAD		; Branch if positive DELX
 			POSDELX
-			X
-		STORE	XMAX		# MOVE MAX BOUND IN
-		BDSU	DSU		#			PL AT 0
-			XMIN
+			X		; Negative DELX case
+		STORE	XMAX		# MOVE MAX BOUND IN (current X becomes upper bound)
+		BDSU	DSU		# Check if X + DELX < XMIN
+			XMIN		#			PL AT 0
 		BOV	BPL
 			NDXCHNGE
-			NDXCHNGE
-		DLOAD	GOTO
+			NDXCHNGE	; Would go below XMIN
+		DLOAD	GOTO		; Use computed DELX
 # Page 1177
 			0D
 			NEWDELX
 
-NDXCHNGE	DLOAD	DSU
+; Negative DELX would exceed lower bound - reduce step size
+NDXCHNGE	DLOAD	DSU		; Compute distance to lower bound
 			XMIN
 			X
-		DMPR	GOTO		# TO FORCE MPAC +2 TO ZERO
-			DP9/10
+		DMPR	GOTO		# Take 90% of distance (conservative step)
+			DP9/10		# TO FORCE MPAC +2 TO ZERO
 			NEWDELX
 
+; Positive DELX case - X increasing toward XMAX
 POSDELX		DLOAD
 			X
-		STORE	XMIN		# MOVE MIN BOUND IN
-		BDSU	DSU		#			PL AT 0
-			XMAX
+		STORE	XMIN		# MOVE MIN BOUND IN (current X becomes lower bound)
+		BDSU	DSU		# Check if X + DELX > XMAX
+			XMAX		#			PL AT 0
 		BOV	BMN
 			PDXCHNGE
-			PDXCHNGE
-		DLOAD
+			PDXCHNGE	; Would go above XMAX
+		DLOAD			; Use computed DELX
 			0D
-NEWDELX		STORE	DELX
-		BZE	DAD
+NEWDELX		STORE	DELX		; Store final DELX for this iteration
+		BZE	DAD		; If zero, converged
 			KEPCONVG
-			X
-		STODL	X
+			X		; Update: X = X_old + DELX
+		STODL	X		; Store new X value
 			T
-		STORE	TC
-BRNCHCTR	RTB	BHIZ
-			CHECKCTR
-			KEPCONVG
+		STORE	TC		; Save time derivative for next iteration
+BRNCHCTR	RTB	BHIZ		; Check iteration counter
+			CHECKCTR	; Decrement and test
+			KEPCONVG	; If counter zero, exit (max iterations reached)
 		GOTO
-			KEPLOOP		# ITERATE
+			KEPLOOP		# ITERATE (continue Newton-Raphson)
 
-PDXCHNGE	DLOAD	DSU
+; Positive DELX would exceed upper bound - reduce step size
+PDXCHNGE	DLOAD	DSU		; Compute distance to upper bound
 			XMAX
 			X
-		DMPR	GOTO		# TO FORCE MPAC +2 TO ZERO
-			DP9/10
+		DMPR	GOTO		# Take 90% of distance (conservative step)
+			DP9/10		# TO FORCE MPAC +2 TO ZERO
 			NEWDELX
 
 BADX		DLOAD	SR1
@@ -1355,80 +1452,171 @@ INFINITY	SETPD	BOV		# NO SOLUTION EXISTS SINCE CLOSURE THROUGH
 OVFLCLR		SET	RVQ
 			INFINFLG
 
+; ============================================================================
+; SUBROUTINE: LAMBERT
+; 
+; PURPOSE: Solves the Lambert problem (two-point boundary value problem)
+;
+; The Lambert problem determines the velocity vectors required to transfer
+; between two position vectors in a specified time. This is fundamental to
+; orbital rendezvous, where the spacecraft must compute the required velocity
+; change to reach another vehicle at a specific time. Named after Johann
+; Heinrich Lambert who proved in 1761 that transfer time depends only on
+; the sum of distances, the chord length, and the semi-major axis.
+;
+; MATHEMATICAL FOUNDATION:
+; Given: Position vectors R1 and R2, transfer time T_desired, and gravitational
+;        parameter μ (mu)
+; Find:  Initial velocity V1 and final velocity V2
+;
+; The solution uses Gauss's formulation with an iteration on the parameter
+; COGA (cos(gamma)), where gamma is related to the transfer angle. The
+; algorithm searches for the value of COGA that produces the desired time.
+;
+; CONVERGENCE APPROACH:
+; 1. Compute geometric bounds COGAMIN and COGAMAX from position geometry
+; 2. Initialize search with guess or midpoint between bounds
+; 3. Iterate using ITERATOR subroutine to refine COGA
+; 4. Adjust bounds if trajectory is physically impossible (overflow conditions)
+; 5. Converge when computed time matches T_desired within tolerance EPSILONL
+;
+; TRAJECTORY ENERGY HANDLING:
+; - High energy: Causes overflow in P or R1A calculation, tightens upper bound
+; - Low energy: Causes time overflow, tightens lower bound
+; - Iteration bisects search space until convergence
+;
+; APOLLO 11 MISSION CONTEXT:
+; This subroutine computed rendezvous trajectories during Eagle's ascent from
+; the lunar surface, calculating the velocity needed to reach Columbia in orbit.
+; It also supported trajectory planning for mid-course corrections and orbital
+; maneuvers throughout the mission.
+;
+; COMMENT-ONLY READERS: This computes "how fast and in what direction" to reach
+; another spacecraft at a specific time - the mathematical heart of rendezvous.
+;
+; CODE-ALONG READERS: Study the iterative convergence on COGA, the bounds
+; adjustment logic (HIENERGY/LOENERGY), and the geometric calculations.
+; ============================================================================
+
 # Page 1193
+; --- LAMBERT INITIALIZATION SEQUENCE ---
+; Save return address and clear push-down list
 LAMBERT		STQ	SETPD
 			RTNLAMB
 			0D
+; Clear any previous overflow condition
 		BOV
 			+1
+; Clear solution switch flag and load gravitational parameter from mutable
+; (indexed by 1, allowing Earth or Moon μ selection)
 		CLEAR	VLOAD*
 			SOLNSW
 			MUTABLE,1
+; Store reciprocal of μ (1/μ) for efficiency in repeated calculations
 		STODL	1/MU
 			TDESIRED
+; Scale desired transfer time by constant BEE19 to create convergence tolerance
+; EPSILONL defines when the computed time is "close enough" to desired time
 		DMPR
 			BEE19
 		STORE	EPSILONL
+; Set slope switch (controls iteration direction) and load initial position R1
 		SET	VLOAD
 			SLOPESW
 			R1VEC
+; Push R1 onto stack, load R2, and call GEOM to compute geometric parameters
+; GEOM calculates transfer angle ψ, magnitudes, and other geometric quantities
 		PDVL	CALL		# 0D=R1VEC (+29 OR +27)		PL AT 6
 			R2VEC		# MPAC=R2VEC (+29 OR +27)
 			GEOM
+; GEOM returns CSTH (cos θ, where θ is transfer angle) and magnitude of R2
+; Store sine/cosine values needed for trajectory calculations
 		STODL	SNTH		# 0D=CSTH (+1)			PL AT 2
 			MAGVEC2
+; Normalize R2 magnitude and push to stack
 		NORM	PDDL
 			X1
 			R1
+; Compute ratio R1/R2 (scaled by position scale factors)
+; This ratio is fundamental to Lambert solution geometry
 		SR1	DDV		#				PL AT 2
 		SL*	PDDL		# DXCH WITH 0D, 0D=R1/R2 (+7)	PL AT 0,2
 			0 -6,1
 		STADR
+; Store cos(θ) and compute (1 - cos(θ))
+; These trigonometric values define the transfer angle and chord geometry
 		STORE	CSTH		# CSTH (+1)
 		SR1	BDSU
 			D1/4
 		STORE	1-CSTH		# 1-CSTH (+2)
 
+; Check if cos(θ) is zero (90-degree transfer)
+; Zero transfer angle requires special handling
 		ROUND	BZE
 			360LAMB
+; --- COMPUTE COGAMAX (Upper Bound for COGA Search) ---
+; COGAMAX represents the maximum allowed value of cos(γ) in the iteration.
+; For elliptic orbits, γ relates to the eccentric anomaly; for hyperbolic
+; orbits, it relates to the hyperbolic anomaly.
 		NORM	PDDL		#				PL AT 4
 			X1
 			0D
 		SR1	DDV		#				PL AT 2
 		SL*	SQRT
 			0 -3,1
+; Compute SQRT(2*R1/R2*(1-cos(θ))) - a geometric parameter that depends on
+; the chord length and position magnitudes. This establishes the upper limit
+; of the search space for trajectories connecting the two positions.
 		PDDL	SR		# 2D=SQRT(2R1/R2(1-CSTH)) (+5) 	PL AT 4
 			SNTH
 			6
+; Divide sin(θ)/(1-cos(θ)) and add to get COGAMAX preliminary value
+; This formula derives from the geometry of the transfer ellipse
 		DDV	DAD		#				PL AT 2
 			1-CSTH
 		STADR
 		STORE	COGAMAX
+; Check for overflow or negative values and apply limits
+; COGUPLIM is the maximum value that won't cause computational overflow
 		BOV	BMN		# IF OVFL, COGAMAX=COGUPLIM
 			UPLIM		# IF NEG, USE EVEN IF LT COGLOLIM, SINCE
 # Page 1194
 			MAXCOGA		# 	THIS WOULD BE RESET IN LAMBLOOP
+; Compare against upper limit constant COGUPLIM
+; If COGAMAX exceeds the limit, clamp it to prevent overflow
 		DSU	BMN		# IF COGAMAX GT COGUPLIM, COGAMAX=COGUPLIM
 			COGUPLIM
 			MAXCOGA		# OTHERWISE OK, SO GO TO MAXCOGA
 UPLIM		DLOAD
 			COGUPLIM	# COGUPLIM=.999511597 = MAX VALUE OF COGA
 		STORE	COGAMAX		#	NOT CAUSING OVFL IN R1A CALCULATION
+
+; --- COMPUTE COGAMIN (Lower Bound for COGA Search) ---
+; COGAMIN represents the minimum allowed value of cos(γ) in the iteration.
+; The lower bound depends on the geometry and sign of the transfer angle.
 MAXCOGA		DLOAD
 			CSTH
 		SR	DSU		#				PL AT 0
 			6
 		STADR
+; Compute CSTH-RHO, a parameter related to the minimum energy trajectory
 		STODL	CSTH-RHO
 			GEOMSGN
+; Check sign to determine if we need lower limit protection
 		BMN	DLOAD
 			LOLIM
 			CSTH-RHO
+; Calculate preliminary COGAMIN from geometric relationships
+; Formula: 2*(CSTH-RHO)/sin(θ)
 		SL1	DDV
 			SNTH
 		BOV
 			LOLIM
+; Store the computed minimum bound
 MINCOGA		STORE	COGAMIN		# COGAMIN (+5)
+; Check if initial guess was provided by caller
+; If GUESSW flag is set, use the provided COGA value
+; Otherwise, fall through to default initialization
 		BON	SSP
 			GUESSW
 			NOGUESS
@@ -1437,20 +1625,41 @@ MINCOGA		STORE	COGAMIN		# COGAMIN (+5)
 		DLOAD
 			COGA
 
+; ============================================================================
+; LAMBLOOP - Main Lambert Iteration Loop
+;
+; This is the core iterative solver for Lambert's problem. The iteration
+; adjusts the parameter COGA (cos of eccentric or hyperbolic anomaly) until
+; the computed time-of-flight matches the desired transfer time TDESIRED.
+;
+; The iteration uses the Newton-Raphson method, computing trajectory
+; parameters and time for the current COGA, then adjusting COGA based on
+; the time error. Bounds COGAMIN and COGAMAX are dynamically adjusted if
+; the iteration encounters impossible trajectories (overflow conditions).
+;
+; Convergence criterion: |T - TDESIRED| < EPSILONL
+; ============================================================================
 LAMBLOOP	DMP
 			SNTH
+; Compute denominator: sin(θ)*COGA - (CSTH-RHO)
+; This quantity appears in the fundamental Lambert equations
 		SR1	DSU
 			CSTH-RHO
 		NORM	PDDL		# 0D=SNTH COGA-(CSTH-RHO) (+7+C(X1)) PL=2
 			X1
 			1-CSTH
+; Calculate parameter P = (1-cos(θ)) / [sin(θ)*COGA - (CSTH-RHO)]
+; P relates the transfer geometry to the trajectory shape
 		SL*	DDV		# 1-CSTH (+2)			PL AT 0
 			0 -9D,1
+; Check for negative or zero denominator (impossible trajectory)
 		BMN	BZE
 			NEGP
 			NEGP
 		STODL	P		# P=(1-CSTH)/(SNTH COGA-(CSTH-RHO)) (+4)
 			COGA
+; Compute R1A = 2 - P*(1 + COGA²)
+; R1A is a normalized radial parameter for the trajectory at position 1
 		DSQ	DAD
 			D1/1024
 		NORM	DMP
@@ -1462,105 +1671,179 @@ LAMBLOOP	DMP
 			D1/32
 		STODL	R1A		# R1A=2-P(1+COGA COGA) (+6)
 			P
+; Check for overflow in P calculation - indicates high-energy trajectory
+; If overflow occurred, branch to adjust bounds
 		BOV	CALL
 			HIENERGY
+; Call GETX to compute XI parameter from P and R1A
+; XI relates to the eccentric or hyperbolic anomaly difference
 			GETX
+; Retrieve computed time-of-flight and save as TPREV
 		DLOAD
 			T
 		STODL	TPREV
 			XI
+; Check if XI has exceeded theoretical bounds (INFINFLG set by GETX)
+; If so, this iteration is invalid
 		BON	CALL
 			INFINFLG
 			NEGP		# HAVE EXCEEDED THEORETICAL BOUNDS
+; Call DELTIME to compute actual time-of-flight for this trajectory
 			DELTIME
+; Check for overflow in time computation (indicates very long period)
 		BOV	BDSU
 			BIGTIME
+; Compute time error: TERRLAMB = T - TDESIRED
 			TDESIRED
 		STORE	TERRLAMB
+; Check convergence: if |TERRLAMB| < EPSILONL, iteration has converged
 		ABS	BDSU
 			EPSILONL
+; If converged, proceed to initialize velocity (INITV)
 		BPL	RTB
 			INITV
+; Check iteration counter to prevent infinite loops
 			CHECKCTR
 		BHIZ	CALL
 			SUFFCHEK
+; Call ITERATOR to compute Newton-Raphson correction to COGA
 			ITERATOR
+; Retrieve correction value DCOGA from MPAC
 		DLOAD	BZE
 			MPAC
 			SUFFCHEK
+; Apply correction: COGA_new = COGA_old + DCOGA
 		DAD
 			COGA
 		STORE	COGA
+; Restart iteration loop with updated COGA
 		GOTO
 			LAMBLOOP
 
+; --- NEGP: Impossible Trajectory Handler ---
+; Reached when denominator in P calculation is negative or zero.
+; This indicates the current COGA value produces a physically impossible
+; trajectory geometry. The bounds must be adjusted and iteration restarted.
 NEGP		DLOAD	BPL		# IMPOSSIBLE TRAJECTORY DUE TO INACCURATE
 			DCOGA		# BOUND CALCULATION. TRY NEW COGA.
 			LOENERGY
 
+; --- HIENERGY: High Energy Trajectory Handler ---
+; Reached when overflow occurs in P, R1A computation, or XI exceeds limits.
+; High-energy trajectories approach parabolic/hyperbolic escape conditions.
+; The current COGA is too large; make it the new upper bound (COGAMIN).
 HIENERGY	SETPD	DLOAD		# HIGH ENERGY TRAJECTORY RESULTED
 			0
 			COGA		# IN OVFL OF P OR R1A, OR XI EXCEEDING 50.
+; Current COGA becomes new minimum bound (counterintuitive naming preserved)
 		STORE	COGAMIN		# THIS IS THE NEW BOUND.
+; Common logic: halve the step size and try again
 COMMONLM	DLOAD	SR1
 			DCOGA
 # Page 1196
+; Halve DCOGA to reduce step size for more careful iteration
 		STORE	DCOGA		# USE DCOGA/2 AS DECREMENT
+; If DCOGA is now zero, convergence cannot be achieved
 		BZE	BDSU
 			SUFFCHEK
 			COGA
 		STORE 	COGA
+; Restart iteration with adjusted bounds and step size
 		GOTO			# RESTART THIS LOOP
 			LAMBLOOP
 
+; --- BIGTIME: Time Overflow Handler ---
+; Reached when time-of-flight calculation overflows.
+; Restore previous time value to prevent corruption.
 BIGTIME		DLOAD
 			TPREV
 		STORE	T
 
+; --- LOENERGY: Low Energy Trajectory Handler ---
+; Reached when time-of-flight is too large (high orbital period).
+; Low-energy trajectories are highly elliptical with long periods.
+; The current COGA is too small; make it the new lower bound (COGAMAX).
 LOENERGY	SETPD	DLOAD		# LOW ENERGY TRAJECTORY RESULTED
 			0
 			COGA		# IN OVERFLOW OF TIME.
+; Current COGA becomes new maximum bound (counterintuitive naming preserved)
 		STORE	COGAMAX		# THIS IS THE NEW BOUND.
 		GOTO
 			COMMONLM
 
+; --- SUFFCHEK: Sufficient Convergence Check ---
+; This routine performs a more stringent convergence check than the simple
+; epsilon test in LAMBLOOP. It verifies that the relative error is acceptable.
+; Called when iteration counter reaches zero or when DCOGA becomes too small.
 SUFFCHEK	DLOAD	ABS
 			TERRLAMB
+; Compute relative error: |TERRLAMB| / TDESIRED
 		PDDL	DMP		#				PL AT 2D
 			TDESIRED
 			BEE17
+; Check if relative error is sufficiently small
 		DAD	DSU		#				PL AT 0D
 			ONEBIT
 		BPL	SETGO
 			INITV
+; Set SOLNSW flag to indicate solution found
 			SOLNSW
 			INITV
+; --- 360LAMB: 360-Degree Transfer Case Handler ---
+; Special case when transfer angle θ = 360° (CSTH = 1)
+; Lambert's problem is degenerate for this case - requires multiple revolutions
 360LAMB		SETPD	SETGO		# LAMBERT CANNOT HANDLE CSTH=1
 			0
 			SOLNSW
 			RTNLAMB
 
+; --- NOGUESS: Default COGA Initialization ---
+; Reached when no initial guess was provided by caller.
+; Initialize COGA to the midpoint of search bounds (COGAMIN + COGAMAX)/2
+; and set initial step size DCOGA equal to this value.
 NOGUESS		SSP	DLOAD
 			TWEEKIT
 			20000
 			COGAMIN
+; Compute (COGAMIN + COGAMAX) / 2
 		SR1	PDDL		#				PL AT 2
 			COGAMAX
 		SR1	DAD
 		STADR			#				PL AT 0
+; Initialize COGA to midpoint of bounds
 		STORE	COGA
+; Initialize DCOGA to same value (initial step size)
 		STORE	DCOGA
 		GOTO
 # Page 1197
 			LAMBLOOP
 
+; --- LOLIM: Lower Limit Handler ---
+; Sets COGA to the theoretical lower limit COGLOLIM = -0.999511597
+; This prevents COGA from going below physically meaningful values
 LOLIM		DLOAD	GOTO
 			COGLOLIM	# COGLOLIM=-.999511597
 			MINCOGA
 
+; ============================================================================
+; INITV: Velocity Vector Initialization from Lambert Solution
+;
+; This section computes the initial velocity vector required to achieve the
+; desired transfer. The velocity is constructed from tangential and normal
+; components derived from the Lambert solution parameters P and COGA.
+;
+; Mathematical formulation:
+;   V_tangential = sqrt(μ*P) / R1 * COGA
+;   V_normal = sqrt(μ*P) / R1
+;   V = V_tangential * UR1 + V_normal * (UN x UR1)
+;
+; where UR1 is the unit vector along R1 and UN is the unit normal to the
+; transfer plane. The resulting velocity VVEC satisfies the Lambert solution.
+; ============================================================================
 INITV		DLOAD	NORM
 			R1
 			X1
+; Compute sqrt(μ*P) / R1 - this is the velocity magnitude factor
 		PDDL	SR1		#				PL AT 2
 			P
 		DDV			#				PL AT 0
@@ -1568,24 +1851,33 @@ INITV		DLOAD	NORM
 			0 -4,1
 		DMP	SL1
 			ROOTMU
+; VTAN = velocity magnitude factor
 		PUSH	DMP		# 0D=VTAN (+7)			PL AT 2
 			COGA
+; Tangential component: VTAN * COGA * UR1
 		SL	VXSC
 			5
 			UR1
 		PDDL			# XCH WITH 0D			PL AT 0,6
+; Normal component: VTAN * (UN x UR1)
 		VXSC	VSL1
 			UN
 		VXV	VAD		#				PL AT 0
 			UR1
 		VSL1
+; Store complete initial velocity vector
 		STORE	VVEC
+; Check if target velocity magnitude is requested
 		SLOAD	BZE
 			VTARGTAG
 			TARGETV
+; Otherwise, return with VVEC computed
 		GOTO
 			RTNLAMB
 
+; --- TARGETV: Target Velocity Computation ---
+; Computes and stores the magnitude of the target velocity vector (VVEC).
+; This is used when the calling routine needs to know the required ΔV.
 TARGETV		DLOAD	CALL
 			MAGVEC2
 			LAMENTER
@@ -1594,19 +1886,80 @@ TARGETV		DLOAD	CALL
 			RTNLAMB
 
 # Page 1198
+; ============================================================================
+; TRANSITION: From Lambert Two-Point Boundary Problem to Time-Radius Solver
+;
+; The LAMBERT subroutine has computed the required velocity vector to connect
+; two position vectors R1 and R2 in a specified time-of-flight. This solved
+; the two-point boundary value problem fundamental to orbital rendezvous and
+; targeting.
+;
+; The following subroutines shift focus to single-point problems: given an
+; initial state (position and velocity), compute either the time to reach a
+; specified radius (TIMERAD) or find the apsidal radii (APSIDES). These are
+; trajectory analysis tools rather than targeting solutions.
+; ============================================================================
+
+; ============================================================================
+; SUBROUTINE: TIMERAD (Time to Radius)
+;
+; PURPOSE:
+;   Computes the time required to reach a specified radius R2 from a given
+;   initial state vector (position RVEC, velocity VVEC). Used for trajectory
+;   prediction, collision avoidance, and event timing (e.g., time to closest
+;   approach, time to periapsis/apoapsis passage).
+;
+; CALLING SEQUENCE:
+;   TC     INTPRET
+;   CALL
+;          TIMERAD
+;
+; INPUT (in interpretive stack or erasable memory):
+;   RVEC   - Initial position vector (scaled 2^29 m for Earth, 2^27 m for Moon)
+;   VVEC   - Initial velocity vector (scaled 2^7 m/cs)
+;   R2     - Target radius magnitude (same scaling as RVEC)
+;
+; OUTPUT:
+;   TRAD   - Time to reach radius R2 (scaled 2^28 centiseconds)
+;            May be positive (future) or negative (past)
+;
+; METHOD:
+;   Uses conic section mathematics with the eccentric anomaly as the
+;   independent variable. Solves Kepler's equation iteratively to find
+;   the eccentric anomaly E2 at which r = R2, then computes time from
+;   the relationship: t = (E - e*sin(E)) * sqrt(a^3/μ)
+;
+; RESTRICTIONS:
+;   - Trajectory must be elliptical or nearly circular (e < 1)
+;   - Target radius R2 must be achievable (between periapsis and apoapsis)
+;   - Does not handle parabolic or hyperbolic trajectories
+; ============================================================================
+; --- TIMERAD Entry and Initialization ---
+; Save return address and clear overflow flag to prepare for computation
 TIMERAD		STQ	SETPD		#				PL AT 0
 			RTNTR
 			0
 		BOV
 			+1
+; Load initial state vectors RVEC and VVEC
 		VLOAD	PDVL		#				PL AT 6
 			RVEC
 			VVEC
+; Call PARAM to compute orbital parameters: P, R1A, COGA, U2, UR1, UN
 		CALL
 			PARAM
 		BOV	DLOAD		#				PL AT 0
 			COGAOVFL
 			D1/32
+
+; --- Compute Velocity at Target Radius R2 ---
+; This section constructs the velocity vector at radius R2 assuming the
+; same orbital plane and angular momentum as the initial state.
+; Using vis-viva equation and conservation of angular momentum:
+;   V2 = sqrt(μ*P) / R2 = sqrt(μ*(1 - COGA^2)) / R2
+; The velocity direction has tangential and normal components.
+
+; Tangential component of velocity at R2
 		DSU	DMP
 			R1A
 			P
@@ -1617,11 +1970,18 @@ TIMERAD		STQ	SETPD		#				PL AT 0
 		PDDL	DSU		#				PL AT 6
 			D1/64
 			R1A
+; Normal component of velocity at R2
 		VXSC	VSU		#				PL AT 0
 			UR1
 		VSL4	UNIT
 		BOV
 			CIRCULAR
+
+; --- Compute Eccentricity Vector ---
+; The eccentricity vector points from the central body to periapsis and has
+; magnitude equal to the orbital eccentricity e. Computed from:
+;   e_vec = (V x H)/μ - R/|R|
+; where H is the specific angular momentum vector.
 		PDDL	NORM		# 0D=UNIT(ECC) (+3)		PL AT 6
 			RDESIRED	# 35D=ECC (+3)
 			X1
@@ -1630,28 +1990,43 @@ TIMERAD		STQ	SETPD		#				PL AT 0
 			P
 		SL*	DDV		#				PL AT 6
 			0,1
+; Compute cos(f) = (P/R - 1) / e
+; where f is the true anomaly at radius R2
 		DSU	DDV
 			D1/16
 			36D		# 36D=ECC (+3)
 		STORE	COSF
 		BOV	DSQ
 			BADR2
+; Check if solution is valid: cos^2(f) must be ≤ 1
 		BDSU	BMN
 			D1/4
 			BADR2
+; Compute sin(f) = sqrt(1 - cos^2(f))
 		SQRT	SIGN
 			SGNRDOT
 		CLEAR
 			APSESW
 # Page 1199
+; --- TERMNVEC: Terminal Normal Vector Computation ---
+; Computes terminal geometry parameters at the target radius R2.
+; This section calculates the unit position vector U2, the cos(θ) between
+; R1 and R2, and the sin(θ) for the transfer angle. These parameters define
+; the final geometric configuration of the conic trajectory.
+;
+; For comment-only readers: This determines the spacecraft's orientation and
+; position when it reaches the target radius, completing the time-radius solution.
 TERMNVEC	VXSC	VSL1
 			UN
+; Construct U2 = SINF * (UN x UR1) + COSF * UR1
 		VXV	PDVL		# VXCH WITH 0D			PL AT 0,6
 			0D
 		VXSC	VAD		#				PL AT 0
 			COSF
 		VSL1	PUSH		# 0D=U2				PL AT 6
 
+; Compute cos(θ) = U2 · UR1 (dot product of unit vectors)
+; This gives the cosine of the transfer angle between initial and final position
 		DOT	DDV		# LIMITS RESULT TO POSMAX OR NEGMAX
 			UR1
 			DP1/4
@@ -1659,22 +2034,33 @@ TERMNVEC	VXSC	VSL1
 			+1		# CLEAR OVFIND IF SET
 		STOVL	CSTH		# CSTH (+1)
 			UR1
+; Compute sin(θ) = (UR1 x U2) · UN
+; The cross product gives the perpendicular component, dotted with normal
 		VXV	VSL1
 		DOT	SL1
 			UN
 		STODL	SNTH		# SNTH (+1)
 			P
+; Call GETX to compute X parameter from P for the conic solution
 		CALL
 			GETX
+; Clear solution flag and return via common output routine
 		CLRGO
 			SOLNSW
 			COMMNOUT
 
+; --- CIRCULAR: Circular Orbit Handler ---
+; Special case: when the orbit is perfectly circular (R1 = R2), the
+; time-radius problem has a trivial solution. Set flags and abort via ABTCONIC.
 CIRCULAR	SETPD	SETGO
 			0
 			SOLNSW
 			ABTCONIC
 
+; --- BADR2: Invalid Radius Handler ---
+; Handles case where computed R2 is invalid or outside physical bounds.
+; Sets COSF to π (180°) and branches to TERMNVEC with apsis flag set.
+; This represents a half-orbit transfer reaching apoapsis or periapsis.
 BADR2		DLOAD	SIGN
 			LODPHALF
 			COSF
@@ -1685,11 +2071,35 @@ BADR2		DLOAD	SIGN
 			TERMNVEC
 
 # Page 1200
+; ============================================================================
+; APSIDES - Compute Periapsis and Apoapsis Distances
+; ============================================================================
+; Calculates the closest (periapsis) and farthest (apoapsis) distances of
+; an orbit from the central body. These are the two apsides that define the
+; size of the elliptical orbit.
+;
+; For elliptical orbits:
+;   Periapsis (RP) = a(1 - e)  - closest approach
+;   Apoapsis (RA)  = a(1 + e)  - farthest distance
+; where a = semi-major axis, e = eccentricity
+;
+; For parabolic/hyperbolic trajectories (e ≥ 1), the apoapsis is infinite
+; and the routine returns POSMAX as a flag value.
+;
+; MISSION CONTEXT: During lunar orbit insertion, this calculation determines
+; the periapsis altitude (critical for landing approach) and apoapsis altitude
+; (maximum orbital height). For Apollo 11, the initial lunar orbit had a
+; periapsis of about 100 km and apoapsis of about 120 km.
+;
+; INPUT:  RVEC, VVEC = current state vector
+; OUTPUT: Periapsis in MPAC, Apoapsis at pushlist location 0
+; ============================================================================
 APSIDES		STQ	SETPD		#				PL AT 0
 			RTNAPSE
 			0D
 		BOV
 			+1
+; Load position and velocity vectors to compute orbital parameters
 		VLOAD	PDVL		#				PL AT 6
 			RVEC
 			VVEC
@@ -1697,34 +2107,68 @@ APSIDES		STQ	SETPD		#				PL AT 0
 			PARAM
 		BOV			#				PL AT 0
 			GETECC
+; --- GETECC: Compute Eccentricity ---
+; Eccentricity determines orbit shape:
+;   e = 0: circular orbit
+;   0 < e < 1: elliptical orbit (Apollo lunar orbits typically e ≈ 0.02-0.05)
+;   e = 1: parabolic trajectory (escape velocity)
+;   e > 1: hyperbolic trajectory (interplanetary transfers)
 GETECC		DMP	SL4
 			R1A
+; Compute e = sqrt(1 + R1A * factor) where factor involves energy and momentum
 		BDSU	SQRT
 			D1/64
 		STORE	ECC
+; Calculate periapsis: RP = R1 * P / (1 + ECC)
+; The semi-latus rectum P and eccentricity define the conic section
 		DAD	PDDL		#				PL AT 2
 			D1/8
 			R1
 		DMP	SL1
 			P
 		DDV			#				PL AT 0
+; Store periapsis (closest approach distance)
 		PDDL	NORM		# 0D=RP (+29 OR +27)		PL AT 2
 			R1A
 			X1
+; Calculate apoapsis: RA = R1 * P / (1 - ECC)
+; For elliptical orbits, this gives the farthest point from central body
 		PDDL	SL*		#				PL AT 4
 			R1
 			0 -5,1
 		DDV	DSU		#				PL AT 2,0
+; Check for overflow (infinite apoapsis) or negative result (hyperbolic orbit)
 		BOV	BMN
 			INFINAPO
 			INFINAPO
 		GOTO
 			RTNAPSE
+; Handle case where apoapsis is infinite (parabolic/hyperbolic trajectory)
+; Return POSMAX as a flag indicating unbounded orbit
 INFINAPO	DLOAD	GOTO		# RETURNS WITH APOAPSIS IN MPAC, PERIAPSIS
 			LDPOSMAX
 			RTNAPSE		# THAT PL IS AT 0.
 
 # Page 1201
+; ============================================================================
+; ABTCONIC - Abort Conic Computation (Error Handler)
+; ============================================================================
+; Error exit routine called when conic subroutine computation encounters an
+; unrecoverable error condition or invalid input parameters. Issues program
+; alarm 00607 to alert crew and ground control that the trajectory calculation
+; has failed.
+;
+; Common causes for conic abort:
+;   - Input parameters exceeding scaling limits
+;   - Degenerate trajectory (e.g., zero velocity at non-zero radius)
+;   - Numerical overflow in iterative convergence
+;   - Invalid state vector (position and velocity inconsistent)
+;
+; MISSION CONTEXT: During critical mission phases (lunar orbit insertion,
+; transearth injection), a conic computation failure would require crew to
+; switch to backup navigation methods or ground-computed solutions. This
+; alarm never occurred during the actual Apollo 11 mission.
+; ============================================================================
 ABTCONIC	EXIT
 		TC	POODOO
 		OCT	00607
@@ -1732,133 +2176,253 @@ ABTCONIC	EXIT
 # Page 1202
 LDPOSMAX	EQUALS 	LODPMAX		# DPPOSMAX IN LOW MEMORY.
 
+; ============================================================================
+; ERASABLE MEMORY ASSIGNMENTS - CONIC SUBROUTINES DATA STRUCTURES
+; ============================================================================
+; This section defines the erasable memory (RAM) layout for variables and
+; temporary storage used by the conic subroutines. The AGC's limited 2K
+; words of erasable memory requires careful organization and reuse of memory
+; locations across different subroutines that don't execute concurrently.
+;
+; MEMORY ORGANIZATION STRATEGY:
+; - INPUT/OUTPUT parameters documented for each subroutine
+; - DEBRIS (temporary variables) reused across non-concurrent subroutines
+; - EQUALS directives create aliases pointing to same memory locations
+; - Memory locations specified in decimal (e.g., 8D, 14D, 20D)
+; - Multi-word vectors use +5 (6 words for 3D double-precision vector)
+;
+; SCALING CONVENTIONS:
+; Position vectors: Earth +29, Moon +27 (meters * 2^scale)
+; Velocity vectors: Earth +7, Moon +5 (meters/centisecond * 2^scale)
+; Time: +28 centiseconds
+; Angular measure: +0 or +1 (revolutions, where 1 revolution = 360 degrees)
+;
+; MEMORY REUSE STRATEGY:
+; Since KEPLER, LAMBERT, and other subroutines cannot interrupt each other
+; (enforced by user), temporary variables (DEBRIS) can safely share the same
+; memory locations. This saves precious erasable memory while maintaining
+; computational integrity.
+; ============================================================================
+
 # ERASABLE ASSIGNEMENTS
+
+; ----------------------------------------------------------------------------
+; KEPLER SUBROUTINE MEMORY ALLOCATION
+; ----------------------------------------------------------------------------
+; Memory layout for KEPLER subroutine that propagates state vectors along
+; conic trajectories. Variables organized by function: inputs from caller,
+; outputs to caller, and temporary debris for internal computation.
+; ----------------------------------------------------------------------------
 
 # KEPLER SUBROUTINE
 
+; --- INPUT PARAMETERS (supplied by calling program) ---
 # 	INPUT -
-# RRECT		ERASE 	+5
-# VRECT		ERASE	+5
-# TAU.		ERASE	+1
-# XKEP		ERASE	+1
-# TC		ERASE	+1
-# XPREV		ERASE	+1
-1/MU		EQUALS	14D
-ROOTMU		EQUALS	16D
-1/ROOTMU	EQUALS	18D
+# RRECT		ERASE 	+5	; Initial position vector (6 words, 3D DP)
+				; Scaled +29 (Earth) or +27 (Moon) meters
+# VRECT		ERASE	+5	; Initial velocity vector (6 words, 3D DP)
+				; Scaled +7 (Earth) or +5 (Moon) m/cs
+# TAU.		ERASE	+1	; Time of flight (2 words, DP)
+				; Scaled +28 centiseconds
+				; Positive = forward propagation
+				; Negative = backward extrapolation
+# XKEP		ERASE	+1	; Initial guess for universal variable X
+				; Quality of guess affects iteration count
+# TC		ERASE	+1	; Time constant for Sundman transformation
+# XPREV		ERASE	+1	; Previous X value (for multi-orbit cases)
 
+; --- GRAVITATIONAL CONSTANTS (aliases to common memory) ---
+1/MU		EQUALS	14D	; 1/μ where μ = gravitational parameter
+				; μ = GM (G = gravitational constant)
+ROOTMU		EQUALS	16D	; √μ for velocity scaling
+1/ROOTMU	EQUALS	18D	; 1/√μ inverse for efficiency
+
+; --- OUTPUT PARAMETERS (returned to calling program) ---
 # 	OUTPUT -
-# RCV		ERASE	+5
-# VCV		ERASE	+5
-# RC		ERASE	+1
-# XPREV		ERASE	+1
+# RCV		ERASE	+5	; Updated position vector after propagation
+				; Same scaling as RRECT input
+# VCV		ERASE	+5	; Updated velocity vector after propagation
+				; Same scaling as VRECT input
+# RC		ERASE	+1	; Final radius magnitude (scalar distance)
+# XPREV		ERASE	+1	; Final X value (for next iteration if needed)
 
+; --- TEMPORARY VARIABLES (DEBRIS - reused by other subroutines) ---
 # 	DEBRIS -
-ALPHA		EQUALS	8D
-XMAX		EQUALS	10D
-XMIN		EQUALS	12D
-X		EQUALS	20D
-XI		EQUALS	24D
-S(XI)		EQUALS	26D
-XSQC(XI)	EQUALS	28D
-T		EQUALS	30D
-R1		EQUALS	32D
-KEPC1		EQUALS	34D
-KEPC2		EQUALS	36D
-# DELX		ERASE	+1
-# DELT		ERASE	+1
-# URRECT	ERASE	+5
-# RCNORM	ERASE	+1
-# XPREV		EQUALS	XKEP
+ALPHA		EQUALS	8D	; Twice the specific orbital energy (2E)
+				; Used in universal variable formulation
+XMAX		EQUALS	10D	; Maximum bound for X in iteration
+XMIN		EQUALS	12D	; Minimum bound for X in iteration
+X		EQUALS	20D	; Universal variable (Sundman transformation)
+				; Relates physical time to "fictitious time"
+XI		EQUALS	24D	; Intermediate X value during iteration
+S(XI)		EQUALS	26D	; Stumpff function S(z) where z = XI²α
+				; S(z) = (√z - sin√z)/(√z)³ for ellipse
+XSQC(XI)	EQUALS	28D	; Stumpff function C(z) where z = XI²α
+				; C(z) = (1 - cos√z)/z for ellipse
+T		EQUALS	30D	; Computed time corresponding to X
+				; Compared against desired TAU
+R1		EQUALS	32D	; Initial radius magnitude |RRECT|
+KEPC1		EQUALS	34D	; Constant C1 in Kepler iteration
+KEPC2		EQUALS	36D	; Constant C2 in Kepler iteration
+# DELX		ERASE	+1	; Delta X correction in Newton iteration
+# DELT		ERASE	+1	; Delta T (time error) = TAU - T
+# URRECT	ERASE	+5	; Unit vector in RRECT direction
+# RCNORM	ERASE	+1	; Normalized radius for vector operations
+# XPREV		EQUALS	XKEP	; Alias: previous X equals input guess
 
+
+; ----------------------------------------------------------------------------
+; LAMBERT SUBROUTINE MEMORY ALLOCATION
+; ----------------------------------------------------------------------------
+; Memory layout for LAMBERT targeting subroutine that solves the two-point
+; boundary value problem: given two position vectors and desired transfer
+; time, compute the velocity vector for the transfer trajectory.
+;
+; MISSION APPLICATION: Critical for rendezvous targeting. During Apollo 11,
+; Lambert solutions computed the required velocity changes for:
+; - Translunar injection (Earth to Moon transfer)
+; - Midcourse corrections
+; - Lunar orbit insertion
+; - LM ascent targeting to rendezvous with Command Module
+; - Trans-Earth injection (Moon to Earth return)
+;
+; The Lambert problem is fundamental to orbital mechanics: "Given two
+; position vectors and the time of flight, determine the orbit connecting
+; them." Solutions depend on whether the transfer goes the "short way" or
+; "long way" around the central body (controlled by GEOMSGN).
+; ----------------------------------------------------------------------------
 
 # LAMBERT SUBROUTINE
 #
+; --- INPUT PARAMETERS ---
 # 	INPUT -
-# R1VEC 	ERASE	+5
-# R2VEC		ERASE 	+5
-# TDESIRED	ERASE	+1
-# GEOMSGN	ERASE	+0
-# GUESSW			# 0 IF COGA GUESS AVIABLE, 1 IF NOT
+# R1VEC 	ERASE	+5		; Initial position vector R₁ (departure point)
+					; Scaled +29 meters (Earth) or +27 meters (Moon)
+# R2VEC		ERASE 	+5		; Final position vector R₂ (arrival point)
+					; Same scaling as R1VEC
+# TDESIRED	ERASE	+1		; Desired time of flight between R₁ and R₂
+					; Scaled +28 centiseconds
+# GEOMSGN	ERASE	+0		; Geometric sign: 0 = short way, 1 = long way
+					; Determines which of two possible transfer orbits
+# GUESSW				; Guess switch: 0 if COGA guess available, 1 if not
+					; Controls iteration initialization strategy
 # Page 1203
-# COGA		ERASE	+1	# INPUT ONLY IF GUESS IS ZERO.
-# NORMSW			# 0 IF UN TO BE COMPUTED, 1 IF UN INPUT
-# UN		ERASE	+5	# ONLY USED IF NORMSW IS 1
-# VTARGTAG	ERASE	+0
-# TWEEKIT	EQUALS	40D	# ONLY USED IF GUESSW IS 0
+# COGA		ERASE	+1		; Guess for universal variable (input only if GUESSW = 0)
+					; Analogous to eccentric anomaly, speeds convergence
+# NORMSW				; Normal vector switch: 0 to compute UN, 1 if UN input
+					; Controls whether orbit plane is predetermined
+# UN		ERASE	+5		; Unit normal vector to orbital plane (used if NORMSW = 1)
+					; Defines orientation of transfer orbit
+# VTARGTAG	ERASE	+0		; Velocity target tag: 0 if VTARGET output desired
+# TWEEKIT	EQUALS	40D		; "Tweak-it" iteration control parameter (used if GUESSW = 0)
+					; Fine-tunes convergence behavior
 
+; --- OUTPUT PARAMETERS ---
 # 	OUTPUT -
-# VTARGET	ERASE	+5	# AVAILABLE ONLY IF VTARGTAG IS ZERO.
-# V1VEC		EQUALS	MPAC
+# VTARGET	ERASE	+5		; Computed target velocity at final position (if VTARGTAG = 0)
+					; Scaled +7 meters/centisecond (Earth) or +5 (Moon)
+# V1VEC		EQUALS	MPAC		; Computed velocity vector at R₁ (initial departure velocity)
+					; This is the primary output: the ΔV required for transfer
 
+; --- TEMPORARY VARIABLES (DEBRIS) ---
 # 	DEBRIS -
-# RTNLAMB	ERASE	+0
-# U2		ERASE	+5
-# MAGVEC2	ERASE	+1
-# UR1		ERASE	+5
-# R1		EQUALS	31D
-# UN		ERASE	+5
-# SNTH		ERASE	+1
-# CSTH		ERASE	+1
-# 1-CSTH	ERASE	+1
-# CSTH-RHO	ERASE	+1
-COGAMAX		EQUALS	14D	# CLOBBERS 1/MU
-COGAMIN		EQUALS	8D
-DCOGA		EQUALS	12D
-# TWEEKIT	EQUALS	40D
-# P		ERASE	+1
-# COGA		ERASE	+1
-# R1A		ERASE	+1
-# X		EQUALS	20D
-# XSQ		EQUALS	22D
-# XI		EQUALS	24D
-# S(XI)		EQUALS	26D
-# XSQC(XI)	EQUALS	28D
-# T		EQUALS	30D
-# KEPC1		EQUALS	34D
-# KEPC2		EQUALS	36D
-# SLOPESW
-# SOLNSW
+# RTNLAMB	ERASE	+0		; Return address for Lambert subroutine
+# U2		ERASE	+5		; Unit vector in direction of R₂
+# MAGVEC2	ERASE	+1		; Magnitude of R₂ position vector
+# UR1		ERASE	+5		; Unit vector in direction of R₁
+# R1		EQUALS	31D		; Magnitude of R₁ position vector
+# UN		ERASE	+5		; Unit normal vector (computed or input)
+# SNTH		ERASE	+1		; Sine of transfer angle θ (angle between R₁ and R₂)
+# CSTH		ERASE	+1		; Cosine of transfer angle θ
+# 1-CSTH	ERASE	+1		; (1 - cos θ) for numerical stability
+# CSTH-RHO	ERASE	+1		; (cos θ - ρ) intermediate variable
+COGAMAX		EQUALS	14D		; Maximum COGA value for iteration bounds
+					# CLOBBERS 1/MU
+COGAMIN		EQUALS	8D		; Minimum COGA value for iteration bounds
+DCOGA		EQUALS	12D		; Delta COGA step size for iteration
+# TWEEKIT	EQUALS	40D		; Iteration "tweaking" parameter (redeclared)
+# P		ERASE	+1		; Semi-latus rectum of transfer orbit
+# COGA		ERASE	+1		; Current universal variable guess (iteration variable)
+# R1A		ERASE	+1		; R₁ adjusted for iteration
+# X		EQUALS	20D		; Universal variable X (Battin formulation)
+# XSQ		EQUALS	22D		; X² (X squared)
+# XI		EQUALS	24D		; Intermediate variable ξ
+# S(XI)		EQUALS	26D		; Stumpff S function evaluated at ξ
+# XSQC(XI)	EQUALS	28D		; X²C(ξ) - Stumpff C function product
+# T		EQUALS	30D		; Computed time of flight (iteration comparison)
+# KEPC1		EQUALS	34D		; Kepler coefficient 1 for time equation
+# KEPC2		EQUALS	36D		; Kepler coefficient 2 for time equation
+# SLOPESW				; Slope switch for iteration direction
+# SOLNSW				; Solution switch: tracks which solution branch
 
+; --- SHARED VARIABLES WITH OTHER ROUTINES ---
 # 	OTHERS -
-# RVEC		EQUALS	R1VEC
-# VVEC		ERASE	+5
-# COGAFLAG
-# RVSW
-# INFINFLG
-# APSESW
-# 360SW
-# RTNTT		EQUALS	RTNLAMB
-# ECC		ERASE	+1
-# RTNTR		EQUALS	RTNLAMB
+# RVEC		EQUALS	R1VEC		; Alias for position vector (shared with other conics)
+# VVEC		ERASE	+5		; Velocity vector (shared with other conics)
+# COGAFLAG				; COGA validity flag
+# RVSW					; Reverse solution switch
+# INFINFLG				; Infinity flag (for hyperbolic escapes)
+# APSESW				; Apsis switch
+# 360SW					; 360-degree switch (multiple revolution handling)
+# RTNTT		EQUALS	RTNLAMB		; Return address alias for time-to-radius routine
+# ECC		ERASE	+1		; Eccentricity of computed transfer orbit
+# RTNTR		EQUALS	RTNLAMB		; Return address alias for time-radius routine
 # Page 1204
-# RTNAPSE	EQUALS	RTNLAMB
-# R2		EQUALS	MAGVEC2
-COSF		EQUALS	24D
-# RTNPRM	ERASE	+0
-# SCNRDOT	ERASE	+0
-# RDESIRED	ERASE	+1
+# RTNAPSE	EQUALS	RTNLAMB		; Return address alias for apsides routine
+# R2		EQUALS	MAGVEC2		; R₂ magnitude alias
+COSF		EQUALS	24D		; Cosine of true anomaly f
+# RTNPRM	ERASE	+0		; Return address for parameter routine
+# SCNRDOT	ERASE	+0		; Dot product intermediate (SC·NR)
+# RDESIRED	ERASE	+1		; Desired radius (for time-to-radius problems)
 
+
+; ----------------------------------------------------------------------------
+; ITERATOR SUBROUTINE MEMORY ALLOCATION
+; ----------------------------------------------------------------------------
+; Generic iteration framework used by multiple conic subroutines (KEPLER,
+; LAMBERT, TIMERAD). Implements secant method or similar root-finding
+; algorithms to solve implicit equations.
+;
+; The iterator converges on a solution by repeatedly computing a dependent
+; variable (DEP) from an independent variable (INDEP), comparing to the
+; desired target, and adjusting the independent variable until convergence
+; is achieved within tolerance (EPSILONT or EPSILONL).
+; ----------------------------------------------------------------------------
 
 # ITERATOR SUBROUTINE
-# ORDERSW
-MAX		EQUALS	14D		# CLOBBERS 1/MU
-MIN		EQUALS	8D
-# INDEP		ERASE	+1
-DELINDEP	EQUALS	12D
-ITERCTR		EQUALS	22D
-DEP		EQUALS	30D
-# DELDEP	ERASE	+1
-# DEPREV	ERASE	+1
-TWEEKIT		EQUALS	40D
+# ORDERSW					; Order switch: controls iteration direction
+MAX		EQUALS	14D		; Maximum bound for independent variable
+					# CLOBBERS 1/MU
+MIN		EQUALS	8D		; Minimum bound for independent variable
+# INDEP		ERASE	+1		; Independent variable (current iteration value)
+DELINDEP	EQUALS	12D		; Delta (step size) for independent variable
+ITERCTR		EQUALS	22D		; Iteration counter (tracks convergence progress)
+DEP		EQUALS	30D		; Dependent variable (computed function value)
+# DELDEP	ERASE	+1		; Delta (change) in dependent variable
+# DEPREV	ERASE	+1		; Previous dependent variable value (for secant method)
+TWEEKIT		EQUALS	40D		; Iteration tuning parameter (controls step behavior)
 
+; ----------------------------------------------------------------------------
+; ADDITIONAL KEPLER SUBROUTINE VARIABLES
+; ----------------------------------------------------------------------------
+; Tolerance parameter for KEPLER iteration convergence.
+; ----------------------------------------------------------------------------
 
 # MORE KEPLER
-# EPSILONT	ERASE	+1
+# EPSILONT	ERASE	+1		; Epsilon tolerance for time-of-flight convergence
+					; Controls when KEPLER iteration terminates
 
+; ----------------------------------------------------------------------------
+; ADDITIONAL LAMBERT SUBROUTINE VARIABLES
+; ----------------------------------------------------------------------------
+; Time error tracking for LAMBERT iteration. The Lambert problem iterates
+; on the universal variable (COGA) until computed time of flight matches
+; the desired time within tolerance EPSILONL.
+; ----------------------------------------------------------------------------
 
 # MORE LAMBERT
-# TERRLAMB	EQUALS	DELDEP
-# TPREV		EQUALS	DEPREV
+# TERRLAMB	EQUALS	DELDEP		; Time error in Lambert iteration (T_computed - T_desired)
+# TPREV		EQUALS	DEPREV		; Previous time value (for secant method convergence)
 
-# EPSILONL	EQUALS	EPSILONT +2	# DOUBLE PRECISION WORD
+# EPSILONL	EQUALS	EPSILONT +2	; Epsilon tolerance for Lambert time convergence
+					# DOUBLE PRECISION WORD (higher accuracy than KEPLER)
