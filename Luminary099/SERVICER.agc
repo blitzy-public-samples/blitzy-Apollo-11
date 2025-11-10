@@ -36,7 +36,7 @@
 ;
 ; TL;DR: Implements critical background tasks that run continuously throughout
 ;        all mission phases. Reads accelerometer (PIPA) data every 2 seconds,
-;        monitors Delta-V changes, manages Landing Radar during descent, 
+;        monitors Delta-V changes, manages Landing Radar during descent,
 ;        calculates gravity effects, updates navigation state vectors, and
 ;        provides housekeeping functions. During Apollo 11's descent, this
 ;        code processed landing radar data that enabled Armstrong and Aldrin
@@ -769,40 +769,40 @@ NORMLIZE	TC	INTPRET		# Enter interpretive mode for vector operations
 			RN1		# RN1 = integrated position vector
 			MUNFLAG		# Check if on lunar surface (MUNFLAG set)
 			NORMLIZ1	# If on Moon, use different gravity calc
-		
+
 		; Lunar operations path: Transform position to stable member coordinates.
 		; The VSL6 (vector shift left 6) converts from meters*2^29 scaling to
 		; meters*2^23 scaling required by REFSMMAT transformation.
-		
+
 		VSL6	MXV		# Scale and multiply by matrix
 			REFSMMAT	# Transform to stable member coordinates
 		STCALL	R		# Store as current position R
 			MUNGRAV		# Compute lunar gravity (MUNicipal GRAVity)
-		
+
 		; Now process velocity vector through same coordinate transformation.
 		; During descent, this velocity drives throttle and attitude commands.
-		
+
 		VLOAD	VSL1		# Load velocity vector (shift left 1)
 			VN1		# VN1 = integrated velocity vector
 		MXV			# Transform to stable member frame
-			REFSMMAT	
+			REFSMMAT
 		STOVL	V		# Store as current velocity V, load CSM velocity
 			V(CSM)		# Velocity of Command Module (for rendezvous)
-		
+
 		; Compute hyperbolic unit vector UHYP: direction from CSM to LM.
 		; This is critical after ascent begins—used to target the rendezvous.
 		; The cross product of velocity vectors gives a reference direction,
 		; normalized to unit length for navigation calculations.
-		
+
 		VXV	UNIT		# Cross product with CSM position, normalize
 			R(CSM)		# Position of Command Module
 		STORE	UHYP		# Unit vector toward CSM (rendezvous direction)
-		
+
 ASCSPOT		EXIT		# Return to native AGC code
-		
+
 		; Clear GROUP 2 phase register to ensure clean job termination.
 		; This prevents phase table conflicts during restart scenarios.
-		
+
 		EXTEND			# MAKE SURE GROUP 2 IS OFF
 		DCA	NEG0		# Load double-precision negative zero
 		DXCH	-PHASE2		# Clear phase 2 register
@@ -1291,18 +1291,18 @@ XORCHK		CAF	SIX		# ARE WE BELOW 30000 FT?
 
 CALCGRAV	UNIT	PUSH		# SAVE UNIT/R/ IN PUSHLIST	(18)
 		STORE 	UNIT/R/		# Unit position vector for direction
-		
+
 		; Determine whether we're in Earth or lunar gravity field.
 		; RTX2 = 0 for Earth orbit, = 2 for lunar operations.
 		; This selects the appropriate gravitational parameter (μ) and
 		; oblateness coefficient (J2) from indexed constant tables.
-		
+
 		LXC,1	SLOAD		# RTX2 = 0 IF EARTH ORBIT, =2 IF LUNAR.
 			RTX2		# Load index for gravity parameter selection
 			RTX2
 		DCOMP	BMN		# If negative (Earth), skip oblateness calc
 			CALCGRV1	# Go to simple spherical gravity
-		
+
 		; Compute oblateness perturbation (J2 term). The Earth and Moon are
 		; oblate spheroids (equatorial bulge), which creates an additional
 		; gravitational component proportional to (RE/RN)² and dependent on
@@ -1310,7 +1310,7 @@ CALCGRAV	UNIT	PUSH		# SAVE UNIT/R/ IN PUSHLIST	(18)
 		;
 		; The calculation: J2 correction = J2 * (RE/RN)² * f(latitude)
 		; where f(latitude) involves cos²(latitude) - 1/20 term.
-		
+
 		VLOAD	DOT		#				(12)
 			UNITZ		# Z-axis unit vector (toward pole)
 			UNIT/R/		# Dot product = cos(co-latitude)
@@ -1321,28 +1321,28 @@ CALCGRAV	UNIT	PUSH		# SAVE UNIT/R/ IN PUSHLIST	(18)
 			RESQ		# RE² or RM² (body radius squared)
 			34D		# (RN)SQ - position magnitude squared
 		STORE	32D		# TEMP FOR (RE/RN)SQ
-		
+
 		; First J2 term: radial component correction
 		DMP	DMP		# Multiply by J2 coefficient
 			20J		# 20*J2 constant
 		VXSC	PDDL		# Scale unit vector by result, push, load
 			UNIT/R/		# Radial correction component
-		
+
 		; Second J2 term: polar component correction
 		DMP	DMP		# Multiply by latitude function
-			2J		# 2*J2 constant  
+			2J		# 2*J2 constant
 			32D		# (RE/RN)² ratio
 		VXSC	VSL1		# Scale Z-axis unit vector
 			UNITZ		# Polar correction component
-		
+
 		; Combine corrections into unit gravity vector
 		VAD	STADR		# Add components and set address
 		STORE	UNITGOBL	# Unit gravity with oblateness (global)
 		VAD	PUSH		# MPAC = UNIT GRAVITY VECTOR.	(18)
-		
+
 		; Now scale by gravitational parameter μ and distance.
 		; Gravity = -μ * UNIT/R / R² scaled appropriately for integration.
-		
+
 CALCGRV1	DLOAD	NORM		# PERFORM A NORMALIZATION ON RMAGSQ IN
 			34D		# ORDER TO BE ABLE TO SCALE THE MU FOR
 			X2		# MAXIMUM PRECISION.
@@ -1478,19 +1478,19 @@ MUNRVG		VLOAD	VXSC
 MUNGRAV		UNIT			# AT 36D HAVE ABVAL(R), AT 34D R.R
 		STODL	UNIT/R/		# Store unit radial vector (direction)
 			34D		# Load R² (position magnitude squared)
-		
+
 		; Compute gravity magnitude: g = μ/R²
 		; The lunar gravitational parameter μ = 4.9028 × 10¹² m³/s²
 		; scaled and pre-multiplied by the integration time step.
-		
+
 		SL	BDDV		# Scale R² and divide by μ*ΔT
 			6D		# Shift left 6 for proper scaling
 			-MUDTMUN	# Lunar gravitational parameter * time
-		
+
 		; Scale result and apply to unit vector for final gravity vector.
 		; The SHIFT11 constant adjusts the scaling to match the integration
 		; routine's expected input format (2^7 m/cs for half delta-T).
-		
+
 		DMP	VXSC		# Multiply by scaling constant
 			SHIFT11		# Scaling factor (1 B-11 = 2^-11)
 			UNIT/R/		# Apply magnitude to direction
@@ -1550,7 +1550,7 @@ UPDATCHK	CAF	NOLRRBIT	# SEE IF LR UPDATE INHIBITED.
 		MASK	FLGWRD11
 		CCS	A
 		TCF	CONTSERV	# IT IS -- NO LR UPDATE
-		
+
 ; No inhibit - check if we have new altitude measurement data this cycle.
 ; The RNGEDBIT flag in FLGWRD11 indicates fresh altitude data from radar.
 
@@ -1581,23 +1581,23 @@ POSUPDAT	CA	FIXLOC		# SET PUSHLIST TO ZERO
 		VLOAD	VXM
 			HBEAMNB		; Landing radar beam unit vector (nav base)
 			XNBPIP		# HBEAM SM AT 2(2)
-		
+
 ; Store transformed beam vector in pushlist, then load current velocity.
 ; Velocity is scaled at 2^5 meters/centisecond for computation.
-		
+
 		PDVL	VSL2		# STORE HBEAM IN PD 0-5
 			V1S		# SCALE V AT 2(5) M/CS
-		
+
 ; Add surface velocity correction and compute velocity component along beam.
 ; This gives the rate of range change we expect from vehicle motion.
-		
+
 		VAD	DOT
 			DELVS		# V RELATIVE TO SURFACE AT 2(5) M/CS
 			0D		# V ALONG HBEAM AT 2(7) M/CS.
-		
+
 ; Scale the velocity component to radar count units for comparison with
 ; measured range. RADSKAL converts from m/cs to radar counts × 5.
-		
+
 		DMP	EXIT
 			RADSKAL		# SCALE TO RADAR COUNTS X 5
 
@@ -1624,17 +1624,17 @@ POSUPDAT	CA	FIXLOC		# SET PUSHLIST TO ZERO
  		DAD	SL		# CORRECT HMEAS FOR DOPPLER EFFECT
 			HMEAS		; Add Doppler correction to measurement
 			7D		; Shift left 7 for scaling
-		
+
 ; Convert slant range measurement to a position vector along beam direction.
 ; Multiply scalar range by beam unit vector to get range vector.
-		
+
 		DMP	VXSC		# SLANT RANGE AT 2(21), PUSH UP FOR HBEAM
 			HSCAL		# SLANT RANGE VECTOR AT 2(23) M
-		
+
 ; Project slant range onto vertical (radial from Moon center) to get altitude.
 ; Then subtract expected altitude (HCALC) to get altitude error (DELTA H).
 ; This error will be used to correct the position state vector.
-		
+
 		DOT	DSU
 			UNIT/R/		# ALTITUDE AT 2(24) M
 			HCALC		# DELTA H AT 2(24) M
@@ -1660,7 +1660,7 @@ POSUPDAT	CA	FIXLOC		# SET PUSHLIST TO ZERO
 		MASK	PSTHIBIT
 		EXTEND			# DO NOT PERFORM DATA REASONABLENESS TEST
 		BZF	NOREASON	# UNTIL AFTER HIGATE
-		
+
 # Page 885
 ; Perform altitude reasonableness test:
 ; Check if |DELTAH| > 50 feet + HCALC/8
@@ -1682,7 +1682,7 @@ POSUPDAT	CA	FIXLOC		# SET PUSHLIST TO ZERO
 		TC	BRANCH
 		TCF	HFAIL		# DELTA H TOO LARGE
 		TCF	HFAIL		# DELTA H TOO LARGE
-		
+
 ; Altitude passed reasonableness test - turn off altitude fail indicator.
 
 		TC	DOWNFLAG	# TURN OFF ALT FAIL LAMP
@@ -1709,7 +1709,7 @@ NOREASON	CS	FLGWRD11
 		DLOAD	SR4
 			HCALC		# RESCALE H TO 2(28)M
 		EXIT
-		
+
 ; Check if altitude exceeds maximum allowed for update (HMAX).
 ; If HCALC > HMAX, bypass the position update entirely.
 
@@ -1735,12 +1735,12 @@ NOREASON	CS	FLGWRD11
 		EXTEND
 		DV	LRHMAX		# WH(1 - H/HMAX)
 		TS	MPTEMP
-		
+
 ; Multiply altitude error by computed weight: DELTAH × WH × (1 - H/HMAX)
 ; This gives the weighted position correction magnitude.
 
 		TC	SHORTMP2	# DELTAH (WH)(1 - H/HMAX) IN MPAC
-		
+
 ; Convert scalar correction to vector along local vertical (UNIT/R/).
 ; Add weighted correction to current position vector R1S to get new position.
 ; Store result in GNUR and call MUNGRAV to recompute gravity at new position.
@@ -1753,7 +1753,7 @@ NOREASON	CS	FLGWRD11
 		STCALL	GNUR
 			MUNGRAV
 		EXIT
-		
+
 # Page 886
 ; Position update complete. Set phase for restart protection.
 
@@ -1787,7 +1787,7 @@ RUPDATED	TC	GNURVST
 ; ============================================================================
 
 VMEASCHK	TC	QUIKFAZ5	# RESTART AT NEXT LOCATION
-		
+
 ; Check if velocity data is available. The VELDABIT flag indicates whether
 ; a valid velocity measurement has been received from the radar.
 
@@ -2450,7 +2450,7 @@ SETPOS1		TC	MAKECADR	# MUST BE CALLED BY BANKCALL
 ; rotation angles (index TWO) and performs identical transformation computations
 ; as SETPOS1 but for the antenna's new orientation.
 SETPOS2		CA	TWO		# INDEX FOR POS2 (use second set of angles)
-		
+
 ; SETPOS: Core transformation computation routine (common code for both positions).
 ; Converts antenna coordinate frame unit vectors (UNITX, UNITY, HBEAMANT) to
 ; navigation base coordinate frame using rotation matrices. The index in Q
@@ -2458,7 +2458,7 @@ SETPOS2		CA	TWO		# INDEX FOR POS2 (use second set of angles)
 ;
 ; Computed vectors:
 ;   VXBEAMNB - Velocity beam X component in NB frame
-;   VYBEAMNB - Velocity beam Y component in NB frame  
+;   VYBEAMNB - Velocity beam Y component in NB frame
 ;   VZBEAMNB - Velocity beam Z component in NB frame (computed as X cross Y)
 ;   HBEAMNB  - Altitude beam vector in NB frame
 SETPOS		XCH	Q		# SAVE INDEX IN Q
