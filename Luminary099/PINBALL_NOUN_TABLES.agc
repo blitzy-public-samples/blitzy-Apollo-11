@@ -27,76 +27,158 @@
 #	Assemble revision 001 of AGC program LMY99 by NASA 2021112-061
 #	16:27 JULY 14, 1969
 
+; ============================================================================
+; FILE: PINBALL_NOUN_TABLES.agc
+; MODULE: Display and Crew Interface
+; MISSION PHASE: all-phases
+;
+; TL;DR: Defines the complete DSKY noun system (N01-N99) used throughout the
+;        Apollo 11 mission. Nouns are typed data containers that specify what
+;        information the crew can display or enter via the DSKY (Display and
+;        Keyboard). Each noun definition includes memory addresses, display
+;        formats, and scaling factors. Critical nouns include N63 (LM altitude
+;        and altitude rate for landing), N16 (mission time), N68 (landing site
+;        coordinates), and N43 (latitude/longitude/altitude).
+;
+; COMMENT-ONLY READERS: This file is the "data dictionary" that tells the
+;        DSKY what each numbered noun means. When you see crew procedures like
+;        "V16N63" (verb 16, noun 63), this file defines noun 63 as showing
+;        altitude and descent rate during landing.
+;
+; CODE-ALONG READERS: Study the table structures (NNADTAB for normal nouns,
+;        NNTYPTAB for mixed nouns, IDADDTAB for memory addresses, SFINTAB/
+;        SFOUTAB for scaling, RUTMXTAB for format routing). Understanding
+;        noun definitions is essential for following display interface logic.
+; ============================================================================
+
 # Page 301
+; ============================================================================
+; NOUN TABLE ENCODING SPECIFICATION
+;
+; The following sections define how noun data types are encoded in the
+; NNTYPTAB (Noun Type Table). Each noun has a type code specifying:
+; - Component count (1, 2, or 3 register displays, e.g., time has 3 components)
+; - Display mode restrictions (decimal-only vs octal/decimal)
+; - Load restrictions (whether crew can ENTER new values via DSKY)
+; - Scale factor routines (how to format for display/accept from keyboard)
+; ============================================================================
+#
 # THE FOLLOWING REFERS TO THE NOUN TABLES
+#
+; ----------------------------------------------------------------------------
+; COMPONENT CODE NUMBER ENCODING (Bits 1-5 of noun type code)
+; ----------------------------------------------------------------------------
+; This code specifies how many data components (registers) the noun displays
+; and whether crew input is permitted. Examples:
+; - N16 (time) has 3 components: hours, minutes, seconds
+; - N63 (altitude/rate) has 2 components: altitude, altitude-rate
+; - Single-value nouns have 1 component
+; ----------------------------------------------------------------------------
 #
 # COMPONENT CODE NUMBER		INTERPRETATION
 #
-#	00000			1 COMPONENT
-#	00001			2 COMPONENT
-#	00010			3 COMPONENT
-#	X1XXX			BIT 4 = 1.  DECIMAL ONLY
-#	1XXXX			BIT 5 = 1.  NO LOAD
+#	00000			1 COMPONENT (single register, e.g., N37 single time value)
+#	00001			2 COMPONENT (register pair, e.g., N63 altitude and rate)
+#	00010			3 COMPONENT (register triplet, e.g., N16 hours/min/sec or N20 IMU angles)
+#	X1XXX			BIT 4 = 1.  DECIMAL ONLY (cannot display in octal mode)
+#	1XXXX			BIT 5 = 1.  NO LOAD (display-only, crew cannot ENTER values)
 # END OF COMPONENT CODE NUMBER
+;
+; ----------------------------------------------------------------------------
+; SF ROUTINE CODE NUMBER ENCODING (Scale Factor / Format Codes)
+; ----------------------------------------------------------------------------
+; These codes specify how raw AGC memory values are converted for DSKY display
+; (OUT direction) and how crew keyboard entries are converted to memory format
+; (IN direction). Critical for proper data interpretation during mission phases.
+;
+; Example: During landing, N63 altitude (feet) and altitude-rate (ft/sec) use
+; ARITH DP1 scaling. Armstrong and Aldrin monitored V16N63 continuously during
+; final approach, with altitude-rate displayed as XXXXX. ft/sec.
+; ----------------------------------------------------------------------------
 #
 # SF ROUTINE CODE NUMBER	INTERPRETATION
 #
-# 	00000			OCTAL ONLY
-#	00001			STRAIGHT FRACTIONAL
-#	00010			CDU DEGREES (XXX.XX)
-#	00011			ARITHMETIC SF
+# 	00000			OCTAL ONLY (raw octal display, no decimal conversion)
+#	00001			STRAIGHT FRACTIONAL (pure fractional values, no scaling)
+#	00010			CDU DEGREES (XXX.XX) - IMU gimbal angles in degrees with 2 decimal places
+#	00011			ARITHMETIC SF (standard arithmetic scaling)
 #	00100			ARITH DP1	OUT (MULT BY 2EXP14 AT END)	IN (STRAIGHT)
+#					Double-precision type 1: output scaled by 16384, input direct
 #	00101			ARITH DP2	OUT (STRAIGHT)			IN (SL 7 AT END)
-#	00110			LANDING RADAR POSITION (+0000X)
+#					Double-precision type 2: output direct, input shifted left 7 bits
+#	00110			LANDING RADAR POSITION (+0000X) - radar data format with sign display
 #	00111			ARITH DP3	OUT (SL 7 AT END)		IN (STRAIGHT)
-#	01000			WHOLE HOURS IN R1, WHOLE MINUES (MOD 60) IN R2,
+#					Double-precision type 3: output shifted left 7, input direct
+#	01000			WHOLE HOURS IN R1, WHOLE MINUTES (MOD 60) IN R2,
 #					SECONDS (MOD 60) 0XX.XX IN R3.  *** ALARMS IF USED WITH OCTAL
+#					Time format: HH:MM:SS.SS (e.g., N16 mission elapsed time)
 #	01001			MINUTES (MOD 60) IN D1D2, D3 BLANK, SECONDS (MOD 60) IN D4D5
 #					LIMITS TO 59B59 IF MAG EXCEEDS THIS VALUE.
 #					ALARMS IF USED WITH OCTAL ******** IN (ALARM)
+#					Countdown format: MM_SS (e.g., N36 time-from-ignition T-minus)
 #	01010			ARITH DP4	OUT (STRAIGHT)			IN (SL 3 AT END)
+#					Double-precision type 4: output direct, input shifted left 3 bits
 #	01011			ARITH1 SF	OUT (MULT BY 2EXP14 AT END)	IN (STRAIGHT)
+#					Arithmetic type 1: output scaled by 16384, input direct
 #	01100			2 INTEGERS IN D1D2, D4D5, D3 BLANK.
 #					ALARMS IF USED WITH OCTAL ******** IN (ALARM)
-#	01101			360-CDU DEGREES (XXX.XX)
+#					Integer pair display (center digit blank for separation)
+#	01101			360-CDU DEGREES (XXX.XX) - full-circle gimbal angles (0-360 degrees)
 #
 # END OF SF ROUTINE CODE NUMBERS
 
+; ----------------------------------------------------------------------------
+; SF CONSTANT CODE NUMBER (Display Format and Units Specification)
+; ----------------------------------------------------------------------------
+; These codes define physical units, display precision, and value ranges for
+; noun data types. Each code maps to specific scaling routines (ARITH, ARITHDP1,
+; etc.) that convert between AGC internal representation and human-readable
+; display formats on the DSKY seven-segment displays.
+;
+; MISSION CONTEXT: During Apollo 11 lunar descent, critical nouns included:
+; - N63: Altitude (01110) and altitude-rate (10000) - monitored continuously
+; - N68: Landing site latitude/longitude - used for targeting Sea of Tranquility
+; - N60: Forward velocity (10001) - used during manual site selection phase
+; ----------------------------------------------------------------------------
+#
 # SF CONSTANT CODE NUMBER	INTERPRETATION
 #
-#	00000			WHOLE				USE ARITH
-#	00000			DP TIME SEC (XXX.XX SEC)	USE ARITHDP1
-#	00000			LR POSITION (+0000X)		USE LR POSITION
-#	00001			SPARE
-#	00010			CDU DEGREES			USE CDU DEGREES
-#	00010			360-CDU DEGREES			USE 360-CDU DEGREES
-#	00011			DP DEGREES (90 XX.XXX DEG	USE ARITHDP3
-#	00100			DP DEGREES (360) XXX.XX DEG	USE ARITHDP4
-#	00101			DEGREES (180) XXX.XX DEG	USE ARITH
+#	00000			WHOLE				USE ARITH (integer values, no decimals)
+#	00000			DP TIME SEC (XXX.XX SEC)	USE ARITHDP1 (time in seconds with centiseconds)
+#	00000			LR POSITION (+0000X)		USE LR POSITION (landing radar position format)
+#	00001			SPARE (unused code, reserved for future expansion)
+#	00010			CDU DEGREES			USE CDU DEGREES (gimbal angles, standard range)
+#	00010			360-CDU DEGREES			USE 360-CDU DEGREES (full-circle gimbal range)
+#	00011			DP DEGREES (90 XX.XXX DEG	USE ARITHDP3 (high-precision angles)
+#	00100			DP DEGREES (360) XXX.XX DEG	USE ARITHDP4 (full-circle with decimals)
+#	00101			DEGREES (180) XXX.XX DEG	USE ARITH (half-circle angle range)
 #	00101			OPTICAL TRACKER AZIMUTH ANGLE (XXX.XXDEG)
-#								USE ARITHDP1
-#	00110			WEIGHT2 (XXXXX. LBS)		USE ARITH1
+#								USE ARITHDP1 (AOT sighting angles)
+#	00110			WEIGHT2 (XXXXX. LBS)		USE ARITH1 (spacecraft mass in pounds)
 # Page 302
 #	00111			POSITION5 (XXX.XX NAUTICAL MILES)
-#								USE ARITHDP3
+#								USE ARITHDP3 (position with high precision)
 #	01000			POSITION4 (XXXX.X NAUTICAL MILES)
-#								USE ARITHDP3
-#	01001			VELOCITY2 (XXXXX. FT/SEC)	USE ARITHDP4
-#	01010			VELOCITY3 (XXXX.X FT/SEC)	USE ARITHDP3
-#	01011			ELEVATION DEGREES (89.999 MAX)	USE ARITH
+#								USE ARITHDP3 (position moderate precision)
+#	01001			VELOCITY2 (XXXXX. FT/SEC)	USE ARITHDP4 (velocity integer ft/sec)
+#	01010			VELOCITY3 (XXXX.X FT/SEC)	USE ARITHDP3 (velocity with 1 decimal)
+#	01011			ELEVATION DEGREES (89.999 MAX)	USE ARITH (elevation angle, limited range)
 #	01100			RENDEZVOUS RADAR RANGE (XXX.XX NAUT MI)
-#								USE ARITHDP1
+#								USE ARITHDP1 (RR range to CSM in nautical miles)
 #	01101			RENDEZVOUS RADAR RANGE RATE (XXXXX.FT/SEC)
-#								USE ARITHDP1
+#								USE ARITHDP1 (RR closing velocity)
 #	01110			LANDING RADAR ALTITUDE (XXXXX.FEET)
-#								USE ARITHDP1
+#								USE ARITHDP1 (LR altitude above surface)
+#								CRITICAL for P63/P64 landing programs
 #	01111			INITIAL/FINAL ALTITUDE (XXXXX. FEET)
-#								USE ARITHDP1
-#	10000			ALTITUDE RATE (XXXXX.FT/SEC)	USE ARITH
+#								USE ARITHDP1 (altitude targets/displays)
+#	10000			ALTITUDE RATE (XXXXX.FT/SEC)	USE ARITH (vertical descent rate)
+#								CRITICAL: Armstrong monitored this in N63 during final approach
 #	10001			FORWARD/LATERAL VELOCITY (XXXXX.FEET/SEC)
-#								USE ARITH
+#								USE ARITH (horizontal velocity components)
+#								Used during manual landing site selection
 #	10010			ROTATIONAL HAND CONTROLLER ANGLE RATES
-#					XXXXX.DEG/SEC		USE ARITH
+#					XXXXX.DEG/SEC		USE ARITH (attitude control rates)
 #	10011			LANDING RADAR VELX (XXXXX.FEET/SEC)
 #								USE ARITHDP1
 #	10100			LANDING RADAR VELY (XXXXX.FEET/SEC)
@@ -146,6 +228,38 @@
 # IDADDTAB ENTRY, IDAD2TEM THE SECOND IDADDTAB ENTRY, IDAD3TEM THE THIRD
 # IDADDTAB ENTRY, RUTMXTEM WITH THE RUTMXTAB ENTRY.  MIXBR IS SET FOR
 # MIXED OR NORMAL NOUN.
+
+;
+; ============================================================================
+; NOUN TABLE ACCESS ROUTINES
+;
+; The following subroutines retrieve noun definitions from the tables stored
+; in Bank 6. During Apollo 11's descent and landing, these routines were
+; called continuously to update DSKY displays showing critical flight data.
+;
+; LODNNTAB: Master noun table lookup routine
+;   - Retrieves noun type and format from NNADTAB/NNTYPTAB
+;   - For mixed nouns (N40-N99), also retrieves:
+;     * Memory addresses from IDADDTAB (where data is stored)
+;     * Scale factor codes from RUTMXTAB (how to convert data)
+;   - Sets MIXBR flag indicating normal (nouns 00-39) or mixed (nouns 40-99)
+;
+; GTSFOUT: Retrieves output scale factor table entries (SFOUTAB)
+;   - Determines how to format data for DSKY display
+;   - Example: Altitude scaled from internal meters to displayed feet
+;
+; GTSFIN: Retrieves input scale factor table entries (SFINTAB)
+;   - Determines how to convert crew keyboard entries to internal format
+;   - Example: Crew enters degrees, stored as scaled binary angle units
+;
+; Historical Context: During the landing sequence (102:33-102:45 MET),
+; Armstrong and Aldrin monitored N63 (altitude/altitude-rate) using V16N63.
+; These routines executed every display update cycle, fetching the noun
+; definition, retrieving altitude data from landing radar memory locations,
+; applying scale factors to convert internal representation to feet and
+; feet/second, and formatting for the seven-segment DSKY displays.
+; ============================================================================
+;
 
 		BANK	6
 		SETLOC	PINBALL3
@@ -202,6 +316,27 @@ GTSFIN		DXCH	SFTEMP1			# 2X(SFCONUM) ARIVES IN SFTEMP1.
 		DCA	SFINTAB
 		TCF	SFCOM
 
+;
+; ============================================================================
+; NNADTAB - NORMAL NOUN ADDRESS TABLE (Nouns 00-39)
+;
+; This table defines "normal" nouns where the memory address is directly
+; encoded in the table entry. Each entry contains either:
+;   - An ECADR (erasable address) pointing to data in erasable memory
+;   - An octal code with special meaning (e.g., 77776 = channel I/O)
+;   - An octal code for machine-address-specification nouns (40000)
+;
+; Normal nouns are used for frequently accessed data with fixed memory
+; locations. For nouns requiring more complex addressing (different
+; scale factors, multiple component types), see NNTYPTAB below.
+;
+; Historical Note: During Apollo 11's landing, crew primarily used mixed
+; nouns (40-99) for flight data, but normal nouns like N01-N03 (machine
+; address specification) were used during pre-flight checkout and N16
+; (time of event) was displayed throughout the mission.
+; ============================================================================
+;
+
 						# NN 	NORMAL NOUNS
 NNADTAB		OCT	00000			# 00 	NOT IN USE
 		OCT	40000			# 01 	SPECIFY MACHINE ADDRESS (FRACTIONAL)
@@ -224,11 +359,17 @@ NNADTAB		OCT	00000			# 00 	NOT IN USE
 						#	(USED BY EXTENDED VERBS ONLY)
 		OCT	77777			# 15	INCREMENT MACHINE ADDRESS
 		ECADR	DSPTEMX			# 16	TIME OF EVENT (HRS,MIN,SEC)
+;		^ N16: Displays mission event times in HH:MM:SS format
+;		  Used throughout mission for displaying burn times, ignition times
 		OCT	00000			# 17	SPARE
 		ECADR	FDAIX			# 18	AUTO MANEUVER BALL ANGLES
 		OCT	00000			# 19	SPARE
 		ECADR	CDUX			# 20	ICDU ANGLES
+;		^ N20: Displays IMU gimbal angles (inner, middle, outer CDU angles)
+;		  Critical for monitoring IMU orientation during mission
 		ECADR	PIPAX			# 21	PIPAS
+;		^ N21: Displays PIPA (accelerometer) readings
+;		  Pulsed Integrating Pendulous Accelerometers measured vehicle acceleration
 		ECADR	THETAD			# 22	NEW ICDU ANGLES
 		OCT	00000			# 23	SPARE
 		ECADR	DSPTEM2 +1		# 24	DELTA TIME FOR AGC CLOCK (HRS,MIN,SEC)
@@ -243,14 +384,42 @@ NNADTAB		OCT	00000			# 00 	NOT IN USE
 		OCT	0			# 31	SPARE
 		ECADR	-TPER			# 32	TIME TO PERIGEE (HRS,MIN,SEC)
 		ECADR	TIG			# 33	TIME OF IGNITION (HRS,MIN,SEC)
+;		^ N33: TIG - Time of Ignition for upcoming burn
+;		  Critical for mission planning and engine start sequencing
 		ECADR	DSPTEM1			# 34	TIME OF EVENT (HRS,MIN,SEC)
 		ECADR	TTOGO			# 35	TIME TO GO TO EVENT (HRS,MIN,SEC)
 		ECADR	TIME2			# 36	TIME OF AGC CLOCK (HRS,MIN,SEC)
+;		^ N36: Mission Elapsed Time (MET) display in hours:minutes:seconds
+;		  During Apollo 11 descent, MET showed 102:33 at PDI, 102:45 at touchdown
 		ECADR	TTPI			# 37	TIG OF TPI (HRS,MIN,SEC)
+;		^ N37: Time of ignition for Terminal Phase Initiation (rendezvous maneuver)
 		ECADR	TET			# 38	TIME OF STATE BEING INTEGRATED
 		OCT	00000			# 39	SPARE
 
 # END OF NNADTAB FOR NORMAL NOUNS
+
+;
+; ============================================================================
+; NNTYPTAB - MIXED NOUN TYPE TABLE (Nouns 40-99)
+;
+; Mixed nouns have components with different scale factors or formats.
+; Each octal entry encodes:
+;   Bits 1-2: Number of components (00=1, 01=2, 10=3)
+;   Bits 3-7: Scale factor routine code for component 1
+;   Bits 8-12: Scale factor routine code for component 2
+;   Bits 13-17: Scale factor routine code for component 3
+;
+; This table enables complex data displays like N43 (lat/long/alt) where
+; each component has different units and scaling, or N63 (altitude/altitude-rate)
+; critical during Apollo 11's landing sequence.
+;
+; Historical Note: During Apollo 11 descent, Armstrong and Aldrin monitored
+; V16N63 (altitude and altitude rate) continuously. The famous "1202 alarm"
+; occurred while the AGC was processing these displays along with landing
+; radar data. V06N62 displayed landing radar velocity data during final
+; approach when Armstrong took semi-manual control at ~500 feet altitude.
+; ============================================================================
+;
 
 						# NN	MIXED NOUNS
 		OCT	64000			# 40	TIME TO IGNITION/CUTOFF
@@ -264,6 +433,9 @@ NNADTAB		OCT	00000			# 00 	NOT IN USE
 		OCT	24011			# 43	LATITUDE
 						#	LONGITUDE
 						#	ALTITUDE
+;		^ N43: Position display - latitude (deg), longitude (deg), altitude (nmi)
+;		  Used to monitor spacecraft position relative to Earth or lunar surface
+;		  Landing site coordinates: Sea of Tranquility, 0.67°N, 23.5°E
 		OCT	64014			# 44	APOGEE
 						#	PERIGEE
 						#	TFF
@@ -306,12 +478,21 @@ NNADTAB		OCT	00000			# 00 	NOT IN USE
 		OCT	64102			# 62	ABSOLUTE VALUE OF VELOCITY
 						#	TIME TO IGNITION
 						#	DELTA V (ACCUMULATED)
+;		^ N62: Velocity magnitude display (used during powered flight)
 		OCT	24105			# 63	ABSOLUTE VALUE OF VELOCITY
 						#	ALTITUDE RATE
 						#	COMPUTED ALTITUDE
+;		^ N63: CRITICAL LANDING DISPLAY - Velocity, altitude rate, altitude
+;		  V16N63 was THE primary display during Apollo 11 descent
+;		  Armstrong and Aldrin continuously monitored this during the
+;		  final 12 minutes of powered descent from PDI to touchdown.
+;		  At 102:45:40 MET, N63 showed near-zero velocity at touchdown.
 		OCT	64110			# 64	TIME LEFT FOR REDESIGNATION -- LPD ANGLE
 						#	ALTITUDE RATE
 						#	COMPUTED ALTITUDE
+;		^ N64: Landing Point Designator (LPD) angle - used during approach phase
+;		  When Armstrong took semi-manual control at ~500 feet, the LPD angle
+;		  helped him visually designate the landing site to avoid boulder field
 		OCT	24113			# 65	SAMPLED AGC TIME (HRS,MIN,SEC)
 						#	(FETCHED IN INTERRUPT)
 		OCT	62116			# 66	LR	RANGE
@@ -322,6 +503,9 @@ NNADTAB		OCT	00000			# 00 	NOT IN USE
 		OCT	64124			# 68	SLANT RANGE TO LANDING SIGHT
 						#	TIME TO GO IN BRAKING PHASE
 						#	LR ALTITUDE -- COMPUTED ALTITUDE
+;		^ N68: Landing site targeting data - slant range, time-to-go, altitude
+;		  Used by guidance equations to compute trajectory to target landing site
+;		  Apollo 11 target: Sea of Tranquility, manually adjusted during descent
 		OCT	00000			# 69	SPARE
 		OCT	04132			# 70	AOT DETENT CODE/STAR CODE
 		OCT	04135			# 71	AOT DETENT CODE/STAR CODE
@@ -338,44 +522,62 @@ NNADTAB		OCT	00000			# 00 	NOT IN USE
 		OCT	24154			# 76	DESIRED HORIZONTAL VELOCITY
 						#	DESIRED RADIAL VELOCITY
 						#	CROSS-RANGE DISTANCE
+;		^ N76: Desired velocity components for rendezvous guidance targeting
 # Page 308
 		OCT	62157			# 77	TIME TO ENGINE CUTOFF
 						#	VELOCITY NORMAL TO CSM PLANE
+;		^ N77: Engine burn monitoring - time to cutoff, velocity out-of-plane
 		OCT	02162			# 78	RR	RANGE
 						#		RANGE RATE
+;		^ N78: Rendezvous Radar data - range to CSM, closing rate
+;		  Used during LM ascent and rendezvous with Columbia in lunar orbit
 		OCT	24165			# 79	CURSOR ANGLE
 						#	SPIRAL ANGLE
 						#	POSITION CODE
 		OCT	02170			# 80	DATA INDICATOR
 						#	OMEGA
 		OCT	24173			# 81	DELTA V (LV)
+;		^ N81: Delta-V in Local Vertical frame - burn planning display
 		OCT	24176			# 82	DELTA V (LV)
+;		^ N82: Delta-V in Local Vertical frame - alternate format
 		OCT	24201			# 83	DELTA V (BODY)
+;		^ N83: Delta-V in spacecraft body coordinates
 		OCT	24204			# 84	DELTA V (OTHER VEHICLE)
+;		^ N84: Delta-V relative to target vehicle (CSM during rendezvous)
 		OCT	24207			# 85	VG (BODY)
+;		^ N85: Velocity to be gained (VG) in body frame - burn monitoring
 		OCT	24212			# 86	VG (LV)
+;		^ N86: Velocity to be gained in Local Vertical frame
 		OCT	02215			# 87	BACKUP OPTICS LOS	AZIMUTH
 						#				ELEVATION
 		OCT	24220			# 88	HALF UNIT SUN OR PLANET VECTOR
+;		^ N88: Unit vector to celestial body - star/planet tracking
 		OCT	24223			# 89	LANDMARK	LATITUDE
 						#			LONGITUDE/2
 						#			ALTITUDE
+;		^ N89: Landmark position - ground site tracking and navigation updates
 		OCT	24226			# 90	Y
 						#	Y DOT
 						#	PSI
+;		^ N90: AGS (Abort Guidance System) state - out-of-plane position/velocity/angle
 		OCT	04231			# 91	ALTITUDE
 						#	VELOCITY
 						#	FLIGHT PATH ANGLE
+;		^ N91: AGS flight profile data - backup guidance system monitoring
 		OCT	00000			# 92	SPARE
 		OCT	04237			# 93	DELTA GYRO ANGLES
 		OCT	00000			# 94	SPARE
 		OCT	0			# 95	SPARE
 		OCT	0			# 96	SPARE
 		OCT	04253			# 97	SYSTEM TEST INPUTS
+;		^ N97: System self-test input values for AGC diagnostics
 		OCT	04256			# 98	SYSTEM TEST RESULTS
+;		^ N98: System self-test output results - hardware verification
 		OCT	24261			# 99	RMS IN POSITION
 						#	RMS IN VELOCITY
 						#	RMS IN BIAS
+;		^ N99: Root-Mean-Square navigation errors - accuracy monitoring
+;		  RMS values quantify uncertainty in position, velocity, and IMU bias
 
 # END OF NNADTAB FOR MIXED NOUNS
 
@@ -649,6 +851,23 @@ SFOUTAB		OCT	05174			# WHOLE, DP TIME (SEC)
 
 						# END OF SFOUTAB
 
+; ============================================================================
+; IDADDTAB - NOUN COMPONENT ADDRESS TABLE
+;
+; This table maps each noun's components to their erasable memory addresses
+; (ECADR). When a noun is displayed or updated, the system uses this table
+; to locate the actual data in RAM. Each noun has up to 3 components, stored
+; as consecutive ECADR entries.
+;
+; For COMMENT-ONLY READERS: This is the "phone book" connecting DSKY displays
+; to actual spacecraft data. When V16N63 displayed altitude and altitude rate
+; during landing, this table told the computer where to find ABVEL (velocity)
+; and HCALC1 (altitude) in memory.
+;
+; For CODE-ALONG READERS: ECADR (Erasable memory Core ADdRess) entries point
+; to RAM locations defined in ERASABLE_ASSIGNMENTS.agc. Three-component nouns
+; have 3 consecutive ECADR entries. "OCT 0" indicates unused/spare components.
+; ============================================================================
 						# NN 	SF CONSTANT		SF ROUTINE
 IDADDTAB	ECADR	TTOGO			# 40	MIN/SEC			M/S
 		ECADR	VGDISP			# 40	VEL3			DP3
@@ -836,6 +1055,23 @@ IDADDTAB	ECADR	TTOGO			# 40	MIN/SEC			M/S
 
 # END OF IDADDTAB
 
+; ============================================================================
+; RUTMXTAB - SCALING FACTOR ROUTINE MATRIX TABLE
+;
+; This table specifies which scaling factor (SF) routines to apply to each
+; noun component during display output and keyboard input. Each octal entry
+; encodes three SF routine codes (one per component) in a packed format.
+;
+; For COMMENT-ONLY READERS: Different data needs different formatting. Time
+; displays as HH:MM:SS, velocity as XXXXX.FT/SEC, angles as XXX.XX degrees.
+; This table tells the DSKY how to convert internal computer units into the
+; formats astronauts see on the display.
+;
+; For CODE-ALONG READERS: Each octal value encodes 3 SF routine codes (5 bits
+; each). Bits 1-5 = component 1 routine, bits 6-10 = component 2, bits 11-15
+; = component 3. Routine codes defined in SFINTAB/SFOUTAB comments (lines
+; 42-62): 00=OCT, 01=FRAC, 02=CDU, 03=ARITH, 04=DP1, 05=DP2, etc.
+; ============================================================================
 						# NN	SF ROUTINES
 RUTMXTAB	OCT	16351			# 40	M/S, DP3, DP3
 		OCT	00142			# 41	CDU, ARTH
