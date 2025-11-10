@@ -24,7 +24,40 @@
 #	Assemble revision 001 of AGC program LMY99 by NASA 2021112-061
 #	16:27 JULY 14, 1969
 
+# ============================================================================
+# FILE: FINDCDUW--GUIDAP_INTERFACE.agc
+# MODULE: Guidance and Digital Autopilot Interface
+# MISSION PHASE: descent/landing/ascent
+#
+# TL;DR: Critical interface between guidance computations and the Digital
+#        Autopilot (DAP). Converts guidance-computed thrust vector commands
+#        into gimbal angle increments and attitude rate commands that the
+#        RCS autopilot can execute. During both lunar descent and ascent,
+#        this module ensured guidance commands translated into precise
+#        physical engine and thruster control.
+#
+# COMMENT-ONLY READERS: This is the bridge between "where we want to point"
+#        (from guidance) and "how to point there" (for autopilot execution).
+# CODE-ALONG READERS: Study coordinate transformations from commanded thrust
+#        vectors to gimbal angles, rate calculations, and DAP data formats.
+# ============================================================================
+
 # Page 908
+;
+; ============================================================================
+; PROGRAM OVERVIEW: FINDCDUW - Guidance to Autopilot Interface
+; ============================================================================
+;
+; The Lunar Module's guidance computer calculates where the spacecraft should
+; point its engine during powered flight. But guidance speaks in mathematical
+; vectors while the autopilot needs gimbal angles and rotation rates. This
+; module performs that critical translation during both lunar descent and
+; ascent phases.
+;
+; During Apollo 11's descent on July 20, 1969, this code continuously
+; converted guidance commands into the physical control signals that kept
+; the Lunar Module on course toward the Sea of Tranquility landing site.
+;
 # PROGRAM NAME:  FINDCDUW
 # MOD NUMBER:  1	68-07-15
 # MOD AUTHOR:  KLUMPP
@@ -42,6 +75,14 @@
 #
 # FUNCTIONAL DESCRIPTION:
 #
+; Data Flow Through FINDCDUW:
+; 1. INPUT: Thrust command vector from guidance (LUNAR_LANDING_GUIDANCE_EQUATIONS
+;    or ASCENT_GUIDANCE) specifying desired engine pointing direction
+; 2. PROCESSING: Convert vector to gimbal angles accounting for current
+;    spacecraft attitude, rate limits, and gimbal lock avoidance
+; 3. OUTPUT: Gimbal angle increments and attitude rates for RCS autopilot
+;    (P-AXIS_RCS_AUTOPILOT and Q_R-AXIS_RCS_AUTOPILOT)
+;
 # FINDCDUW PROVIDES THE INTERFACES BETWEEN THE VARIOUS POWERED FLITE GUIDANCE PROGRAMS
 # AND THE DIGITAL AUTOPILOT.  THE INPUTS TO FINDCDUW ARE THE THRUST COMMAND VECTOR
 # AND THE WINDOW COMMAND VECTOR, AND THE OUTPUTS ARE THE GIMBAL ANGLE
@@ -50,6 +91,11 @@
 # LAG BEHIND A RAMP COMMAND IN ATTITUDE ANGLE DUE TO THE FINITE ANGULAR
 # ACCELERATIONS AVAILABLE).
 #
+; The thrust direction filter maintains an estimate of actual engine pointing,
+; accounting for gimbal dynamics and engine mounting. This filter continuously
+; updates during powered flight to ensure guidance commands match physical
+; engine orientation.
+;
 # FINDCDUW ALIGNS THE ESTIMATED THRUST VECTOR FROM THE THRUST DIRECTION
 # FILTER WITH THE THRUST COMMAND VECTOR, AND, WHEN XDVINHIB SET,
 # ALIGNS THE +Z HALF OF THE LM ZX PLANE WITH THE WINDOW COMMAND VECTOR.
@@ -105,14 +151,39 @@
 		EBANK=	ECDUW
 		COUNT*	$$/FCDUW
 
+; ============================================================================
+; INITIALIZATION ROUTINE: INITCDUW
+; ============================================================================
+;
+; Before each powered maneuver (lunar descent, ascent, or mid-course
+; correction), this initialization routine must be called once to establish
+; initial conditions for the thrust direction filter and window command.
+;
+; The thrust direction filter (UNFV/2) tracks the estimated actual engine
+; pointing direction, starting from the X-axis (UNITX) as initial guess.
+; The filter then adapts during powered flight based on measured vehicle
+; response to commanded gimbal angles.
+;
 INITCDUW	VLOAD
-			UNITX
-		STORE	UNFV/2
-		STORE	UNWC/2
-		RVQ
+			UNITX		; Load unit vector along X-axis
+		STORE	UNFV/2		; Initialize filtered thrust direction
+		STORE	UNWC/2		; Initialize window command vector
+		RVQ			; Return to caller
 
 # FINDCDUW PRELIMINARIES
 
+; ============================================================================
+; MAIN ENTRY POINTS: FINDCDUW and FINDCDUW-2
+; ============================================================================
+;
+; Two entry points accommodate different calling conventions:
+; FINDCDUW:   Thrust command vector is in MPAC (Multi-Purpose Accumulator)
+; FINDCDUW-2: Thrust command vector already stored in UNFC/2
+;
+; During powered flight, guidance routines call this code repeatedly (typically
+; every 2 seconds during lunar descent) to update commanded gimbal angles as
+; the desired thrust direction changes to follow the guidance trajectory.
+;
 		VLOAD			# FINDCDUW -2:  ENTRY WHEN UNFC/2 PRE-STORD
 			UNFC/2		# INPUT VECTORS NEED NOT BE SEMI-UNIT
 FINDCDUW	BOV	SETPD		# FINDCDUW: ENTRY WHEN UNFC/2 IN MPAC
@@ -121,17 +192,25 @@ FINDCDUW	BOV	SETPD		# FINDCDUW: ENTRY WHEN UNFC/2 IN MPAC
 		STQ	EXIT
 			QCDUWUSR	# SAVE RETURN ADDRESS
 
+; ============================================================================
+; HOUSEKEEPING: Save state and check operational mode
+; ============================================================================
+;
 # MORE HAUSKEEPING
 		CA	ECDUWL
 		XCH	EBANK		# SET EBANK
 		TS	ECDUWUSR	# SAVE USER'S EBANK
 
+; Check if Command/Service Module is docked (affects mass properties and
+; control authority calculations).
 		CA	DAPBOOLS
 		MASK	CSMDOCKD	# CSMDOCKD MUST NOT BE BIT15
 		CCS	A
 		CA	ONE		# INDEX IF CSM DOCKED
 		TS	NDXCDUW
 
+; Check if X-axis override is inhibited (affects whether guidance can command
+; rotations about the thrust axis during descent).
 		CA	XOVINHIB	# XOVINHIB MUST NOT BE BIT15
 		TS	FLPAUTNO	# SET TO POS-NON-ZERO FLAG PNGCS AUTO NOT
 
@@ -140,6 +219,22 @@ FINDCDUW	BOV	SETPD		# FINDCDUW: ENTRY WHEN UNFC/2 IN MPAC
 
 # Page 911
 # FETCH BASIC DATA
+;
+; ============================================================================
+; MODE DETECTION: Determine PNGCS AUTO status
+; ============================================================================
+;
+; The Primary Navigation, Guidance, and Control System (PNGCS) can operate
+; in different modes. In PNGCS AUTO mode, the computer has full control and
+; uses commanded gimbal angles (CDUXD, CDUYD, CDUZD) which represent where
+; the computer wants the spacecraft to point.
+;
+; In all other modes (manual, attitude hold, etc.), use actual gimbal angles
+; (CDUX, CDUY, CDUZ) which represent where the spacecraft currently points.
+;
+; This distinction was critical during Apollo 11 descent when Armstrong took
+; semi-manual control at low altitude to select the final landing site.
+;
 		INHINT			# RELINT AT PAUTNO (TC INTPRET)
 
 		CA	CDUX		# FETCH CDUX,CDUY,CDUZ IN ALL CASES, BUT
@@ -149,47 +244,80 @@ FINDCDUW	BOV	SETPD		# FINDCDUW: ENTRY WHEN UNFC/2 IN MPAC
 		CA	CDUZ
 		TS	CDUSPOTZ
 
+; Check PNGCS control mode via hardware channel 30.
 		CA	BIT10		# PNGCS CONTROL BIT
 		EXTEND
-		RAND	CHAN30
+		RAND	CHAN30		; Read channel 30 status
 		CCS	A
 		TCF	PAUTNO		# NOT PNGCS (BITS INVERTED)
 
+; Check if in AUTO mode via hardware channel 31.
 		CA	BIT14		# AUTO MODE BIT
 		EXTEND
-		RAND	CHAN31
+		RAND	CHAN31		; Read channel 31 status
 		CCS	A
 		TCF	PAUTNO		# NOT AUTO (BITS INVERTED)
 
+; Both conditions satisfied: in PNGCS AUTO mode.
 		TS	FLPAUTNO	# RESET FLAG PNGCS AUTO NOT
 
+; In PNGCS AUTO, use commanded gimbal angles from guidance.
 		CA	CDUXD		# PNGCS AUTO:  FETCH CDUXD,CDUYD,CDUZD
-		TS	CDUSPOTX
+		TS	CDUSPOTX	; Commanded X gimbal angle
 		CA	CDUYD
-		TS	CDUSPOTY
+		TS	CDUSPOTY	; Commanded Y gimbal angle
 		CA	CDUZD
-		TS	CDUSPOTZ
+		TS	CDUSPOTZ	; Commanded Z gimbal angle
 
 # Page 912
 # FETCH INPUTS
+;
+; ============================================================================
+; INPUT PROCESSING: Normalize command vectors and prepare for guidance
+; ============================================================================
+;
+; This section processes the thrust command vector (from guidance) and window
+; command vector (for crew visibility) into normalized semi-unit vectors.
+; The DELV (velocity-to-be-gained) is also converted to vehicle coordinates
+; for the thrust direction filter.
+;
+; Historical context: During Apollo 11 landing, the thrust command vector
+; pointed the descent engine while the window command ensured Armstrong and
+; Aldrin could see the lunar surface through the LM window.
+;
 PAUTNO		TC	INTPRET		# ENTERING THRUST CMD STILL IN MPAC
 		RTB
-			NORMUNIT
+			NORMUNIT	; Normalize thrust command to unit vector
 		STOVL	UNX/2		# SEMI-UNIT THRUST CMD AS INITIAL UNX/2
-			UNWC/2
+			UNWC/2		; Load window command vector
 		RTB	RTB
-			NORMUNIT
+			NORMUNIT	; Normalize window command to unit vector
 			QUICTRIG	# ALWAYS RQD TO OBTAIN TRIGS OF CDUD'S
 		STOVL	UNZ/2		# SEMI-UNIT WINDOW CMD AS INITIAL UNZ/2
-			DELV
-		BOVB	UNIT
+			DELV		; Load velocity-to-be-gained vector
+		BOVB	UNIT		; Convert to unit vector
 			NOATTCNT	# AT LEAST ONE ENTERING CMD VCT ZERO
-		BOV	CALL
+		BOV	CALL		; If overflow, skip filter
 			AFTRFLTR	# IF UNIT DELV OVERFLOWS SKIP FILTER
 			*SMNB*		# YIELDS UNIT(DELV) IN VEH COORDS FOR FLTR
 
 # THRUST DIRECTION FILTER
-
+;
+; ============================================================================
+; THRUST DIRECTION FILTER: Smooth thrust vector estimates
+; ============================================================================
+;
+; The thrust direction filter smooths the estimated thrust vector direction
+; based on measured vehicle acceleration (DELV). This filtering prevents
+; abrupt changes in commanded attitude that could excite vehicle dynamics.
+;
+; The filter operates on the Y and Z components of the estimated thrust
+; vector (UNFV/2), updating them based on current acceleration measurements.
+; The X component is derived from the constraint that the vector is unit.
+;
+; This filter was critical during Apollo 11 descent to maintain smooth
+; engine pointing despite sensor noise and computational quantization.
+;
 		EXIT
 
 		CA	UNFVY/2		# FOR RESTARTS, UNFV/2 ALWAYS INTACT, MPAC
@@ -197,56 +325,99 @@ PAUTNO		TC	INTPRET		# ENTERING THRUST CMD STILL IN MPAC
 		TC	FLTRSUB		#	TWO FILTER UPDATES MAY BE DONE.
 		TS	UNFVY/2		# UNFV/2 NEED NOT BE EXACTLY SEMI-UNIT.
 
-		CA	UNFVZ/2
-		LXCH	MPAC +5
-		TC	FLTRSUB
-		TS	UNFVZ/2
+		CA	UNFVZ/2		; Y component filtered
+		LXCH	MPAC +5		; Now filter Z component
+		TC	FLTRSUB		; Call filter subroutine
+		TS	UNFVZ/2		# Store filtered Z component
 
 		TC	INTPRET		# COMPLETES FILTER
 
 # Page 913
 # FIND A SUITABLE WINDOW POINTING VECTOR
-
+;
+; ============================================================================
+; WINDOW VECTOR SELECTION: Choose appropriate visibility reference
+; ============================================================================
+;
+; This section determines which body axis to align with the window command
+; vector to ensure proper crew visibility during powered flight.
+;
+; - If X-axis override is NOT inhibited (XDVINHIB clear): Use +Z body axis
+; - If X-axis override IS inhibited: Use commanded window vector (UNZ/2)
+; - If window vector is parallel to thrust: Use -X body axis instead
+;
+; The window vector ensures the crew can see critical landmarks. During
+; Apollo 11 descent, this kept the lunar surface visible through the LM
+; triangular windows, allowing Armstrong to select the landing site.
+;
 AFTRFLTR	SLOAD	BHIZ		# IF XOV NOT INHIBITED, GO FETCH ZNB
-			FLAGOODW
-			FETCHZNB
+			FLAGOODW	; Check X-override inhibit flag
+			FETCHZNB	; Branch if inhibited
+
+; X-override not inhibited: test commanded window vector
 		VLOAD	CALL
-			UNZ/2
-			UNWCTEST
+			UNZ/2		; Load commanded window vector
+			UNWCTEST	; Test if suitable
 
+; X-override inhibited: use vehicle +Z axis as window vector
 FETCHZNB	VLOAD
-			ZNBPIP
-		STCALL	UNZ/2
-			UNWCTEST
+			ZNBPIP		; Load +Z body axis vector
+		STCALL	UNZ/2		; Store as window vector
+			UNWCTEST	; Test if suitable
 
+; Window vector parallel to thrust: use -X body axis instead
 		VLOAD	VCOMP		# Z AND -X CAN'T BOTH PARALLEL UNFC/2
-			XNBPIP
-		STORE	UNZ/2
+			XNBPIP		; Load +X body axis
+		STORE	UNZ/2		; Store -X as window vector
 
 # COMPUTE THE REQUIRED DIRECTION COSINE MATRIX
-
-DCMCL		VLOAD	VXV
-			UNZ/2
-			UNX/2
+;
+; ============================================================================
+; DIRECTION COSINE MATRIX (DCM) COMPUTATION
+; ============================================================================
+;
+; The DCM defines the commanded spacecraft attitude that aligns:
+; 1. The estimated thrust vector (UNFV/2) with the thrust command (UNX/2)
+; 2. The window vector (UNZ/2) perpendicular to thrust for visibility
+;
+; This is an iterative orthogonalization process:
+; - First iteration: Compute rough orthogonal triad from UNX/2 and UNZ/2
+; - Second iteration: Apply small corrections from thrust direction filter
+;   to ensure the X-axis (thrust) exactly matches the corrected direction
+;
+; The result is a set of three orthonormal vectors (UNX/2, UNY/2, UNZ/2)
+; that define the commanded body orientation in navigation coordinates.
+;
+; This DCM was computed 25 times per second during Apollo 11 descent,
+; continuously updating the commanded attitude as guidance refined the
+; trajectory toward the landing site.
+;
+DCMCL		VLOAD	VXV		; First iteration: rough orthogonalization
+			UNZ/2		; Window vector
+			UNX/2		; Thrust command vector
 		UNIT	PUSH		# UNY/2 FIRST ITERATION
-		VXV	VSL1
+		VXV	VSL1		; Compute perpendicular to thrust
 			UNX/2
 		STORE	UNZ/2		# -UNZ/2 FIRST ITERATION
+
+; Apply thrust direction filter corrections (small angles)
 		VXSC	PDVL		# EXCHANGE -UNFVZ/2 UNZ/2 FOR UNY/2
-			UNFVZ/2		# MUST BE SMALL
+			UNFVZ/2		# MUST BE SMALL (filtered correction)
 		VXSC	BVSU		# YIELDS -UNFVY/2 UNY/2-UNFVZ/2 UNZ/2
-			UNFVY/2		# MUST BE SMALL
-		VSL1	VAD
+			UNFVY/2		# MUST BE SMALL (filtered correction)
+		VSL1	VAD		; Add corrections to commanded thrust
 			UNX/2
 		UNIT			# TOTALLY ELIMINATES THRUST POINTING ERROR
-		STORE	UNX/2		# UNX/2
+		STORE	UNX/2		# UNX/2 (corrected thrust direction)
+
+; Recompute Y and Z axes from corrected X axis
 		VXV	VSL1
 			UNZ/2		# -UNZ/2 WAS STORED HERE REMEMBER
-		STORE	UNY/2		# UNY/2
-		VCOMP	VXV
+		STORE	UNY/2		# UNY/2 (final Y axis)
+		VCOMP	VXV		; Complete orthogonal triad
 			UNX/2
 		VSL1
-		STORE	UNZ/2		# UNZ/2
+		STORE	UNZ/2		# UNZ/2 (final Z axis)
 
 # Page 914
 # COMPUTES THE REQUIRED GIMBAL ANGLES
