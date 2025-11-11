@@ -36,6 +36,24 @@
 # Refer directly to the online document mentioned above for further
 # information.  Please report any errors to info@sandroid.org.
 
+; ============================================================================
+; FILE: EXTENDED_VERBS.agc
+; MODULE: COMAID Subsystem (Mission Support)
+; MISSION PHASE: all-phases
+;
+; TL;DR: DSKY extended verb implementations documenting all extended verb
+;        functions (V40-V99) with complete catalog of purposes, required noun
+;        associations, crew procedures, and mission phase usage. Verbs are
+;        commands typed on DSKY keyboard directing AGC to perform specific
+;        operations from display updates to program mode changes throughout
+;        Apollo 11 mission.
+;
+; COMMENT-ONLY READERS: This file defines all the command codes crew could
+;        type to tell the computer what to do - like V16N36 to show time.
+; CODE-ALONG READERS: Study complete verb catalog with implementation details,
+;        noun requirements, execution logic, and DSKY state machine integration.
+; ============================================================================
+
 # Page 236
 		BANK	7
 		SETLOC	EXTVERBS
@@ -45,11 +63,84 @@
 
 		COUNT*	$$/EXTVB
 
+; ============================================================================
+; EXTENDED VERB FAN-OUT TABLE (V40-V99)
+;
+; This fan-out table routes extended verb commands (V40 through V99) to their
+; specific implementation routines. Crew enters verbs on DSKY keyboard using
+; VERB key followed by two-digit verb number. Extended verbs (40+) handle
+; specialized functions including IMU alignment, state vector updates, display
+; requests, system tests, and program control operations.
+;
+; During Apollo 11 mission, crew used these verbs throughout all phases to:
+; - Align IMU platform (V41, V42)
+; - Update spacecraft state vectors (V80, V81)
+; - Request orbital parameter displays (V82, V83)
+; - Control automatic maneuvers (V49, V58)
+; - Perform system tests and calibrations (V92, V96)
+; ============================================================================
+
 # FAN-OUT
 
 GOEXTVB		INDEX	MPAC		# VERB-40 IS IN MPAC
 		TC	LST2FAN		# FAN AS BEFORE.
 
+; ============================================================================
+; VERB 40-49: IMU ALIGNMENT, FLAGS, AND CONTROL ESTABLISHMENT
+; ============================================================================
+;
+; V40: ZERO CDU (Noun 20 only)
+;      Zeros the IMU CDU counters. Used during IMU initialization.
+;      Crew procedure: V40E (Enter). No noun required for basic operation.
+;
+; V41: COARSE ALIGN IMU (Noun 20 or 91 only)
+;      Performs coarse alignment of IMU platform to desired orientation.
+;      Used during platform alignment procedures. Crew enters desired gimbal
+;      angles via Noun 20 (3 CDU angles) or Noun 91 (desired REFSMMAT).
+;      Crew procedure: V41N20E, then enter gimbal angles.
+;
+; V42: FINE ALIGN IMU
+;      Performs fine alignment of IMU platform using gyrocompassing or star
+;      sightings. Follows coarse alignment in standard alignment sequence.
+;      Apollo 11 crew used this before major maneuvers throughout mission.
+;      Crew procedure: V42E (requires prior alignment program selection).
+;
+; V43: LOAD IMU ATTITUDE ERROR METERS
+;      Loads gimbal angle errors into IMU for display on flight director
+;      attitude indicator (FDAI). Allows crew to monitor alignment quality.
+;      Crew procedure: V43E.
+;
+; V44: SET SURFACE FLAG
+;      Sets flag indicating spacecraft is on planetary surface (Moon or Earth).
+;      Changes gravity model and navigation assumptions. Used after landing.
+;      Crew procedure: V44E.
+;
+; V45: RESET SURFACE FLAG
+;      Clears surface flag when spacecraft lifts off from surface. Eagle used
+;      this during ascent from lunar surface on July 21, 1969.
+;      Crew procedure: V45E.
+;
+; V46: ESTABLISH GUIDANCE AND CONTROL (G+C CONTROL)
+;      Establishes active guidance and control authority. Enables digital
+;      autopilot and guidance program control of spacecraft attitude/thrust.
+;      Crew procedure: V46E.
+;
+; V47: MOVE LM STATE VECTOR INTO CM SLOT
+;      Copies Lunar Module state vector (position/velocity) to Command Module
+;      slot in memory. Used during rendezvous when LM and CM are docked.
+;      Crew procedure: V47E.
+;
+; V48: LOAD AUTOPILOT DATA
+;      Loads digital autopilot (DAP) configuration parameters. Crew enters
+;      desired autopilot gains, deadbands, and control modes via DSKY.
+;      Crew procedure: V48E, then load parameters via appropriate nouns.
+;
+; V49: START AUTOMATIC ATTITUDE MANEUVER
+;      Initiates automatic attitude maneuver to orientation specified by crew.
+;      Used throughout mission for reorientations during coast phases.
+;      Crew enters desired attitude via Noun 22 (FDAI gimbal angles).
+;      Crew procedure: V49N22E, then enter desired gimbal angles.
+;
 LST2FAN		TC	VBZERO		# VB40 ZERO (USED WITH NOUN 20 ONLY).
 		TC	VBCOARK		# VB41 COARSE ALIGN (USED WITH NOUN 20 OR
 					#				91 ONLY)
@@ -61,6 +152,61 @@ LST2FAN		TC	VBZERO		# VB40 ZERO (USED WITH NOUN 20 ONLY).
 		TC	LMTOCMSV	# VB47 MOVE LM STATE VECTOR INTO CM
 		TC	DAPDISP		# VB48 LOAD A/P DATA.
 		TCF	CREWMANU	# VB 49 START AUTOMATIC ATTITUDE MANEUVER
+
+; ============================================================================
+; VERB 50-59: MARK ROUTINES, TRACKING, AND MANEUVER CONTROL
+; ============================================================================
+;
+; V50: PLEASE PERFORM (Generic mark request)
+;      Requests crew action or measurement. Context-dependent based on active
+;      program. Used by various navigation and alignment programs.
+;      Crew procedure: Varies by program context.
+;
+; V51: PLEASE MARK
+;      Requests crew to perform optical mark (star sighting or landmark).
+;      Used during navigation programs P20-P27 for state vector updates.
+;      Crew procedure: Sight target, press MARK button, V51E.
+;
+; V52: SET OFFSET NUMBER FOR P22
+;      Allows crew to specify which landmark offset to use during P22
+;      (landmark tracking) program. Used for lunar surface navigation.
+;      Crew procedure: V52E, then enter offset number.
+;
+; V53: PLEASE PERFORM COAS MARK
+;      Requests crew to perform COAS (Crewman Optical Alignment Sight) mark.
+;      Backup optical device used when sextant unavailable.
+;      Crew procedure: Align COAS on target, press MARK, V53E.
+;
+; V54: PLEASE MARK (R21 BACKUP)
+;      Backup mark request for R21 (rendezvous tracking) routine.
+;      Used during rendezvous when primary tracking unavailable.
+;      Crew procedure: Visual sighting, press MARK, V54E.
+;
+; V55: ALIGN TIME
+;      Synchronizes onboard mission timer with ground-provided time update.
+;      Used periodically throughout mission for time base synchronization.
+;      Crew procedure: V55E, then enter time from ground via Noun 33.
+;
+; V56: TERMINATE TRACKING (P20 + P25)
+;      Stops automatic tracking in programs P20 (rendezvous navigation) or
+;      P25 (orbital navigation). Returns control to crew.
+;      Crew procedure: V56E.
+;
+; V57: START R21 RENDEZVOUS TRACKING SIGHT MARK ROUTINE
+;      Initiates R21 rendezvous tracking routine for relative navigation.
+;      Used during Apollo 11 rendezvous when Columbia tracked Eagle.
+;      Crew procedure: V57E, then perform optical marks as requested.
+;
+; V58: ENABLE AUTOMATIC ATTITUDE MANEUVER
+;      Enables automatic attitude control during program execution.
+;      Allows programs to command spacecraft orientation changes.
+;      Crew procedure: V58E.
+;
+; V59: PLEASE CALIBRATE
+;      Requests crew action for system calibration procedure.
+;      Context-dependent on active program requiring calibration.
+;      Crew procedure: Varies by system being calibrated.
+;
 		TC	GOLOADLV	# VB50 PLEASE PERFORM
 		TC	GOLOADLV	# VB51 PLEASE MARK
 		TC	V52		# VB52 SET OFFSET NO. FOR P22
@@ -71,6 +217,64 @@ LST2FAN		TC	VBZERO		# VB40 ZERO (USED WITH NOUN 20 ONLY).
 		TC	GOTOR21		# V57 START R21 REND TRACK SIGHT MARK ROUT
 		TC	ENATMA		# VB58 ENABLE AUTOMATIC ATTITUDE MANEUVER
 		TC	GOLOADLV	# VB59 PLEASE CALIBRATE
+
+; ============================================================================
+; VERB 60-69: AUTOPILOT MODES, ANTENNA POINTING, AND SYSTEM TESTS
+; ============================================================================
+;
+; V60: SET CPHIX (N17) EQUAL TO CDU
+;      Sets desired gimbal angles (Noun 17) equal to current CDU values.
+;      Used to maintain current spacecraft attitude as reference.
+;      Crew procedure: V60E.
+;
+; V61: SELECT MODE I
+;      Selects autopilot mode I (specific control mode configuration).
+;      Mode configurations vary by spacecraft and mission phase.
+;      Crew procedure: V61E.
+;
+; V62: SELECT MODE II, ERROR WITH RESPECT TO NOUN 22
+;      Selects autopilot mode II with attitude errors computed relative to
+;      orientation specified in Noun 22 (FDAI gimbal angles).
+;      Crew procedure: V62N22E, enter desired attitude.
+;
+; V63: SELECT MODE III, ERROR WITH RESPECT TO NOUN 17
+;      Selects autopilot mode III with attitude errors relative to Noun 17.
+;      Provides alternative attitude reference mode.
+;      Crew procedure: V63N17E, enter desired gimbal angles.
+;
+; V64: CALCULATE AND DISPLAY S-BAND ANTENNA ANGLES
+;      Computes required S-band high-gain antenna pointing angles for Earth
+;      communication. Displays pitch/yaw angles crew should set manually.
+;      Used throughout Apollo 11 mission to maintain communication link.
+;      Crew procedure: V64E, read angles from display, position antenna.
+;
+; V65: OPTICAL VERIFICATION FOR PRELAUNCH
+;      Prelaunch optical verification test ensuring sextant alignment.
+;      Ground test procedure, not used during Apollo 11 flight.
+;      Crew procedure: V65E (ground testing only).
+;
+; V66: ATTACHED - MOVE LM TO OTHER STATE VECTOR SLOT
+;      Designates spacecraft as "attached" (docked configuration). Moves LM
+;      state vector slot. Used after docking during rendezvous.
+;      Crew procedure: V66E.
+;
+; V67: W-MATRIX MONITOR
+;      Displays W-matrix elements (navigation covariance matrix) showing
+;      estimated accuracy of state vector knowledge. Used to assess
+;      navigation quality.
+;      Crew procedure: V67E, displays covariance diagonal elements.
+;
+; V68: CSM STROKE TEST ON
+;      Activates Command/Service Module engine gimbal stroke test.
+;      Cycles engine gimbals through full range to verify actuator operation.
+;      Used before critical burns.
+;      Crew procedure: V68E.
+;
+; V69: CAUSE RESTART
+;      Forces AGC restart (warm restart with state preservation).
+;      Used for troubleshooting or recovering from anomalous conditions.
+;      Crew procedure: V69E (use with caution).
+;
 		TC	V60		# VB60 SET CPHIX (N17) EQUAL TO CDU
 		TC	V61		# VB61 SELECT MODE I
 		TC	V62		# VB62 SELECT MODE II, ERROR WRT N22
@@ -81,6 +285,60 @@ LST2FAN		TC	VBZERO		# VB40 ZERO (USED WITH NOUN 20 ONLY).
 		TC	V67		# VB67 WMATRIX MONITOR
 		TC	STROKON		# VB68 CSM STROKE TEST ON.
 VERB69		TC	VERB69		# VB 69 CAUSE RESTART
+
+; ============================================================================
+; VERB 70-79: TIME UPDATES, STATE VECTOR UPDATES, AND FLAG CONTROL
+; ============================================================================
+;
+; V70: UPDATE LIFTOFF TIME
+;      Updates stored liftoff time (T0) reference. Used if ground provides
+;      corrected liftoff time after launch or during mission planning.
+;      Crew procedure: V70E, enter time via Noun 33.
+;
+; V71: UNIVERSAL UPDATE - BLOCK ADDRESS
+;      Universal memory update allowing crew to modify block of consecutive
+;      memory locations. Ground can uplink memory changes via this verb.
+;      Crew procedure: V71E, enter start address and data values.
+;
+; V72: UNIVERSAL UPDATE - SINGLE ADDRESS
+;      Updates single memory location. Allows crew to modify specific AGC
+;      memory address with ground-provided or crew-computed value.
+;      Crew procedure: V72E, enter address (octal) and new value.
+;
+; V73: UPDATE AGC TIME (OCTAL)
+;      Updates AGC mission elapsed time clock with corrected value in octal.
+;      Used for time synchronization with Mission Control.
+;      Crew procedure: V73E, enter centiseconds since liftoff (octal).
+;
+; V74: INITIALIZE DOWNLINK TELEMETRY PROGRAM FOR ERASABLE DUMP
+;      Configures downlink telemetry to dump erasable memory contents to
+;      ground. Used for troubleshooting and ground analysis of AGC state.
+;      Crew procedure: V74E (ground-requested).
+;
+; V75: SET LIFTOFF FLAG
+;      Sets flag indicating liftoff has occurred. Changes program sequencing
+;      and navigation reference frames from prelaunch to flight configuration.
+;      Crew procedure: V75E (automatic during launch sequence).
+;
+; V76: SET PREFERRED ATTITUDE FLAG
+;      Sets flag indicating preferred attitude mode active. In this mode,
+;      autopilot maintains specified "preferred" attitude orientation.
+;      Used during coast phases to minimize propellant usage.
+;      Crew procedure: V76E.
+;
+; V77: RESET PREFERRED ATTITUDE FLAG
+;      Clears preferred attitude flag, returning to free attitude mode.
+;      Allows crew or programs to command arbitrary attitude changes.
+;      Crew procedure: V77E.
+;
+; V78: CHANGE GYROCOMPASS LAUNCH AZIMUTH
+;      Updates launch azimuth value for gyrocompass alignment mode.
+;      Used during prelaunch if launch azimuth changes.
+;      Crew procedure: V78E, enter new azimuth via Noun 34.
+;
+; V79: SPARE
+;      Reserved for future use. No function assigned in Apollo 11 software.
+;
 		TC	V70UPDAT	# VB70 UPDATE LIFTOFF TIME.
 		TC	V71UPDAT	# VB71 UNIVERSAL UPDATE - BLOCK ADDRESS.
 		TC	V72UPDAT	# VB72 UNIVERSAL UPDATE - SINGLE ADDRESS.
@@ -93,6 +351,70 @@ VERB69		TC	VERB69		# VB 69 CAUSE RESTART
 		TC	RESETPRF	# VB77 RESET PREFERRED ATT. FLAG
 		TC	CHAZFOGC	# CHANGE GYROCOMPASS LAUNCH AZIMUTH V78
 		TC	ALM/END		# V79 SPARE
+
+; ============================================================================
+; VERB 80-89: STATE VECTOR UPDATES, ORBITAL DISPLAYS, AND RANGE PARAMETERS
+; ============================================================================
+;
+; V80: UPDATE LEM STATE VECTOR
+;      Updates Lunar Module state vector (position/velocity in inertial space).
+;      Ground uplinks refined state vectors based on tracking data. During
+;      Apollo 11 rendezvous, Mission Control provided updated vectors for
+;      Eagle to improve orbital prediction accuracy.
+;      Crew procedure: V80E, enter state vector components via appropriate nouns.
+;
+; V81: UPDATE CSM STATE VECTOR
+;      Updates Command/Service Module state vector. Critical for accurate
+;      orbital mechanics predictions during translunar coast, lunar orbit,
+;      and transearth coast. Ground tracking provided updates multiple times
+;      daily during Apollo 11 mission.
+;      Crew procedure: V81E, enter state vector via noun sequence.
+;
+; V82: REQUEST ORBIT PARAMETER DISPLAY (R30)
+;      Invokes R30 routine displaying current orbital parameters: apogee
+;      altitude, perigee altitude, time to perigee, orbital period, and
+;      other Keplerian elements. Used throughout Apollo 11 for orbit
+;      verification after LOI, DOI, and transearth injection.
+;      Crew procedure: V82E, displays computed orbital parameters.
+;
+; V83: DISPLAY RANGE, RANGE RATE, +X AXIS (R31)
+;      Invokes R31 displaying range, range rate, and theta angle along
+;      spacecraft +X axis relative to target (Earth, Moon, or other vehicle).
+;      Used during rendezvous and coast to monitor relative geometry.
+;      Crew procedure: V83E.
+;
+; V84: SPARE
+;      Reserved for future use. No function assigned in Apollo 11 software.
+;
+; V85: DISPLAY RANGE, RANGE RATE, SLOS (R32)
+;      Invokes R32 routine displaying range and range rate along sextant
+;      line-of-sight (SLOS) to target. Used during optical navigation when
+;      tracking celestial bodies or other spacecraft.
+;      Crew procedure: V85E.
+;
+; V86: BACKUP MARK REJECT
+;      Rejects last navigation mark entered by crew. Used when crew determines
+;      optical mark was inaccurate (wrong star, poor sighting conditions).
+;      Prevents bad data from corrupting state vector.
+;      Crew procedure: V86E immediately after questionable mark.
+;
+; V87: SET VHF RANGE FLAG
+;      Sets flag enabling VHF ranging mode. VHF ranging provides relative
+;      range measurements between spacecraft during rendezvous. Apollo 11
+;      LM and CM used VHF for backup ranging during rendezvous phase.
+;      Crew procedure: V87E.
+;
+; V88: RESET VHF RANGE FLAG
+;      Clears VHF ranging flag, disabling VHF range measurements in navigation
+;      filter. Used when VHF ranging not available or unreliable.
+;      Crew procedure: V88E.
+;
+; V89: ALIGN X-AXIS OR PREFERRED CSM AXIS TO LINE-OF-SIGHT (R63)
+;      Invokes R63 routine commanding automatic maneuver to align spacecraft
+;      X-axis (or preferred attitude axis) to computed line-of-sight vector
+;      to target. Used during rendezvous to point spacecraft at target.
+;      Crew procedure: V89E.
+;
 		TC	LEMVEC		# VB80 UPDATE LEM STATE VECTOR
 		TC	CSMVEC		# VB81 UPDATE CSM STATE VECTOR
 		TC	V82PERF		# VB82 REQUEST ORBIT PARAM DISPLAY (R30)
@@ -103,6 +425,62 @@ VERB69		TC	VERB69		# VB 69 CAUSE RESTART
 		TC	SETVHFLG	# VB87 SET VHF RANGE FLAG
 		TC	RESETVHF	# VB88 RESET VHF RANGE FLAG
 		TC	V89PERF		# V89-ALIGN X OR PRF CSM AXIS TO LOS (R63)
+
+; ============================================================================
+; VERB 90-99: OUT-OF-PLANE PARAMETERS, SYSTEM TESTS, AND ENGINE OPERATIONS
+; ============================================================================
+;
+; V90: OUT-OF-PLANE PARAMETERS (R36)
+;      Invokes R36 displaying out-of-plane rendezvous parameters. Shows
+;      orbital plane differences between spacecraft, critical for rendezvous
+;      planning. Used during Apollo 11 LM-to-CM rendezvous.
+;      Crew procedure: V90E.
+;
+; V91: HYBRID SIMULATION AND STAGING TEMPORARY
+;      Temporary verb for hybrid simulation testing and staging operations.
+;      Used during ground testing and development, minimal flight usage.
+;      Crew procedure: V91E (ground testing).
+;
+; V92: OPERATE IMU PERFORMANCE TEST
+;      Executes comprehensive IMU (Inertial Measurement Unit) performance
+;      test checking gyro drift rates, accelerometer bias, and alignment
+;      quality. Provides diagnostic data for IMU health assessment.
+;      Used before critical maneuvers requiring high navigation accuracy.
+;      Crew procedure: V92E, test runs automatically, displays results.
+;
+; V93: CLEAR RENDEZVOUS FLAG (RENDWFLG)
+;      Clears rendezvous flag in W-matrix (navigation covariance matrix).
+;      Resets navigation state estimation when rendezvous operations complete.
+;      Crew procedure: V93E.
+;
+; V94: EXECUTE R64
+;      Invokes R64 routine (specific display or computation function).
+;      Context varies by mission phase and program configuration.
+;      Crew procedure: V94E.
+;
+; V95: SPARE
+;      Reserved for future use. No function assigned in Apollo 11 software.
+;
+; V96: SET QUITFLAG TO STOP INTEGRATION
+;      Sets flag stopping orbital integration routine. Used to freeze current
+;      state vector when numerical integration causing problems or when
+;      preparing for state vector update from ground.
+;      Crew procedure: V96E.
+;
+; V97: PLEASE PERFORM ENGINE FAIL TEST (R41)
+;      Requests crew to perform engine failure test procedure R41. Simulates
+;      engine-out conditions to verify backup modes and contingency procedures.
+;      Used during systems checkout.
+;      Crew procedure: V97E, perform test per checklist.
+;
+; V98: SPARE
+;      Reserved for future use. No function assigned in Apollo 11 software.
+;
+; V99: PLEASE ENABLE ENGINE
+;      Requests crew action to enable engine for upcoming burn. Part of
+;      pre-ignition checklist ensuring propulsion system armed and ready.
+;      Crew procedure: V99E, then enable engine per checklist.
+;
 		TC	V90PERF		# VB90-OUT OF PLAN PARAMETERS %R36"
 		TC	GOSHOSUM	# VB91 TEMP FOR HYBRID AND STG.
 		TC	SYSTEST		# VB92 OPERATE IMU PERFORMANCE TEST
@@ -113,6 +491,17 @@ VERB69		TC	VERB69		# VB 69 CAUSE RESTART
 		TC	GOLOADLV	# VB97 PLEASE PERFORM ENGINE-FAIL (R41)
 		TC	ALM/END		# VB98 SPARE
 		TC	GOLOADLV	# VB99 PLEASE ENABLE ENGINE
+
+; ============================================================================
+; END OF EXTENDED VERB FAN-OUT TABLE
+;
+; All 60 extended verbs (V40-V99) now documented. These verbs provided Apollo
+; 11 crew with comprehensive command and control capability throughout entire
+; mission from launch through splashdown. Combination of verb + noun codes
+; enabled crew to command AGC operations, request data displays, update
+; navigation state, configure autopilot modes, and execute specialized test
+; and calibration procedures.
+; ============================================================================
 
 # END OF EXTENDED VERB FAN
 

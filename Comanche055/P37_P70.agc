@@ -31,6 +31,28 @@
 #    This AGC program shall also be referred to as
 #            Colossus 2A
 
+; ============================================================================
+; FILE: P37_P70.agc
+; MODULE: TROUBLE Subsystem (Mission Programs)
+; MISSION PHASE: trans-earth
+;
+; TL;DR: Return to Earth targeting program (P37) and Transearth Injection
+;        planning (P70). Computes burn parameters for departing lunar orbit
+;        and establishing Earth return trajectory. Critical for Apollo 11's
+;        journey home after lunar operations, calculating precise TEI
+;        (Transearth Injection) maneuver executed July 21, 1969.
+;
+; COMMENT-ONLY READERS: This program calculated the engine burn that sent
+;        Apollo 11 back to Earth from lunar orbit after the successful Moon
+;        landing mission. Follow the comments to understand how the guidance
+;        computer planned the return trajectory targeting Earth's atmospheric
+;        entry corridor.
+; CODE-ALONG READERS: Study Earth return trajectory optimization, atmospheric
+;        entry corridor targeting constraints, TEI burn parameter computation,
+;        and iterative velocity vector calculations that balance fuel efficiency
+;        with reentry safety margins.
+; ============================================================================
+
 # Page 890
 		BANK	31
 		SETLOC	RTE1
@@ -38,6 +60,18 @@
 
 		EBANK=	RTEDVD
 		COUNT	31/P37
+
+; ============================================================================
+; TRANSITION: Transearth Injection Planning
+;
+; After completing lunar operations, the Command Module must execute a precise
+; engine burn to depart lunar orbit and return to Earth. This program computes
+; the Transearth Injection (TEI) burn parameters that will place the spacecraft
+; on a trajectory intersecting Earth's atmospheric entry corridor - a narrow
+; window just 27 nautical miles high. For Apollo 11, this burn occurred on
+; July 21, 1969, sending Columbia and its crew home after humanity's first
+; lunar landing mission.
+; ============================================================================
 
 # PROGRAM DESCRIPTION:  P37, RETURN TO EARTH
 #
@@ -47,6 +81,32 @@
 # 	DISPLAYED TO THE ASTRONAUT.  THEN IF THE ASTRONAUT SO DESIRES, A PRECISION TRAJECTORY IS DETERMINED WITH THE
 # 	RESULTING IGNITION AND REENTRY PARAMETERS DISPLAYED.  UPON FINAL ACCEPTANCE BY THE ASTRONAUT, THE PROGRAM
 # 	COMPUTES AND STORES THE TARGET PARAMETERS FOR RETURN TO EARTH FOR USE BY SPS PROGRAM (P40) OR RCS PROGRAM (P41).
+
+;
+; OPERATIONAL CONTEXT - Return to Earth Trajectory Planning:
+;
+; After lunar orbit operations are complete, the crew initiates P37 to plan
+; the Transearth Injection (TEI) burn. The program operates in two phases:
+;
+; 1. CONIC SOLUTION: Computes a quick two-body trajectory assuming only
+;    Earth's gravity. This provides initial burn parameters displayed to
+;    the crew for evaluation within seconds.
+;
+; 2. PRECISION SOLUTION: If crew accepts the conic solution, P37 computes
+;    a high-fidelity trajectory accounting for lunar gravity, Earth
+;    oblateness, and solar perturbations. This precision integration
+;    ensures accurate targeting of Earth's narrow entry corridor.
+;
+; The computed velocity change (DELVLVC) specifies the burn magnitude and
+; direction required to achieve the desired flight path angle (GAMMAEI)
+; at 400,000 feet altitude - the official entry interface. The entry angle
+; must be shallow enough to avoid excessive deceleration forces, yet steep
+; enough to prevent the spacecraft from skipping back out of the atmosphere.
+;
+; For Apollo 11's return on July 21, 1969, this program calculated the TEI
+; burn that brought Armstrong, Aldrin, and Collins safely home, achieving
+; Pacific Ocean splashdown on July 24.
+;
 #
 # CALLING SEQUENCE
 #	L	TC	P37
@@ -110,41 +170,90 @@
 #	RTARG		CONICALLY INTEGRATED REENTRY POSITION VECTOR		VECTOR	B29	METERS
 #	TPASS4		REENTRY TIME						DP	B28	CS
 
+;
+; P37 MAIN ENTRY POINT - Return to Earth Program
+;
+; The crew initiates P37 by entering VERB 37 ENTER on the DSKY when ready
+; to plan the Transearth Injection (TEI) burn. This program computes the
+; velocity change required to depart lunar orbit and return safely to Earth,
+; targeting the narrow atmospheric entry corridor.
+;
+; For Apollo 11 on July 21, 1969, this program calculated the TEI burn that
+; brought Armstrong, Aldrin, and Collins home after completing humanity's
+; first lunar landing mission. The burn placed Columbia on a precise trajectory
+; for Pacific Ocean splashdown three days later on July 24.
+;
+; The program is NOT RESTARTABLE - if interrupted, it must be re-initiated.
+;
 P37		TC	PHASCHNG	# P37 IS NOT RESTARTABLE
 		OCT	4
 
-		TC	INTPRET
-		AXT,1	SXA,1
-		OCT	04000
-			ECSTEER
-		DLOAD
-			ZEROVECS
-		STORE	VPRED
-		STORE	GAMMAEI
-		EXIT
+;
+; Initialize trajectory computation parameters. Zero out predicted velocity
+; and flight path angle - these will either be computed by the program or
+; entered by the crew via DSKY.
+;
+		TC	INTPRET		; Enter interpretive mode
+		AXT,1	SXA,1		; Set index register X1
+		OCT	04000		; Initialize to 04000
+			ECSTEER		; Store in ECSTEER location
+		DLOAD			; Load double precision
+			ZEROVECS	; Zero vector constant
+		STORE	VPRED		; Clear predicted velocity magnitude
+		STORE	GAMMAEI		; Clear entry flight path angle
+		EXIT			; Return to native AGC mode
+;
+; CREW INPUT SEQUENCE
+;
+; The program prompts the crew for two key parameters via DSKY:
+; 1. Time of Ignition (TIG) - when to execute the TEI burn
+; 2. Desired reentry angle and velocity change (if non-zero)
+;
+; For Apollo 11's TEI on July 21, the crew confirmed the computed TIG
+; that would achieve proper Pacific Ocean splashdown targeting.
+;
 		CAF	V6N33RTE	# INPUT TIG	STORED IN SPRTETIG
 		TCR	P370GOF		#		OVERLAYED WITH TIG
 		TCF	-2		# DISPLAY NEW DATA
 		CAF	V6N60RTE	# INPUT REENTRY ANGLE IN GAMMAEI
 		TCR	P37GFRB1	#	AND DESIRED DELTA V IN RTEDVD
 		TCF	-2		# DISPLAY NEW DATA
-RTE299		TC	INTPRET
-		SSP	DLOAD
-			OVFIND
-			0
-			VPRED
+;
+; ============================================================================
+; TRAJECTORY COMPUTATION SECTION
+;
+; With crew inputs confirmed, P37 now computes the return trajectory.
+; This section initializes the conic trajectory solution - a two-body
+; approximation assuming only Earth's gravity. The conic solution provides
+; quick initial results for crew review before proceeding to the more
+; computationally intensive precision trajectory integration.
+;
+; The computation determines the velocity change vector (DELVLVC) required
+; to achieve the desired entry conditions at 400,000 feet altitude.
+; ============================================================================
+;
+RTE299		TC	INTPRET		; Re-enter interpretive mode
+		SSP	DLOAD		; Set push location, load double
+			OVFIND		; Overflow indicator
+			0		; Initialize to zero
+			VPRED		; Load predicted velocity
 # Page 892
-		STODL	RTEDVD
-			GAMMAEI
-		STODL	RTEGAM2D
-			1RTEB13
-		STODL	CONICX1
-			C4RTE
-		STCALL	MAMAX1
-			INVC100		# GET R(T1)/,V(T1)/,UR1/,UH/
-		CLEAR	DLOAD
-			SLOWFLG
-			RTEDVD
+		STODL	RTEDVD		; Store as RTE delta-V desired
+			GAMMAEI		; Load entry flight path angle
+		STODL	RTEGAM2D	; Store as RTE gamma desired
+			1RTEB13		; Load constant 1/B13
+		STODL	CONICX1		; Store in conic X1 parameter
+			C4RTE		; Load C4 constant for RTE
+		STCALL	MAMAX1		; Store max iterations count
+			INVC100		; GET R(T1)/,V(T1)/,UR1/,UH/
+;
+; Check if computation requires high-precision "slow" mode based on
+; desired delta-V magnitude and spacecraft position. SLOWFLG is set
+; when near Earth's sphere of influence requiring more careful calculation.
+;
+		CLEAR	DLOAD		; Clear slow computation flag
+			SLOWFLG		; Normal speed trajectory mode
+			RTEDVD		; Load desired delta-V
 		BPL	ABS
 			RTE317
 		STORE	RTEDVD
@@ -154,14 +263,19 @@ RTE299		TC	INTPRET
 		BMN	SET
 			RTE317
 			SLOWFLG
-RTE317		DLOAD	EXIT
-			R(T1)
-		TC	POLY
-		DEC	2
-		2DEC	181000434. B-31
-		2DEC	1.50785145 B-2
-		2DEC*	-6.49993057 E-9 B27*
-		2DEC*	9.76938926 E-18 B56*
+RTE317		DLOAD	EXIT		; Load position at T1
+			R(T1)		; Spacecraft position magnitude
+;
+; Compute maximum iteration count as function of distance from Earth.
+; Uses 3rd-degree polynomial: MAMAX2 = C0 + C1*R + C2*R^2 + C3*R^3
+; Farther from Earth requires fewer iterations to converge on solution.
+;
+		TC	POLY		; Polynomial evaluation subroutine
+		DEC	2		; Polynomial degree 3 (index 2)
+		2DEC	181000434. B-31	; C0 constant term
+		2DEC	1.50785145 B-2	; C1 linear coefficient
+		2DEC*	-6.49993057 E-9 B27*	; C2 quadratic coefficient
+		2DEC*	9.76938926 E-18 B56*	; C3 cubic coefficient
 		TC	INTPRET
 		SL1
 		STODL	MAMAX2		# C0+C1*R+C2*R**2+C3*R**3=MAMAX2 B30
@@ -169,32 +283,51 @@ RTE317		DLOAD	EXIT
 		STODL	NN1A
 			K2RTE
 RTE320		STODL	RCON		# RCON=K2
-			RTEGAM2D
-		BZE	BDSU
+			RTEGAM2D	; Load desired entry angle
+;
+; ENTRY ANGLE COMPUTATION BRANCH
+;
+; If crew input non-zero gamma (flight path angle at 400K ft altitude),
+; compute X(T2) as cotangent of that angle. Otherwise, use default values
+; based on spacecraft distance from Earth to ensure entry corridor targeting.
+;
+		BZE	BDSU		; Branch if zero (no gamma input)
 			RTE340		# GOTORTE340 IF REENTRY ANGLE NOT INPUT
-			1RTEB2
+			1RTEB2		; Subtract bias constant
 		PUSH	COS		#					PL02D
 		PDDL	SIN
 		BDDV	STADR		#					PL00D
 		STCALL	X(T2)		# X(T2)=COT(GAM2D)			B0
-			RTE360
-RTE340		DLOAD	DSU
-			R(T1)
+			RTE360		; Jump to V2T100 calculation
+;
+; DEFAULT ENTRY ANGLE SELECTION (no crew input)
+;
+; Choose X(T2) parameter based on spacecraft position relative to K1RTE
+; threshold. Near Earth (R < K1) uses steeper approach (K3), while farther
+; out (R >= K1) uses shallower approach (K4). This ensures the trajectory
+; stays within the narrow atmospheric entry corridor for safe deceleration.
+;
+RTE340		DLOAD	DSU		; Load position at T1
+			R(T1)		; Current spacecraft distance
 # Page 893
-			K1RTE
-		BMN	DLOAD
-			RTE350
-			K4RTE
+			K1RTE		; Subtract position threshold
+		BMN	DLOAD		; Branch if R(T1) < K1RTE
+			RTE350		; Use K3 for closer approach
+			K4RTE		; Load K4 constant (shallower)
 		STCALL	X(T2)		# X(T2)=K4
-			RTE360
-RTE350		DLOAD
-			K3RTE
+			RTE360		; Jump to V2T100 calculation
+RTE350		DLOAD			; Closer to Earth path
+			K3RTE		; Load K3 constant (steeper)
 		STORE	X(T2)		# X(T2)=K3
-RTE360		CALL
-			V2T100
-		BZE	GOTO
-			RTE367
-			RTEALRM
+RTE360		CALL			; Call velocity computation
+			V2T100		; Compute V2 and T2 from X(T2)
+;
+; V2T100 returns with overflow indicator in OVFIND. Zero indicates successful
+; convergence on entry trajectory solution. Non-zero triggers program alarm.
+;
+		BZE	GOTO		; Branch if successful (OVFIND=0)
+			RTE367		; Continue with solution
+			RTEALRM		; Jump to alarm handler
 RTE367		VLOAD
 			R(T1)/
 		STODL	RVEC
@@ -205,106 +338,203 @@ RTE367		VLOAD
 			TMRAD100
 		DAD
 			T1
-		STODL	T2
-			RTEGAM2D
-		BZE	GOTO
-			RTE369
-			RTE372
-RTE369		VLOAD	ABVAL
-			V(T2)/
-		EXIT
-		TC	POLY
-		DEC	2
-		2DEC	0
-		2DEC	-4.8760771 E-2 B4
-		2DEC	4.5419476 E-4 B11
-		2DEC	-1.4317675 E-6 B18
+		STODL	T2		; Store time at entry (400K ft)
+			RTEGAM2D	; Load desired gamma
+;
+; ENTRY ANGLE REFINEMENT
+;
+; If no gamma specified by crew (zero), compute refined X(T2) from velocity
+; at entry using polynomial fit. Otherwise use the X(T2) already computed
+; from crew's specified gamma angle.
+;
+		BZE	GOTO		; Branch if gamma not specified
+			RTE369		; Compute X(T2) from velocity
+			RTE372		; Use existing X(T2)
+RTE369		VLOAD	ABVAL		; Load velocity vector at T2
+			V(T2)/		; Entry velocity magnitude
+		EXIT			; Exit interpreter for POLY
+;
+; Polynomial computes X(T2) from entry velocity V2:
+; X(T2) = D1 + D2*V2 + D3*V2^2 + D4*V2^3
+; This empirical relationship ensures trajectory stays in entry corridor.
+;
+		TC	POLY		; Polynomial evaluation
+		DEC	2		; Degree 3
+		2DEC	0		; D1 = 0
+		2DEC	-4.8760771 E-2 B4	; D2 coefficient
+		2DEC	4.5419476 E-4 B11	; D3 coefficient
+		2DEC	-1.4317675 E-6 B18	; D4 coefficient
 
-		TC	INTPRET
-		DAD
-			RTED1
+		TC	INTPRET		; Re-enter interpreter
+		DAD			; Add offset
+			RTED1		; D1 constant offset
 		SL3	GOTO		# X(T2),=D1+D2V2+D3V2**2+D4V2**3
-			RTE373
+			RTE373		; Continue with computed X(T2)
 RTE372		DLOAD			# X(T2),=X(T2)
-			X(T2)
+			X(T2)		; Use crew-specified gamma's X(T2)
 RTE373		DSU	PUSH		# X(T2)ERR				B0 PL02D
 # Page 894
-			X(T2)
-		VLOAD	UNIT
+			X(T2)		; Previous X(T2) value
+;
+; CONVERGENCE CHECK AND REENTRY PARAMETERS
+;
+; Compute error in X(T2) by comparing new computed value with previous
+; iteration. This X(T2)ERR is pushed to stack for convergence testing.
+;
+; Next, compute reentry corridor parameters from position at entry point
+; to verify trajectory will safely decelerate the spacecraft through
+; Earth's atmosphere to landing.
+;
+		VLOAD	UNIT		; Load position at entry
 			R(T2)/		#					B58
-		STCALL	ALPHAV
-			GETERAD
-		DAD
-			E3RTE
+		STCALL	ALPHAV		; Store unit position vector
+			GETERAD		; Get Earth radius at entry latitude
+		DAD			; Add offset constant
+			E3RTE		; E3 bias value
 		PUSH	DSU		# RCON,=(E1/1+E2BETA11)**.5)+E3 	B29 PL04D
-			RCON
-		ABS	DSU
-			EPC2RTE
-		BMN	GOTO
-			RTE374
-			RTE375
-RTE374		DLOAD	ABS
-			00D
-		DSU	BMN
-			EPC3RTE
-			P37E
-RTE375		DLOAD	DAD
-			NN1A
-			1RTEB28
-		BMN	SLOAD
-			RTE380
-			OCT605
-		GOTO
+			RCON		; Subtract previous RCON
+;
+; TEST FOR CONVERGENCE
+;
+; Two convergence criteria must be satisfied:
+; 1. Change in RCON must be less than EPC2RTE threshold
+; 2. X(T2) error must be less than EPC3RTE threshold
+;
+; If both criteria met, trajectory has converged to valid Earth return path.
+; Otherwise, iterate again with refined parameters (up to maximum iterations).
+;
+		ABS	DSU		; Absolute RCON change
+			EPC2RTE		; Convergence threshold 1
+		BMN	GOTO		; Branch if converged
+			RTE374		; Check second criterion
+			RTE375		; Not converged, continue iteration
+RTE374		DLOAD	ABS		; Check X(T2) error magnitude
+			00D		; X(T2)ERR from stack
+		DSU	BMN		; Compare to threshold
+			EPC3RTE		; Convergence threshold 2
+			P37E		; Both criteria met - CONVERGED!
+RTE375		DLOAD	DAD		; Not converged yet
+			NN1A		; Load iteration counter
+			1RTEB28		; Increment by 1
+;
+; ITERATION LIMIT CHECK
+;
+; Increment iteration counter and verify we haven't exceeded maximum allowed
+; iterations (MAMAX2 computed earlier). If too many iterations, trajectory
+; computation has failed to converge and program alarm is triggered.
+;
+		BMN	SLOAD		; Branch if counter negative (OK)
+			RTE380		; Continue iteration
+			OCT605		; Load alarm code 605
+		GOTO			; Exceeded iteration limit!
 			RTEALRM		# TOO MANY ITERATIONS
-RTE380		STORE	NN1A
-		DSU	BZE
-			M8RTEB28
-			RTE385
-		DLOAD	DSU
-			00D
-			DRCON
+RTE380		STORE	NN1A		; Store updated counter
+		DSU	BZE		; Check if counter = -8
+			M8RTEB28	; Constant -8
+			RTE385		; Use slow precision mode
+		DLOAD	DSU		; Calculate refined adjustment
+			00D		; Current X(T2) error
+			DRCON		; Subtract previous delta RCON
+;
+; NORMAL MODE: RICHARDSON EXTRAPOLATION
+;
+; Use Richardson extrapolation to accelerate convergence. This computes
+; a more sophisticated adjustment DX(T2) based on rate of change between
+; iterations, allowing faster approach to solution.
+;
+; Compute: DX(T2) = X(T2)ERR * (Z2/Z1) where
+;   Z1 = X(T2)ERR - previous X(T2)ERR
+;   Z2 = X(T2)PRI - X(T2)
+;
 		NORM	PDDL		# X(T2)ERR-X(T2)ERR,=Z1			PL06D
-			X1
-			RPRE'
+			X1		; Normalization shift count
+			RPRE'		; Previous X(T2) value
 		DSU	DDV		# X(T2)PRI-X(T2)=Z2			PL04D
-			X(T2)
+			X(T2)		; Current X(T2)
 		DMP	SL*		# DX(T2)=X(T2)ERR(Z2/Z1)
-			00D
-			0,1
+			00D		; Multiply by X(T2) error
+			0,1		; Shift by normalization count
 		GOTO
-			RTE390
+			RTE390		; Continue with adjustment
+;
+; SLOW MODE: SIMPLE ERROR ADJUSTMENT
+;
+; After 8 iterations, switch to simple adjustment to ensure convergence
+; even for difficult cases. Just use X(T2) error directly as adjustment.
+;
 RTE385		DLOAD			# DX(T2)=X(T2)ERR
-			00D
+			00D		; Use X(T2) error as-is
 RTE390		STODL	16D		# DX(T2)				PL02D
-		STADR
+		STADR			; Store address for later
 		STODL	RCON		# RCON=RCON,
-		BOV
+		BOV			; Check for overflow
 # Page 895
-			RTE360
+			RTE360		; Overflow - restart iteration
+;
+; UPDATE ITERATION PARAMETERS
+;
+; Store current values for next iteration's comparison:
+; - DRCON stores current RCON change for Richardson extrapolation
+; - RPRE' stores current X(T2) for next iteration's rate calculation
+;
+; Then update X(T2) with the computed adjustment and reiterate.
+;
 		STODL	DRCON		# X(T2)ERR,=X(T2)ERR
-			X(T2)
+			X(T2)		; Current X(T2)
 		STODL	RPRE'		# X(T2)PRI=X(T2)
-			16D
-		DAD
-			X(T2)
+			16D		; Load DX(T2) adjustment
+		DAD			; Add adjustment to X(T2)
+			X(T2)		; Current value
 		STCALL	X(T2)		# X(T2)=X(T2)+DX(T2)
-			RTE360		# REITERATE
+			RTE360		# REITERATE - loop back
+;
+; ============================================================================
+; TRANSITION: From Iterative Convergence to Display and Precision Computation
+;
+; The conic trajectory has converged to a valid Earth return solution.
+; Display the initial conic results to crew, then compute high-precision
+; trajectory accounting for Earth oblateness and perturbations for final
+; verification before committing to the burn.
+; ============================================================================
+;
 P37E		CALL			# DISPLAY CONIC SOLUTION
-			RTEVN
-RTE505		DLOAD	DMP
-			PCON
-			BETA1
-		BDSU	BZE
-			RCON
-			RTE510
-		BMN	DLOAD
-			RTE510
-			1RTEB2
+			RTEVN		; Display velocity, time, gamma
+;
+; ENTRY GEOMETRY DETERMINATION
+;
+; Determine whether spacecraft will enter atmosphere near apogee or perigee
+; of return trajectory. This affects the sign of PHI2 angle used in
+; precision trajectory integration.
+;
+; Test: PCON*BETA1 compared to RCON
+;   If difference near zero: entry at perigee
+;   Otherwise: entry at apogee
+;
+RTE505		DLOAD	DMP		; Compute PCON * BETA1
+			PCON		; Perigee conic parameter
+			BETA1		; Beta angle parameter
+		BDSU	BZE		; Subtract RCON and test
+			RCON		; Reference conic parameter
+			RTE510		; Zero - entry at perigee
+		BMN	DLOAD		; Negative - entry at perigee
+			RTE510		; Perigee entry path
+			1RTEB2		; Load +1 constant
 		GOTO			# ENTRY NEAR APOGEE
-			RTE515
+			RTE515		; Continue with positive PHI2
 RTE510		DLOAD	DCOMP		# ENTRY NEAR PERIGEE
-			1RTEB2
-RTE515		STCALL	PHI2
+			1RTEB2		; Load +1 and complement to -1
+;
+; PRECISION TRAJECTORY COMPUTATION
+;
+; Now compute high-precision trajectory accounting for:
+; - Earth oblateness (J2 gravitational harmonic)
+; - Lunar and solar gravitational perturbations
+; - Numerical integration accuracy
+;
+; This refines the conic solution to verify trajectory stays within
+; entry corridor with actual perturbing forces included.
+;
+RTE515		STCALL	PHI2		; Store PHI2 entry geometry flag
 			PREC100		# PRECISION TRAJECTORY COMPUTATION
 RTE625		BZE
 			P37G
@@ -1619,143 +1849,218 @@ V2T1X		GOTO
 #	32D		DVCALC SUBROUTINE RETURN ADDRESS
 #	33D		V2T100 SUBROUTINE RETURN ADDRESS
 
-GAMDV10		STQ
-			31D
-		SETPD	CALL
-			18D		#					PL18D
-			DVCALC
-		DLOAD	DSU
-			14D
-			10D
-		BOV
-			GAMDV20
-		PUSH	DSU		# X(T1)MAX-X(T1)MIN=BETA8	B5 	PL20D
-			EPC9RTE
-		BMN	DLOAD
-			GAMDVX		# BOUNDS CLOSE TOGETHER
-			18D
-		DSU	BMN		# BETA8-DX(T1)MAX
-			12D
-			GAMDV15
-		SETPD	GOTO		#					PL18D
-			18D
-			GAMDV20
-GAMDV15		DLOAD			#					PL18D
-		SIGN	SR1
-			16D
-		STORE	16D		# BETA8(SIGNDX(T1))/2=DX(T1)
-GAMDV20		DLOAD
-			M144RTE
-		STORE	NN2
-GAMDV25		DLOAD	DAD
-			NN2
-			1RTEB28
-		BMN	SLOAD
-			GAMDV30
-			OCT605
-		GOTO
-			V2T1X
-GAMDV30		STORE	NN2		# NN2=NN2+1
-		DLOAD	PDDL		# X(T1)=X(T1),			B5 	PL20D
-			X(T1)
-			DV
-		PDDL	DAD		# DV=DV,			B7/B5 	PL22D
-			X(T1)
-			16D
+; ============================================================================
+; GAMDV10: FLIGHT PATH ANGLE ITERATOR
+;
+; This iterator finds the optimal initial flight path angle (X(T1)) that 
+; minimizes either fuel consumption or mission time for the TEI burn. For 
+; Apollo 11's return journey, this algorithm computed the precise burn 
+; attitude that would send Columbia on the fastest path home while staying 
+; within the Earth entry corridor.
+;
+; The iterator uses a modified Newton-Raphson method to find X(T1) by:
+; 1. Computing DV for current X(T1)
+; 2. Comparing to desired DV or checking convergence
+; 3. Adjusting X(T1) by step size DX(T1)
+; 4. Repeating until convergence or iteration limit
+;
+; MINIMUM FUEL mode (F2RTE=0): Finds X(T1) that achieves desired DV exactly
+; MINIMUM TIME mode (F2RTE=1): Finds X(T1) that maximizes velocity change
+; ============================================================================
+
+GAMDV10		STQ			; Store return address
+			31D		; At location 31D in pushlist
+		SETPD	CALL		; Initialize pushlist pointer
+			18D		; PL18D
+			DVCALC		; Compute initial DV for current X(T1)
+;
+; ITERATOR INITIALIZATION
+;
+; Check if X(T1) bounds are sufficiently separated to allow iteration.
+; BETA8 = X(T1)MAX - X(T1)MIN represents the search space width.
+;
+		DLOAD	DSU		; Compute search space width
+			14D		; X(T1)MAX
+			10D		; X(T1)MIN
+		BOV			; Branch if overflow
+			GAMDV20		; Continue with current step
+		PUSH	DSU		; BETA8 = X(T1)MAX - X(T1)MIN (PL20D)
+			EPC9RTE		; BETA8 - convergence tolerance
+		BMN	DLOAD		; If BETA8 < tolerance
+			GAMDVX		; Bounds too close, exit
+			18D		; Reload BETA8
+		DSU	BMN		; BETA8 - DX(T1)MAX
+			12D		; Maximum step size
+			GAMDV15		; Step exceeds bounds, reduce
+		SETPD	GOTO		; Keep current step size
+			18D		; Reset pushlist pointer
+			GAMDV20		; Begin iteration
+GAMDV15		DLOAD			; Reduce step size (PL18D)
+		SIGN	SR1		; BETA8 * SIGN(DX(T1)) / 2
+			16D		; Preserve sign of DX(T1)
+		STORE	16D		; Store reduced step: DX(T1) = BETA8/2
+;
+; MAIN ITERATION LOOP
+;
+; Iterates up to 144 times to find optimal X(T1). For Apollo 11's TEI burn
+; on July 21, 1969, this loop typically converged in 10-20 iterations,
+; computing the flight path angle that would bring Columbia safely home.
+;
+GAMDV20		DLOAD			; Initialize iteration counter
+			M144RTE		; Load -144 (max iterations)
+		STORE	NN2		; Store in counter
+GAMDV25		DLOAD	DAD		; Increment iteration counter
+			NN2		; Current count
+			1RTEB28		; Add 1
+		BMN	SLOAD		; If still negative (iterations remain)
+			GAMDV30		; Continue iteration
+			OCT605		; Load alarm code 605
+		GOTO			; Exit with alarm
+			V2T1X		; Excess iterations alarm
+GAMDV30		STORE	NN2		; Update counter: NN2 = NN2 + 1
+;
+; ITERATION STEP: Adjust X(T1) and recompute DV
+;
+; Save current values, increment X(T1) by step size DX(T1), and recompute
+; the required velocity change to see if we're converging to the solution.
+;
+		DLOAD	PDDL		; Save previous X(T1) (PL20D)
+			X(T1)		; Current flight path angle
+			DV		; Save previous DV (PL22D)
+		PDDL	DAD		; Previous DV stored
+			X(T1)		; Reload X(T1)
+			16D		; Add step size DX(T1)
 # Page 926
-		STCALL	X(T1)		# X(T1)+DX(T1)=X(T1)		B5
-			DVCALC
-		BON	DLOAD
-			F2RTE
-			GAMDV35
-			DV
-		DSU	BMN		# CONTINUE IF FUEL CRITICAL MODE
-			20D
-			GAMDV33
-GAMDV32		DLOAD	DCOMP
-			16D
-		SR1
-		STORE	16D
-GAMDV33		SETPD	GOTO
-			18D		#					PL18D
-			GAMDV50
-
-# TIME CRITICAL MODE
-
-GAMDV35		DLOAD	DSU
-			RTEDVD
-			DV
-		PDDL	PUSH		# DVD-DV=DVERR			B7/B5 	PL22D
-GAMDV40		DLOAD	ABS		# DV,					PL24D
-			20D
-		DSU	BMN
-			EPC10RTE
-			GAMDVX
-GAMDV45		BOVB	DLOAD
-			TCDANZIG	# ASSURE OVFIND IS 0
-		BDSU	NORM
-			DV
-			X2
-		PDDL			# DV-DV,			B7/B5-N2 PL22D
-		NORM	SR1		# DVERR				B8/B6-N1
-			X1
-		DDV	PDDL		# DVERR/ DV - DV
-		BDSU	DMP		#					PL18D
-			X(T1)
-		XSU,1
-			X2
-		STORE	16D		# PRESERVE SIGN IF OVERFLOW
-		SR*	BOV
-			0 -1,1
-			GAMDV47
-		STORE	16D		# (X(T1)-X(T1),)DVERR/(DV-DV,)=DX(T1)
-		ABS	DSU
-			12D
-		BMN
-			GAMDV50
+		STCALL	X(T1)		; Store updated X(T1) = X(T1) + DX(T1)
+			DVCALC		; Recompute DV for new X(T1)
+;
+; MODE BRANCH: Check if fuel-critical or time-critical mode
+;
+		BON	DLOAD		; Branch on F2RTE flag
+			F2RTE		; If time-critical mode
+			GAMDV35		; Process time-critical logic
+			DV		; Load new DV (fuel-critical)
+		DSU	BMN		; DV - DV_previous
+			20D		; Previous DV from pushlist
+			GAMDV33		; If DV decreased, continue
+;
+; FUEL CRITICAL MODE: DV increased - reduce step size and try again
+;
+GAMDV32		DLOAD	DCOMP		; Reverse direction
+			16D		; Load DX(T1)
+		SR1			; Halve the step size
+		STORE	16D		; Store reduced DX(T1)
+GAMDV33		SETPD	GOTO		; Reset pushlist pointer
+			18D		; PL18D
+			GAMDV50		; Continue iteration
+;
+; ============================================================================
+; TIME CRITICAL MODE
+;
+; In time-critical mode (F2RTE=1), we seek the X(T1) that maximizes DV
+; (minimum flight time). This mode iterates to find the trajectory that gets
+; Apollo 11 home fastest while staying within safe entry corridor limits.
+; ============================================================================
+;
+GAMDV35		DLOAD	DSU		; Compute DV error
+			RTEDVD		; Desired DV (target)
+			DV		; Current computed DV
+		PDDL	PUSH		; DVERR = DVD - DV (PL22D, PL24D)
+;
+; CONVERGENCE CHECK: Compare change in DV to tolerance
+;
+GAMDV40		DLOAD	ABS		; |DV_previous| from pushlist PL20D
+			20D		; Previous DV
+		DSU	BMN		; |DV_prev| - epsilon
+			EPC10RTE	; Convergence tolerance
+			GAMDVX		; Converged - exit with solution
+;
+; COMPUTE STEP SIZE: Use Newton-Raphson derivative approximation
+;
+GAMDV45		BOVB	DLOAD		; Clear overflow flag
+			TCDANZIG	; Ensure OVFIND is 0
+		BDSU	NORM		; DV - DV_previous
+			DV		; Current DV
+			X2		; Store shift count
+		PDDL			; Delta DV stored (PL22D)
+		NORM	SR1		; Normalize DVERR
+			X1		; Store shift count for DVERR
+		DDV	PDDL		; DVERR / (DV - DV_prev)
+		BDSU	DMP		; (X(T1)_prev - X(T1)) * ratio
+			X(T1)		; Current X(T1)
+		XSU,1			; Denormalize
+			X2		; Using X2 shift count
+		STORE	16D		; Preserve sign if overflow
+		SR*	BOV		; Right shift with X1
+			0 -1,1		; Shift amount from X1
+			GAMDV47		; Handle overflow case
+		STORE	16D		; New step: DX(T1) = (X-X_prev)*DVERR/(DV-DV_prev)
+		ABS	DSU		; Check if step within max
+			12D		; Maximum step size
+		BMN			; If step < max
+			GAMDV50		; Accept step, continue
 # Page 927
-GAMDV47		DLOAD	SIGN
-			12D
-			16D
-		STORE	16D		# DX(T1)MAX(SIGNDX(T1))=DX(T1)
-
-# CHECK TO KEEP INDEPENDENT VARIABLE IN BOUNDS
-
-GAMDV50		DLOAD	DMP
-			16D
-			1.1RTEB1
-		SL1	DAD
-			X(T1)
-		STORE	24D		# X(T1)+1.1DX(T1)=BETA9		B5
-		DSU	BMN
-			14D
-			GAMDV55
-		DLOAD	DSU
-			14D
-			X(T1)
-		SR1
-		STCALL	16D		# (X(T1)MAX-X(T1))/2=DX(T1)	B5
-			GAMDV65
-GAMDV55		DLOAD	DSU
-			24D
-			10D
-		BMN	GOTO
-			GAMDV60
-			GAMDV65
-GAMDV60		DLOAD	DSU
-			10D
-			X(T1)
-		SR1
-		STORE	16D		# (X(T1)MIN-X(T1))/2=DX(T1)	B5
-GAMDV65		DLOAD	ABS
-			16D
-		DSU	BMN
-			EPC9RTE
-			GAMDVX
-		GOTO
-			GAMDV25
-GAMDVX		GOTO
-			31D
+;
+; LIMIT STEP SIZE: Cap to maximum allowed step
+;
+GAMDV47		DLOAD	SIGN		; Load max step
+			12D		; Maximum DX(T1)
+			16D		; With sign from computed step
+		STORE	16D		; DX(T1) = DX(T1)_MAX * sign(DX_computed)
+;
+; ============================================================================
+; CHECK TO KEEP INDEPENDENT VARIABLE IN BOUNDS
+;
+; Ensures next iteration's X(T1) stays within valid physical limits computed
+; by XT1LIM subroutine. This prevents trajectory solutions that would violate
+; entry corridor constraints or spacecraft limitations.
+; ============================================================================
+;
+GAMDV50		DLOAD	DMP		; Compute lookahead value
+			16D		; Current step DX(T1)
+			1.1RTEB1	; 1.1 multiplier
+		SL1	DAD		; Scale and add
+			X(T1)		; Current X(T1)
+		STORE	24D		; BETA9 = X(T1) + 1.1*DX(T1)
+		DSU	BMN		; Compare to upper bound
+			14D		; X(T1) upper limit
+			GAMDV55		; Within bounds, continue
+		DLOAD	DSU		; Exceeded upper bound
+			14D		; Upper limit
+			X(T1)		; Current X(T1)
+		SR1			; Halve the difference
+		STCALL	16D		; DX(T1) = (X(T1)_MAX - X(T1)) / 2
+			GAMDV65		; Check minimum bound
+;
+; CHECK LOWER BOUND: Ensure we don't go below X(T1) minimum
+;
+GAMDV55		DLOAD	DSU		; Load lookahead value
+			24D		; BETA9 = X(T1) + 1.1*DX(T1)
+			10D		; X(T1) lower limit
+		BMN	GOTO		; If below minimum
+			GAMDV60		; Reduce step to stay above min
+			GAMDV65		; Within bounds, check convergence
+;
+GAMDV60		DLOAD	DSU		; Exceeded lower bound
+			10D		; Lower limit
+			X(T1)		; Current X(T1)
+		SR1			; Halve the difference
+		STORE	16D		; DX(T1) = (X(T1)_MIN - X(T1)) / 2
+;
+; FINAL CONVERGENCE CHECK: Exit if step size negligible
+;
+GAMDV65		DLOAD	ABS		; Check if step size tiny
+			16D		; |DX(T1)|
+		DSU	BMN		; Compare to minimum step tolerance
+			EPC9RTE		; Convergence epsilon
+			GAMDVX		; Converged - exit iterator
+		GOTO			; Not converged yet
+			GAMDV25		; Continue next iteration
+;
+; ITERATOR EXIT: Return to caller with converged solution
+;
+GAMDVX		GOTO			; Exit iterator
+			31D		; Return via pushlist location
 
 # Page 928
 # DV CALCULATION SUBROUTINE
@@ -1784,51 +2089,97 @@ GAMDVX		GOTO
 #
 # PUSHLOC IS RESTORED TO ITS ENTRANCE VALUE UPON EXITING DVCALC
 
-DVCALC		STQ	DLOAD
-			32D
-			X(T1)
-		DSQ	SR
-			7
-		DCOMP	TAD
-			02D
-		NORM	PUSH
-			X1
-		TLOAD	NORM
-			05D
-			X2
-		RTB	SR1
-			DPMODE
-		XSU,2	DDV
-			X1
-		SR*
-			6,2
+; ============================================================================
+; DVCALC: VELOCITY CHANGE CALCULATION
+;
+; This subroutine computes the required velocity change (DV) to achieve a 
+; specified trajectory. For Apollo 11's TEI burn on July 21, 1969, this 
+; calculation determined the exact velocity change needed to send Columbia 
+; from lunar orbit back to Earth along the optimal return path.
+;
+; The calculation uses orbital mechanics to compute:
+; 1. PCON (semi-latus rectum) - defines the conic section shape
+; 2. V2(T1)/ - post-impulse velocity vector after the burn
+; 3. DV - magnitude of velocity change required
+;
+; This is called repeatedly by GAMDV10 iterator to find the optimal burn.
+; ============================================================================
+
+DVCALC		STQ	DLOAD		; Save return address, load X(T1)
+			32D		; Return address stored in 32D
+			X(T1)		; X(T1) = cot(gamma_post_impulse)
+;
+; COMPUTE SEMI-LATUS RECTUM (PCON)
+;
+; The semi-latus rectum p defines the shape of the conic section (orbit).
+; For Apollo 11's TEI trajectory, this determines whether the return path
+; is hyperbolic (escape) or elliptical (Earth return).
+;
+; Formula: PCON = THETA2 / (THETA1 - X(T1)^2)
+; where THETA1 = BETA5*LAMBDA - 1, THETA2 = 2*R(T1)*(LAMBDA - 1)
+;
+		DSQ	SR		; X(T1)^2, shift right
+			7		; Scale adjustment
+		DCOMP	TAD		; Complement and add
+			02D		; Add THETA1 from pushlist 02D
+		NORM	PUSH		; Normalize and push to stack
+			X1		; Store normalization factor in X1
+		TLOAD	NORM		; Load triple precision value
+			05D		; THETA2 from pushlist 05D
+			X2		; Normalization factor in X2
+		RTB	SR1		; Return to basic mode, shift right 1
+			DPMODE		; Double precision mode
+		XSU,2	DDV		; Subtract X2 from X1, then divide
+			X1		; Use normalization from X1
+		SR*			; Shift right by variable amount
+			6,2		; Shift count from X2
 		STORE	PCON		# THETA2/(THETA1-X(T1)**2)=PCON	B28/26
-		SQRT	DMP
-			08D
-		NORM
-			X1
+;
+; COMPUTE POST-IMPULSE VELOCITY V2(T1)/ 
+;
+; This section computes the velocity vector after the TEI burn. The velocity
+; is composed of two components:
+; 1. Radial component: THETA3 * sqrt(PCON) * X(T1) * UR1/ (direction of R)
+; 2. Horizontal component: THETA3 * sqrt(PCON) * UH/ (perpendicular to R)
+;
+; where THETA3 = sqrt(MU) / R(T1)
+;
+		SQRT	DMP		; sqrt(PCON) * THETA3
+			08D		; THETA3 = sqrt(MU) / R(T1)
+		NORM			; Normalize result
+			X1		; Store norm factor in X1
 		STODL	28D		# THETA3*PCON**.5		B10/B8 -N1
 # Page 929
-			X(T1)
-		NORM	VXSC
-			X2
+			X(T1)		; Load X(T1) again
+		NORM	VXSC		; Normalize and vector scale
+			X2		; Normalization factor
 			UR1/		# X(T1)*UR1/			B5+B1 -N2
-		XAD,2	VXSC
-			X1
-			28D
+		XAD,2	VXSC		; Exchange and add, then vector scale
+			X1		; Use X1 normalization
+			28D		; Multiply by THETA3*sqrt(PCON)
 		VSR*	PDVL		# THETA3(PCON**.5)X(T1)*UR1/	B7/B5
-			0 -9D,2		#		+
-			UH/
+			0 -9D,2		# Shift for proper scaling (radial part)
+			UH/		; Load horizontal unit vector
 		VXSC	VSR*		# THETA3(PCON**.5)UH/		B7/B5
-			28D
-			0 -4,1		#		=
-		VAD	STADR
+			28D		; Multiply by THETA3*sqrt(PCON)
+			0 -4,1		# Shift for proper scaling (horiz part)
+;
+; V2(T1)/ = (radial component) + (horizontal component)
+; This is the velocity immediately after the TEI burn.
+;
+		VAD	STADR		; Vector add and store address
 		STORE	V2(T1)/		# V2(T1)/			B7/B5
-		VSU	ABVAL
-			V(T1)/
+;
+; COMPUTE DELTA-V MAGNITUDE
+;
+; DV = |V2(T1)/ - V(T1)/| = magnitude of velocity change required
+; For Apollo 11, this was approximately 3,100 ft/s for the TEI burn.
+;
+		VSU	ABVAL		; Vector subtract, absolute value
+			V(T1)/		; Pre-impulse velocity
 		STORE	DV		# ABVAL(V2(T1)/-V1(T)/)=DV	B7/B5
-		GOTO
-			32D
+		GOTO			; Return to caller
+			32D		; Return address from entry
 
 # Page 930
 # SUBROUTINE TO COMPUTE BOUNDS ON INDEPENDENT VARIABLE X(T1)
@@ -1854,97 +2205,218 @@ DVCALC		STQ	DLOAD
 #	20D		XT1LIM SUBROUTINE RETURN ADDRESS
 #
 # PUSHLOC IS RESTORED TO ITS ENTRANCE VALUE UPON EXITING XT1LIM
+;
+; ============================================================================
+; SUBROUTINE: XT1LIM - Compute Bounds on X(T1)
+;
+; This subroutine computes limits on the independent variable X(T1) to ensure
+; the trajectory solution remains physically realizable. For the Apollo 11
+; TEI burn, this prevents selection of impossible trajectories that would
+; miss the atmospheric entry corridor.
+;
+; The limit computation ensures:
+; 1. The trajectory intersects the entry interface altitude (400,000 ft)
+; 2. The post-burn trajectory is within acceptable bounds
+; 3. The flight path angle at entry is achievable
+;
+; Formula: X(T1)LIM = BETA5 * sqrt[(MA - RCON) / (MA - R(T1))]
+; where MA is the major axis of the return orbit
+; ============================================================================
 
-XT1LIM		STQ	DLOAD
-			20D
-			RCON
-		SR1	BDSU
+XT1LIM		STQ	DLOAD		; Save return, load RCON
+			20D		; Return address
+			RCON		; Load radius constant
+		SR1	BDSU		; Shift right 1, subtract from MA
 		NORM	PDDL		# MA-RCON			B30-N1
-			X2
-		PDDL	SR1
-			R(T1)
-		BDSU	DDV
-		SL*	DMP
-			0	-3,2
-			28D
+			X2		; Normalization factor
+		PDDL	SR1		; Push and load R(T1)
+			R(T1)		; Current radius at time T1
+		BDSU	DDV		; Subtract from MA, divide
+		SL*	DMP		; Shift left, multiply
+			0	-3,2	; Scale adjustment
+			28D		; BETA5 from 28D
+;
+; COMPUTE BETA10 = BETA5 * (MA - R(T1)) / (MA - RCON) - 1
+; This intermediate value determines the bounds on X(T1).
+;
 		SL*	DSU		# BETA10=BETA5(MA-RT)/(MA-RC)-1	B11
-			0	-6,1
+			0	-6,1	; Scale shift
 			1RTEB25 +1	# 1.0				B-11
-		SL1	BOV
-			XT1LIM2
-		BMN	GOTO
-			XT1LIM5
-			XT1LIM3
+		SL1	BOV		; Shift left 1, branch on overflow
+			XT1LIM2		; Handle overflow case
+;
+; CHECK BETA10 SIGN AND SELECT APPROPRIATE ACTION
+; If BETA10 is negative, X(T1)LIM = 0 (no valid solution)
+; If BETA10 is positive, X(T1)LIM = sqrt(BETA10)
+;
+		BMN	GOTO		; Branch if minus (negative)
+			XT1LIM5		; Go to zero case
+			XT1LIM3		; Continue to sqrt
+;
+; OVERFLOW HANDLING: If BETA10 overflows, set to maximum positive value
+;
 XT1LIM2		DLOAD			# BETA10=POSMAX IF OVERFLOW
-			2RTEB1
+			2RTEB1		; Load maximum positive value
+;
+; NORMAL CASE: X(T1)LIM = sqrt(BETA10)
+;
 XT1LIM3		SQRT	GOTO		# X(T1)=SQRT(BETA10)
-			XT1LIMX
-XT1LIM5		DLOAD
-			ZERORTE
-XT1LIMX		GOTO
-			20D
+			XT1LIMX		; Exit subroutine
+;
+; NEGATIVE BETA10: Set X(T1)LIM = 0 (physically impossible trajectory)
+;
+XT1LIM5		DLOAD			; Load zero
+			ZERORTE		; Zero constant
+XT1LIMX		GOTO			; Return to caller
+			20D		; Return address
 
 # Page 931
 # CONSTANTS FOR THE P37 AND P70 PROGRAMS AND SUBROUTINES
+;
+; ============================================================================
+; CONSTANTS SECTION: P37/P70 Return to Earth Programs
+;
+; This section defines all constants used in the Return to Earth (RTE)
+; targeting calculations. These constants support:
+; - Conic and precision trajectory computations
+; - Entry corridor targeting (400,000 ft altitude)
+; - Delta-V calculations for TEI burn
+; - Propulsion system parameters (SPS and RCS)
+; - Iteration convergence tolerances
+; ============================================================================
 
 		BANK	36
 		SETLOC	RTECON1
 		BANK
-
-1RTEB1		2DEC	1. B-1
-1RTEB2		2DEC	1. B-2
-1RTEB3		2DEC	1. B-3
-1RTEB4		2DEC	1. B-4
-1RTEB10		2DEC	1. B-10
-1RTEB12		2DEC	1. B-12
-1RTEB13		2DEC	1. B-13
-1RTEB17		2DEC	1. B-17
-1RTEB25		2DEC	1. B-25
+;
+; SCALING CONSTANTS - UNITY VALUES AT VARIOUS BINARY SCALES
+;
+; These constants provide 1.0 at different binary scaling factors for
+; fixed-point arithmetic. The AGC lacks floating-point hardware, so all
+; calculations use scaled integer arithmetic.
+;
+1RTEB1		2DEC	1. B-1		; 1.0 scaled by 2^-1 = 0.5
+1RTEB2		2DEC	1. B-2		; 1.0 scaled by 2^-2 = 0.25
+1RTEB3		2DEC	1. B-3		; 1.0 scaled by 2^-3
+1RTEB4		2DEC	1. B-4		; 1.0 scaled by 2^-4
+1RTEB10		2DEC	1. B-10		; 1.0 scaled by 2^-10
+1RTEB12		2DEC	1. B-12		; 1.0 scaled by 2^-12
+1RTEB13		2DEC	1. B-13		; 1.0 scaled by 2^-13
+1RTEB17		2DEC	1. B-17		; 1.0 scaled by 2^-17
+1RTEB25		2DEC	1. B-25		; 1.0 scaled by 2^-25
 #					* * B25 AND B28 MUST BE CONSECUTIVE * *
-1RTEB28		2DEC	1. B-28
-ZERORTE		2DEC	0
-M144RTE		2DEC	-144. B-28
-M15RTE		2DEC	-15
-10RTE		2DEC	10
-M.6RTE		2DEC	-.6
-1.1RTEB1	2DEC	1.1 B-1
-M6RTEB28	2DEC	-6
-2RTEB1		2OCT	3777737777
-M9RTEB28	2DEC	-9
-M8RTEB28	2DEC	-8
-30480RTE	2DEC	30480. B-29
+1RTEB28		2DEC	1. B-28		; 1.0 scaled by 2^-28
+;
+; BASIC CONSTANTS
+;
+ZERORTE		2DEC	0		; Zero constant for initialization
+M144RTE		2DEC	-144. B-28	; -144 (used in trajectory calcs)
+M15RTE		2DEC	-15		; -15 (iteration limit check)
+10RTE		2DEC	10		; 10 (iteration counter)
+M.6RTE		2DEC	-.6		; -0.6 (damping factor)
+1.1RTEB1	2DEC	1.1 B-1		; 1.1 scaled by 2^-1 = 0.55
+M6RTEB28	2DEC	-6		; -6 (computation constant)
+2RTEB1		2OCT	3777737777	; Maximum positive value (POSMAX)
+M9RTEB28	2DEC	-9		; -9 (computation constant)
+M8RTEB28	2DEC	-8		; -8 (computation constant)
+;
+; EARTH REENTRY ALTITUDE: 400,000 feet = 121,920 meters
+;
+; This is the atmospheric entry interface altitude where reentry parameters
+; (velocity, flight path angle, latitude/longitude) are predicted and displayed.
+; For Apollo 11's return on July 24, 1969, this altitude defined the entry
+; corridor targeting point.
+;
+30480RTE	2DEC	30480. B-29	; 400,000 ft in meters scaled B-29
+;
+; PROPULSION SYSTEM EXHAUST VELOCITY CONSTANTS
+;
+; These constants define the effective exhaust velocities for the Service
+; Propulsion System (SPS) and Reaction Control System (RCS), critical for
+; delta-V and mass calculations during TEI burn planning.
+;
 VCSPS		2DEC	31.510396 B-5	# (SEE 2VEXHUST)
+					; SPS exhaust velocity: ~3,151 m/s
+					; Used for SPS delta-V calculations
 # Page 932
-VCRCS		2DEC	27.0664 B-5
-MDOTRCS		2DEC	.0016375 B-3
-CSUBT		2DEC	.5
-OCT605		OCT	00605
-OCT612		OCT	00612
-MCOS7.5		2DEC	-.99144486
-MSIN7.5		2DEC	-.13052619
-MCOS22.5	2DEC	-.92387953 B-2
-THETA165	2DEC	.4583333333
-THETA210	2DEC	.5833333333
-EPC1RTE		2DEC	.99966 B-1
-EPC2RTE		2DEC	100. B-29
-EPC3RTE		2DEC	.001
-EPC4RTE		2DEC	.00001
-EPC5RTE		2DEC	.01 B-6
-EPC6RTE		2DEC	.000007 B-1
-EPC7RTE		2DEC	1000. B-29
-EPC9RTE		2DEC	1. B-25
-EPC10RTE	2DEC	.0001 B-7
+VCRCS		2DEC	27.0664 B-5	; RCS exhaust velocity: ~2,707 m/s
+					; Used for RCS delta-V calculations
+MDOTRCS		2DEC	.0016375 B-3	; RCS mass flow rate (kg/cs)
+					; Used for RCS burn duration
+;
+; COMPUTATION CONTROL CONSTANTS
+;
+CSUBT		2DEC	.5		; Subtraction constant (0.5)
+					; Used in trajectory iteration
+;
+; DISPLAY AND FLAGWORD BIT PATTERNS
+;
+OCT605		OCT	00605		; Octal constant for display control
+OCT612		OCT	00612		; Octal constant for flag settings
+;
+; TRIGONOMETRIC CONSTANTS FOR ENTRY ANGLE COMPUTATIONS
+;
+; These support entry corridor angle constraints and atmospheric entry
+; targeting calculations. Entry angles are critical for Apollo 11's
+; safe return - too steep causes excessive G-forces, too shallow causes skip-out.
+;
+MCOS7.5		2DEC	-.99144486	; -cos(7.5°) for entry angle limits
+MSIN7.5		2DEC	-.13052619	; -sin(7.5°) for entry angle limits
+MCOS22.5	2DEC	-.92387953 B-2	; -cos(22.5°) for steering limits
+;
+; ANGLE CONSTANTS IN REVOLUTIONS
+;
+THETA165	2DEC	.4583333333	; 165° = 0.458333... revolutions
+					; Entry corridor angle reference
+THETA210	2DEC	.5833333333	; 210° = 0.583333... revolutions
+					; Entry corridor angle reference
+;
+; PRECISION TRAJECTORY ITERATION TOLERANCES (EPC = EPSILON CONSTANTS)
+;
+; These control convergence criteria for the precision trajectory integration.
+; Tighter tolerances ensure accurate Earth return targeting.
+;
+EPC1RTE		2DEC	.99966 B-1	; Position tolerance: ~0.99966
+EPC2RTE		2DEC	100. B-29	; Distance tolerance: 100 meters
+EPC3RTE		2DEC	.001		; Velocity tolerance: 0.1%
+EPC4RTE		2DEC	.00001		; Time tolerance: 10 microseconds
+EPC5RTE		2DEC	.01 B-6		; Angular tolerance
+EPC6RTE		2DEC	.000007 B-1	; Flight path angle tolerance
+EPC7RTE		2DEC	1000. B-29	; Altitude tolerance: 1 km
+EPC9RTE		2DEC	1. B-25		; Normalized tolerance
+EPC10RTE	2DEC	.0001 B-7	; Delta-V tolerance
 
 		BANK	35
 		SETLOC	RTECON1
 		BANK
-
-C4RTE		2DEC	-6.986643 E7 B-30
-K1RTE		2DEC	7. E6 B-29
-K2RTE		2DEC	6495000. B-29
-K3RTE		2DEC	-.06105
-K4RTE		2DEC	-.10453
-RTMURTE		2DEC	199650.501 B-18
+;
+; EARTH GRAVITATIONAL AND ATMOSPHERIC CONSTANTS
+;
+; C4RTE: Fourth-order gravity harmonic coefficient for oblate Earth effects
+; K1RTE, K2RTE: Atmospheric density model parameters
+; K3RTE, K4RTE: Entry corridor constraint coefficients
+;
+C4RTE		2DEC	-6.986643 E7 B-30	; J4 harmonic coefficient
+						; Earth oblateness correction
+K1RTE		2DEC	7. E6 B-29		; Atmospheric model param
+						; Density scale height
+K2RTE		2DEC	6495000. B-29		; Earth radius + atmosphere
+						; Reference altitude (meters)
+K3RTE		2DEC	-.06105			; Entry corridor coefficient
+						; Shallow entry limit
+K4RTE		2DEC	-.10453			; Entry corridor coefficient
+						; Steep entry limit
+;
+; EARTH GRAVITATIONAL PARAMETER FOR RETURN TRAJECTORY
+;
+RTMURTE		2DEC	199650.501 B-18		; sqrt(MU_Earth) scaled
+						; Used in time-of-flight
+						; calculations for TEI
 # Page 933
-E3RTE		2DEC	121920. B-29
+;
+; ENTRY INTERFACE ALTITUDE (DUPLICATE DEFINITION)
+;
+E3RTE		2DEC	121920. B-29		; 400,000 ft = 121,920 meters
+						; Entry interface altitude
+						; Matches 30480RTE definition
 

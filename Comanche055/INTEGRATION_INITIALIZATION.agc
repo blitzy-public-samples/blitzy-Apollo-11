@@ -30,7 +30,48 @@
 #	This AGC program shall also be referred to as
 #			Colossus 2A
 
+; ============================================================================
+; FILE: INTEGRATION_INITIALIZATION.agc
+; MODULE: CHIEFTAN Subsystem (Core Operating System)
+; MISSION PHASE: all-phases
+;
+; TL;DR: Numerical integration setup implementing Encke method initialization
+;        for precision orbit propagation. Establishes integration coordinate
+;        systems, rectification logic, and initial conditions enabling accurate
+;        trajectory computation throughout Apollo 11 cislunar flight.
+;
+; COMMENT-ONLY READERS: This program set up the mathematical integration process
+;        for computing spacecraft trajectories with high precision.
+; CODE-ALONG READERS: Study Encke method initialization, numerical integration
+;        setup, rectification logic, coordinate system establishment for precision.
+; ============================================================================
+
 # Page 1309
+; ============================================================================
+; SECTION: INTEGRATION PROGRAM OVERVIEW
+;
+; The integration initialization routines prepare the AGC to compute spacecraft
+; trajectories through space using numerical integration. Throughout Apollo 11's
+; journey from Earth to Moon and back, these routines continuously updated the
+; spacecraft's position and velocity by solving complex equations of motion.
+;
+; Two integration methods are supported:
+; 1. PRECISION (Encke Method): High-accuracy integration accounting for
+;    gravitational perturbations from Earth, Moon, and Sun. Used during critical
+;    mission phases requiring maximum trajectory accuracy.
+;
+; 2. CONIC (Kepler Method): Simplified two-body problem integration treating
+;    spacecraft motion as pure conic section (ellipse, hyperbola, parabola).
+;    Used when perturbation forces are negligible for computational efficiency.
+;
+; The integration process involves:
+; - Setting up coordinate reference frames (Earth-centered or Moon-centered)
+; - Establishing initial conditions (position, velocity at known time)
+; - Computing integration timesteps balancing accuracy vs computation time
+; - Rectification: Periodically resetting reference trajectory to maintain
+;   numerical precision in the Encke method
+; ============================================================================
+
 # 1.0 INTRODUCTION
 # ----------------
 #
@@ -56,6 +97,32 @@
 # TIME AND THE DESIRED TIME (TDEC1) ALSO AT SOME REAL TIME.  FOR CONIC ,,INTEGRATION,, THE USER MAY STILL USE ZERO
 # AS THE INITIAL TIME AND DELTA TIME AS THE DESIRED TIME.
 #
+; ============================================================================
+; ENCKE METHOD EXPLANATION (Precision Integration)
+;
+; The Encke method achieves high numerical precision by computing perturbations
+; from a reference conic trajectory rather than integrating absolute position.
+; This technique prevents accumulation of rounding errors in the AGC's 15-bit
+; arithmetic when dealing with large position values during cislunar flight.
+;
+; Method Overview:
+; 1. Establish reference trajectory: Compute ideal two-body conic orbit
+; 2. Integrate perturbations: Calculate small deviations from reference caused
+;    by additional gravitational forces (Earth, Moon, Sun)
+; 3. Rectification: When perturbations grow large (affecting accuracy), compute
+;    new reference trajectory incorporating accumulated perturbations, then
+;    reset perturbation values to zero and continue
+;
+; Example: During translunar coast, spacecraft follows approximately elliptical
+; orbit around Earth. Encke method treats this ellipse as reference, then adds
+; small corrections for lunar gravity pulling spacecraft toward Moon. Every few
+; hours, rectification updates the reference ellipse to current trajectory.
+;
+; This approach maintains precision throughout 3-day journey to Moon despite
+; AGC's limited word length, enabling accurate trajectory computation for
+; navigation, guidance, and mission planning programs.
+; ============================================================================
+
 # 2.0 CENTRAL DESCRIPTION
 # -----------------------
 #
@@ -64,6 +131,34 @@
 #	2) INTEGRATES THE W-MATRIX
 #	3) PERMANENT OR TEMPORARY UPDATE OF THE STATE VECTOR
 #
+; ============================================================================
+; INTEGRATION PROGRAM ENTRANCES
+;
+; Six entry points provide different integration capabilities for mission programs:
+;
+; 1. CSMPREC: Command Module precision integration using Encke method
+;    Used during: TLI, LOI, TEI burns requiring accurate trajectory prediction
+;
+; 2. LEMPREC: Lunar Module precision integration using Encke method
+;    Used during: Descent orbit insertion, powered descent guidance, ascent
+;
+; 3. CSMCONIC: Command Module conic integration using Kepler's method
+;    Used during: Coast phases when perturbations negligible for efficiency
+;
+; 4. LEMCONIC: Lunar Module conic integration using Kepler's method
+;    Used during: Simple trajectory predictions not requiring full precision
+;
+; 5. INTEGRVS: Custom state vector integration with caller-supplied flags
+;    Used by: Mission planning programs providing hypothetical trajectories
+;
+; 6. INTEGRV: General integration with caller-set flags, permanent state vectors
+;    Used by: Navigation programs P20-P25 for state vector updates with
+;    W-matrix integration (covariance propagation for navigation accuracy)
+;
+; All callers must invoke INTSTALL before integration to prevent conflicts
+; with concurrent programs attempting to use integration resources.
+; ============================================================================
+
 # THERE ARE SIX ENTRANCES TO THE INTEGRATION PROGRAM.  FOUR OF THESE (CSMPREC, LEMPREC, CSMCONIC, LEMCONIC) SET
 # ALL THE FLAGS REQUIRED IN THE INTEGRATION PROGRAM ITSELF TO CAUSE THE PRECISION OR CONIC INTEGRATION (KEPLER) OF
 # THE LM OR CSM STATE VECTOR, AS THE NAMES SUGGEST.  ONE ENTRANCE (INTEGRVS) PERMITS THE CALLING PROGRAM TO
@@ -74,6 +169,36 @@
 # VECTOR.  ANY PROGRAM WHICH CALLS INTEGRVS OR INTEGRV MUST CALL INTSTALL BEFORE IT SETS THE INTEGRATION FLAGS
 # AND/OR STATE VECTOR.
 #
+; ============================================================================
+; STATE VECTOR MEMORY ORGANIZATION
+;
+; The AGC maintains three complete sets of state vector data (126 registers total):
+;
+; 1. CSM Permanent State Vector (42 registers): Command Module position, velocity,
+;    time in Earth-centered or Moon-centered coordinates. Updated periodically to
+;    maintain currency within 4 integration timesteps (~4 minutes typical).
+;    During Apollo 11, tracked Columbia's orbit while Eagle descended to surface.
+;
+; 2. LM Permanent State Vector (42 registers): Lunar Module position, velocity,
+;    time. Critical during descent, landing, ascent, and rendezvous phases.
+;    This state vector guided Eagle to successful landing July 20, 1969.
+;
+; 3. Temporary Integration Vector (42 registers): Working storage for integration
+;    computations. May be overlayed when integration not active, allowing memory
+;    reuse by other programs (addressing AGC's limited 2K erasable memory).
+;
+; Each 42-register set contains:
+; - Position vector (3 components: X, Y, Z)
+; - Velocity vector (3 components: VX, VY, VZ)  
+; - Time reference
+; - Additional integration parameters (perturbations for Encke method)
+;
+; Permanent vectors updated when:
+; - 4 timesteps elapsed (routine accuracy maintenance)
+; - W-matrix integrated (navigation covariance propagation)
+; - STATEFLG set by navigation programs P20, P22 (explicit update request)
+; ============================================================================
+
 # THREE SETS OF 42 REGISTERS AND 2 FLAGS ARE USED FOR THE STATE VECTORS.  TWO SETS, WHICH MAY NOT BE OVERLAYED, ARE
 # USED FOR THE PERMANENT STATE VECTORS FOR THE CSM AND LM.  THE THIRD SET, WHICH MAY BE OVERLAYED WHEN INTEGRATION
 # IS NOT BEING DONE, IS USED IN THE COMPUTATIONS.
@@ -95,6 +220,41 @@
 # THAT IT IS PRIOR TO SETTING THE INTEGRATION INPUTS IN THE PUSHLIST.
 # THIS IS BECAUSE THE PUSHLIST IS LOST DURING A RESTART.
 #
+; ============================================================================
+; SCALING AND COORDINATE SYSTEMS
+;
+; AGC fixed-point arithmetic requires careful scaling of physical quantities.
+; Position and velocity scaling factors differ depending on coordinate origin:
+;
+; EARTH-CENTERED COORDINATES (used during Earth orbit, translunar coast):
+; - Position scaled by 2^29 meters (536,870,912 m = ~336,000 miles)
+;   One AGC unit represents ~1.86 nanometers
+; - Velocity scaled by 2^7 meters/centisecond (128 m/cs = 12,800 m/s)
+;   One AGC unit represents ~0.0078 m/s
+;
+; MOON-CENTERED COORDINATES (used in lunar orbit, descent, surface):
+; - Position scaled by 2^27 meters (134,217,728 m = ~83,400 miles)
+;   Tighter scaling for improved precision near Moon's smaller sphere
+; - Velocity scaled by 2^5 meters/centisecond (32 m/cs = 3,200 m/s)
+;   Appropriate for slower lunar orbital velocities
+;
+; AUTOMATIC COORDINATE TRANSFORMATION:
+; Integration program automatically switches between Earth-centered and
+; Moon-centered coordinates during Encke integration based on spacecraft
+; position relative to lunar sphere of influence (~66,000 km from Moon).
+;
+; During Apollo 11 translunar coast, coordinates switched from Earth-centered
+; to Moon-centered as Eagle/Columbia approached Moon. Reverse transformation
+; occurred during transearth return journey.
+;
+; SCALING RATIONALE:
+; AGC 15-bit arithmetic constrains values to ±16,383 (excluding sign bit).
+; Scaling factors chosen to represent cislunar distances and velocities while
+; maintaining numerical precision. Larger Earth-centered scale handles Earth-Moon
+; distance (~384,000 km), while smaller Moon-centered scale provides precision
+; during lunar operations where distances measured in tens of kilometers.
+; ============================================================================
+
 # 2.2 SCALING
 #
 # THE INTEGRATION ROUTINE WILL MAINTAIN THE PERMANENT MEMORY STATE VECTORS IN THE SCALING AND UNITS DEFINED IN
@@ -197,6 +357,33 @@
 #	A) PRECISION ORBITAL INTEGRATION.  CSMPREC,LEMPREC ENTRANCES
 #		L-X	STORE TIME TO 96T5791T5 T  95  PUS  L9ST (T4531)
 #		L	CALL
+; ============================================================================
+; CALLING SEQUENCES - PRECISION INTEGRATION (ENCKE METHOD)
+;
+; For high-accuracy orbit propagation during critical mission phases:
+; thrusting maneuvers, navigation updates, orbit determination, rendezvous.
+;
+; Example usage (Command Module precision integration):
+;   L-X   DLOAD                    ; Store target time
+;         TIME_VALUE
+;   L     STCALL    TDEC1
+;   L+1             CSMPREC        ; Call CSM precision integrator
+;   L+2   [RETURN]                 ; Continue after integration complete
+;
+; INPUT:
+;   TDEC1 (PD 32D) - Target integration time in centiseconds, scaled 2^-28
+;                    (1 unit = ~3.73 microseconds)
+;
+; OUTPUT:
+;   Updated state vector in PUSHLIST (position, velocity, time)
+;   RQVV - Position vector relative to secondary body (Moon) in meters B-29
+;          (only if MIDFLAG = DIMOFLAG = 1, used during lunar operations)
+;
+; During Apollo 11 lunar descent, LEMPREC called repeatedly to propagate
+; Eagle's state from separation through powered descent initiation, providing
+; navigation solution for P63 landing program.
+; ============================================================================
+
 #		L+1		CSMPREC (OR LEMPREC)
 #		L+2	RETURN
 #	   INPUT							   28
@@ -205,12 +392,71 @@
 #		THE DATA LISTED IN SECTION 3.0 PLUS
 #		RQVV	POSITION VECTOR OF VEHICLE WITH RESPECT TO SECONDARY
 #		BODY... METERS B-29 ONLY IF MIDFLAG = DIMOFLAG = 1
+
+; ============================================================================
+; CALLING SEQUENCES - CONIC INTEGRATION (KEPLER METHOD)
+;
+; For computationally efficient two-body orbit propagation during coast phases
+; when perturbation forces (Earth/Moon gravity, oblateness) negligible.
+;
+; Example usage (Lunar Module conic integration):
+;   L-X   DLOAD                    ; Store target time
+;         TIME_VALUE
+;   L     STCALL    TDEC1
+;   L+1             LEMCONIC       ; Call LM conic integrator
+;   L+2   [RETURN]
+;
+; Conic integration 5-10 times faster than Encke precision integration,
+; reducing AGC computational load during non-critical mission phases.
+; Used extensively during translunar coast July 16-19, 1969.
+;
+; INPUT/OUTPUT: Same as precision integration, except RQVV not computed
+;               (secondary body position not needed for two-body solution)
+; ============================================================================
+
 #	B) CONIC INTEGRATION.  CSMCONIC, LEMCONIC ENTRANCES
 #		L-X	STORE TIME IN PUSH LIST (TDEC1)
 #		L	CALL
 #		L+1		CSMCONIC (OR LEMCONIC)
 #	   INPUT/OUTPUT
 #		SAME AS PRECISION INTEGRATION, EXCEPT RQVV NOT SET
+
+; ============================================================================
+; CALLING SEQUENCES - USER-PROVIDED STATE VECTOR (INTEGRVS ENTRANCE)
+;
+; Allows caller to specify arbitrary initial state vector for integration.
+; Used by trajectory planning programs, targeting routines, maneuver analysis.
+;
+; Calling sequence pattern:
+;   CALL          INTSTALL         ; Reserve integration resources (semaphore)
+;   VLOAD         POSITION_VECTOR  ; Load 3-component position
+;   STOVL   RCV                    ; Store to RCV, load velocity
+;           VELOCITY_VECTOR
+;   STODL   VCV                    ; Store to VCV, load time
+;           INITIAL_TIME
+;   STODL   TET                    ; Store to TET, load final radius
+;           FINAL_RADIUS_VALUE
+;   STORE   RFINAL                 ; Store termination radius (0 for time-only)
+;   SET     SET                    ; Configure integration type
+;           INTYPFLAG              ; 1=Conic, 0=Precision
+;           MOONFLAG               ; 1=Moon-centered, 0=Earth-centered
+;   DLOAD                          ; Load target time
+;           TARGET_TIME
+;   STCALL  TDEC1                  ; Store and call integration
+;           INTEGRVS
+;
+; INPUT QUANTITIES:
+;   RCV    - Position vector in meters (unscaled, program handles scaling)
+;   VCV    - Velocity vector in meters/centisecond
+;   TET    - Initial time in centiseconds B-28 (may be 0 for relative time)
+;   TDEC1  - Target time in centiseconds B-28 (if TET=0, TDEC1 is delta-time)
+;   RFINAL - Final radius for termination (0 disables radius termination)
+;   INTYPFLAG - 1 for conic, 0 for precision
+;   MOONFLAG  - 1 for Moon-centered, 0 for Earth-centered coordinates
+;
+; INTEGRVS sets MIDFLAG=0 (no W-matrix integration) automatically.
+; ============================================================================
+
 #	C) INTEGRATE GIVEN STATE VECTOR.  INTEGRVS ENTRANCE
 #		CALL
 #				INTSTALL
@@ -235,6 +481,59 @@
 #		VCV	VELOCITY VECTOR			M/CSEC
 #		TET	TIME OF STATE VECTOR(MAY = 0)	CSEC B-28
 # Page 1313
+; ============================================================================
+; CALLING SEQUENCES - NAVIGATION PROGRAM ENTRANCE (INTEGRV)
+;
+; Primary entrance used by P20-P25 navigation programs for state vector
+; propagation with optional W-matrix (navigation covariance) integration.
+; Provides permanent state vector updates and restart protection.
+;
+; Calling sequence pattern:
+;   [Optional: store TDEC1 before or after INTSTALL]
+;   L-8   CALL      INTSTALL       ; Reserve integration resources
+;   L-7   
+;   L-6   SET       SET            ; Configure vehicle and integration type
+;   L-5             VINTFLAG       ; 1=CSM (Columbia), 0=LM (Eagle)
+;   L-4             INTYPFLAG      ; 1=Conic, 0=Precision
+;   L-3   SET       SET            ; Configure matrix and dimensionality
+;   L-2             DIMOFLAG       ; 1=Integrate W-matrix, 0=State only
+;   L-1             D6OR9FLG       ; 1=9x9 matrix, 0=6x6 matrix
+;   L     SET       DLOAD          ; Request permanent update, load radius
+;   L+1             STATEFLG       ; Force permanent vector update
+;   L+2             FINAL_RADIUS   ; Termination radius (or 0)
+;   L+3   STCALL    RFINAL
+;   L+4             INTEGRV
+;   L+5   [RETURN]
+;
+; NORMAL USAGE (without explicit STATEFLG):
+;   L     CALL      INTEGRV        ; State vector auto-updated if DIMOFLAG=1
+;   L+1   [RETURN]                 ; STATEFLG cleared after use
+;
+; FLAG CONFIGURATION:
+;   VINTFLAG  - Selects CSM (Columbia) or LM (Eagle) permanent state vector
+;   INTYPFLAG - Precision (Encke) for accuracy, Conic (Kepler) for speed
+;   DIMOFLAG  - W-matrix integration for navigation covariance propagation
+;               Used by P20-P25 programs to maintain navigation uncertainty
+;   D6OR9FLG  - 6x6 matrix for position/velocity only
+;               9x9 matrix includes velocity-to-be-gained terms
+;   STATEFLG  - Forces permanent state vector update (normally automatic)
+;
+; AUTOMATIC FLAG SETTING:
+;   MOONFLAG - Set by program based on permanent state vector coordinate system
+;   MIDFLAG  - Set based on DIMOFLAG (W-matrix integration request)
+;
+; INPUT:
+;   TDEC1 (PD 32D) - Target integration time, centiseconds B-28
+;
+; OUTPUT:
+;   Same as precision/conic integration depending on INTYPFLAG
+;   Permanent state vector updated if DIMOFLAG=1 or STATEFLG=1
+;
+; During Apollo 11 rendezvous, P20 repeatedly called INTEGRV to propagate
+; Eagle's state after ascent, maintaining navigation solution for docking
+; with Columbia in lunar orbit.
+; ============================================================================
+
 #		TDEC1	TIME TO INTEGRATE TO		CSEC B-28 (PD 32D)
 #			(MAY BE INCREMENT IF TET=0)
 #	  OUTPUT
@@ -558,6 +857,11 @@ INTEGRVS	SET	SSP
 			ZEROVEC
 		STORE	TDELTAV
 		STCALL	TNUV
+; Calls RECTIFY subroutine (defined in ORBITAL_INTEGRATION.agc) to initialize
+; the rectified conic state vector and zero out perturbation tracking variables.
+; RECTIFY establishes the reference trajectory for Encke method integration by
+; computing the two-body conic solution that serves as the baseline from which
+; perturbations will be calculated during subsequent integration steps.
 			RECTIFY
 		CLEAR	SET
 			DIM0FLAG
@@ -646,6 +950,10 @@ PHEXIT		CALL
 			GRP2PC
 RECTOUT		SETPD	CALL
 			0
+; RECTIFY (ORBITAL_INTEGRATION.agc) recomputes the reference conic trajectory
+; when accumulated perturbations exceed threshold. This rectification process
+; prevents numerical error growth by periodically resetting the Encke method
+; baseline, maintaining integration accuracy over extended mission durations.
 			RECTIFY
 		VLOAD	VSL*
 			RRECT
@@ -687,6 +995,10 @@ RVCON		DLOAD	DSU
 			TDEC
 			TET
 		STCALL	TAU.
+; RECTIFY (ORBITAL_INTEGRATION.agc) computes two-body conic trajectory solution
+; for the interval (TET-TDEC). This provides position and velocity via Kepler
+; solution without perturbations, used for trajectory prediction during mission
+; planning and rendezvous computations when full precision is not required.
 			RECTIFY
 		CALL
 			KEPPREP
@@ -1119,6 +1431,10 @@ INTWAKEU	RELINT
 			RRECT		#      RCV(6)   AND VCV(6)   RESPECTIVELY.
 		STOVL	RCV
 			VRECT		# NOW GO TO 'RECTIFY +13D' TO
+; Calls entry point within RECTIFY subroutine (ORBITAL_INTEGRATION.agc) that
+; completes CSM/LEM permanent state vector update by storing VRECT into VCV
+; and resetting Encke method tracking variables (TDELTAV, TNUV, TC, XKEP) to
+; zero, establishing fresh baseline for subsequent integration computations.
 		CALL			# STORE VRECT INTO VCV  AND ZERO OUT
 			RECTIFY +13D	# TDELTAV(6),TNUV(6),TC(2) AND XKEP(2)
 		SLOAD	ABS		# COMPARE ABSOLUTE VALUE OF 'UPSVFLAG'

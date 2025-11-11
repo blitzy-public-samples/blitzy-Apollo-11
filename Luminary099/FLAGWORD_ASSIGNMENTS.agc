@@ -25,15 +25,80 @@
 #	Assemble revision 001 of AGC program LMY99 by NASA 2021112-061
 #	16:27 JULY 14, 1969
 
+; ============================================================================
+; FILE: FLAGWORD_ASSIGNMENTS.agc
+; MODULE: Core Information and Memory
+; MISSION PHASE: all phases
+;
+; TL;DR: Defines all software flag bit assignments used throughout the Lunar
+;        Module guidance software for state control, mode selection, and
+;        inter-program communication. Organizes 14 flagwords (210 individual
+;        bits) controlling navigation modes, landing sequences, rendezvous
+;        operations, display states, and system configurations. Includes the
+;        famous FLAGORGY flags that manage lunar descent operational modes.
+;
+; COMMENT-ONLY READERS: This is a technical reference file. You may skip it
+;        initially and return when you encounter flag references in mission
+;        programs like THE_LUNAR_LANDING.agc.
+; CODE-ALONG READERS: Study this flag organization to understand the LM's
+;        software state machine architecture. Flags control program flow,
+;        enable/disable features, and coordinate between subsystems.
+; ============================================================================
+
 
 # Page 61
+; 
+; SOFTWARE FLAG ARCHITECTURE OVERVIEW
+;
+; The AGC uses 14 flagwords (FLAGWRD0 through FLGWRD13) to maintain program
+; state and coordinate operations between subsystems. Each flagword contains
+; 15 flag bits, providing 210 individual binary state indicators.
+;
+; FLAG ORGANIZATION BY MISSION FUNCTION:
+;
+; LANDING OPERATIONS FLAGS (used during powered descent):
+;   NOTHROTL (BIT 15 FLAG 4) - Throttle control enable/disable
+;   MUNFLAG  (BIT 14 FLAG 5) - Descent guidance operational mode
+;   REDFLAG  (BIT 12 FLAG 5) - Landing site redesignation by crew
+;   LRBYPASS (BIT 14 FLAG 7) - Landing radar bypass for altitude data
+;   These flags were set/cleared during Apollo 11's descent on July 20, 1969
+;
+; RENDEZVOUS OPERATIONS FLAGS (used during ascent and docking):
+;   P25FLAG  (BIT 9 FLAG 0) - P25 rendezvous tracking program active
+;   RNDVZFLG (BIT 7 FLAG 0) - P20 rendezvous navigation radar in use
+;
+; NAVIGATION MODE FLAGS:
+;   Control which celestial body is sphere of influence (MOONFLAG)
+;   Select integration method for trajectory propagation (MIDFLAG)
+;   Enable/disable sensor data incorporation (UPDATFLG, AVEGFLAG)
+;
+; DISPLAY AND CREW INTERFACE FLAGS:
+;   Control DSKY display modes, keyboard input processing, and crew alerts
+;   Enable verb/noun operations and display formatting
+;
+; SYSTEM STATE FLAGS:
+;   Track IMU status, engine states, autopilot modes, abort conditions
+;   Coordinate between guidance, navigation, and control subsystems
+;
+; FLAG MANIPULATION:
+;   - Interpreter: UP-FLAG and DOWN-FLAG instructions (FLAGWRDS 0-11)
+;   - Native code: BIT manipulation instructions on STATE memory locations
+;   - Downlink: FLAGWRDS 0-13 telemetered to Mission Control for monitoring
+;
 # FLAGWORDS 0-11	ARE DOWNLINKED AND CAN BE SET AND CLEARED BY UP-FLAG AND DOWN-FLAG INSTRUCTIONS IN THE
 #			INTERPRETER.  THESE WERE PREVIOUSLY LISTED UNDER "INTERPRETIVE SWITCH BIT ASSIGNMENTS" IN
 #			THE ERASABLE LOG SECTION.  FLAGWORDS 12 & 13 WERE PREVIOUSLY RADMODES AND DAPBOOLS AND
 #			ARE STILL DOWNLINKED UNDER THOSE NAMES.
 
 # 		ALPHABETICAL LIST OF FLAGWORDS
-
+;
+; This alphabetical index provides quick reference to all 210 flag bits.
+; Each entry shows: flag name, decimal bit number (0-209), bit position
+; within flagword (BIT 1-15), flagword number (FLAG 0-13), and bit name.
+; 
+; Detailed descriptions with SET/RESET states appear in FLAGWRD sections below.
+; Cross-reference this list when programs reference flags by name.
+;
 #
 # FLAGWORD	DEC. NUMBER	BIT AND FLAG		BIT NAME
 
@@ -119,6 +184,9 @@
 # LOSCMFLG	033		BIT 12 FLAG  2		LOSCMBIT
 # LRALTFLG	190		BIT  5 FLAG 12		LRALTBIT
 # LRBYPASS	165		BIT 15 FLAG 11		LRBYBIT
+;				FLAGORGY FLAG: Bypass landing radar altitude data during descent.
+;				SET=use alternate altitude source, RESET=use landing radar.
+;				Referenced in THE_LUNAR_LANDING.agc P63 braking phase.
 # LRINH		172		BIT  8 FLAG 11		LRINHBIT
 # LRPOSFLG	189		BIT  6 FLAG 12		LRPOSBIT
 # LRVELFLG	187		BIT  8 FLAG 12		LRVELBIT
@@ -135,6 +203,10 @@
 # MRKNVFLG	066		BIT  9 FLAG  4		MRKNVBIT
 # MRUPTFLG	070		BIT  5 FLAG  4		MRUPTBIT
 # MUNFLAG	097		BIT  8 FLAG  6		MUNFLBIT
+;				FLAGORGY FLAG: Descent guidance operational mode indicator.
+;				SET=manual throttle mode, RESET=automatic guidance control.
+;				Critical during Apollo 11 landing when Armstrong took semi-manual
+;				control. Referenced in THE_LUNAR_LANDING.agc.
 # MWAITFLG	064		BIT 11 FLAG  4		MWAITBIT
 # NEEDLFLG	011		BIT  4 FLAG  0		NEEDLBIT
 # NEWIFLG	122		BIT 13 FLAG  8		NEWIBIT
@@ -145,6 +217,10 @@
 # NORRMON	086		BIT  4 FLAG  5		NORRMBIT
 # NOR29FLG	049		BIT 11 FLAG  3		NR29FBIT
 # NOTHROTL	078		BIT 12 FLAG  5		NOTHRBIT
+;				FLAGORGY FLAG: Throttle control enable/disable for descent engine.
+;				SET=throttle disabled (no engine commands), RESET=throttle active.
+;				Used during powered descent throttle management. Referenced in
+;				THE_LUNAR_LANDING.agc and THROTTLE_CONTROL_ROUTINES.agc.
 # NOUPFLAG	024		BIT  6 FLAG  1		NOUPFBIT
 # NRMNVFLG	067		BIT  8 FLAG  4		NRMNVBIT
 # NRMIDFLG	062		BIT 13 FLAG  4		NRMIDBIT
@@ -166,6 +242,10 @@
 # PULSEFLG	195		BIT 15 FLAG 13		PULSES
 # P21FLAG	004		BIT 11 FLAG  0		P21FLBIT
 # P25FLAG	006		BIT  9 FLAG  0		P25FLBIT
+;				FLAGORGY FLAG: P25 rendezvous tracking program active indicator.
+;				SET=P25 running (post-ascent rendezvous operations), RESET=inactive.
+;				Used during lunar orbit rendezvous between LM and CM after ascent.
+;				Referenced in THE_LUNAR_LANDING.agc and P20-P25.agc.
 # P39/79SW	126		BIT  9 FLAG  8		P39SWBIT
 # QUITFLAG	145		BIT 5 FLAG 9		QUITBIT
 # RADMODES			FLGWRD12
@@ -177,6 +257,11 @@
 # READRFLG	051		BIT  9 FLAG  3		READRBIT	EQUIVALENT FLAG NAME FOR R04FLAG
 # READVEL	175		BIT  5 FLAG 11		READVBIT
 # REDFLAG	099		BIT  6 FLAG  6		REDFLBIT
+;				FLAGORGY FLAG: Landing site redesignation by crew.
+;				SET=crew has manually selected new landing target, RESET=nominal.
+;				Armstrong used manual redesignation at ~500 feet to avoid boulder
+;				field during Apollo 11 landing. Referenced in THE_LUNAR_LANDING.agc
+;				and LUNAR_LANDING_GUIDANCE_EQUATIONS.agc.
 # REFSMFLG	047		BIT 13 FLAG  3		REFSMBIT
 # REINTFLG	158		BIT  7 FLAG 10		REINTBIT
 # REMODFLG	181		BIT 14 FLAG 12		REMODBIT
@@ -184,6 +269,10 @@
 # REPOSMON	184		BIT 11 FLAG 12		REPOSBIT
 # RHCSCFLG	203		BIT  7 FLAG 13		RHCSCALE
 # RNDVZFLG	008		BIT  7 FLAG  0		RNDVZBIT
+;				FLAGORGY FLAG: P20 rendezvous navigation radar in use.
+;				SET=rendezvous radar tracking active, RESET=radar not in use.
+;				Used during post-ascent approach to CM for docking. Referenced in
+;				THE_LUNAR_LANDING.agc and P20-P25.agc rendezvous programs.
 # RNGEDATA	176		BIT  4 FLAG 11		RNGEDBIT
 # RNGSCFLG	080		BIT 10 FLAG  5		RNGSCBIT
 # RODFLAG	018		BIT 12 FLAG  1		RODFLBIT
@@ -237,6 +326,31 @@
 
 # ASSIGNMENT AND DESCRIPTION OF FLAGWORDS
 
+; ============================================================================
+; FLAGWORD 0: NAVIGATION, RADAR, AND RENDEZVOUS FLAGS
+;
+; This is the primary flagword controlling core navigation and rendezvous
+; operations. It manages critical mission functions including:
+;   - Sphere of influence transitions (Earth/Moon)
+;   - Integration method selection for trajectory propagation
+;   - Rendezvous program status (P20-P25 suite)
+;   - Radar operation modes and lock-on control
+;   - IMU usage coordination
+;   - Display mode selection
+;
+; MISSION CONTEXT: During Apollo 11's rendezvous phase on July 21, 1969,
+; after Eagle's ascent from the lunar surface, flags in this word coordinated
+; the rendezvous radar operation and P20-P25 navigation programs that guided
+; the LM back to Columbia in lunar orbit.
+;
+; FLAGORGY FLAGS IN THIS WORD:
+;   - P25FLAG (BIT 9): Rendezvous program P25 operating status
+;   - RNDVZFLG (BIT 7): P20 program running with radar in use
+;
+; These flags were set/cleared in THE_LUNAR_LANDING.agc's FLAGORGY routine
+; to configure the navigation system for different mission phases.
+; ============================================================================
+
 FLAGWRD0	=	STATE +0		# (000-014)
 
 						#  	(SET)			(RESET)
@@ -267,6 +381,31 @@ FSPASFLG	=	005D			#	FIRST PASS THROUGH	NOT FIRST PASS THRU
 FSPASBIT	=	BIT10			#	REPOSITION ROUTINE	REPOSITION ROUTINE
 
 # Page 66
+; ----------------------------------------------------------------------------
+; P25FLAG - Rendezvous Program P25 Status (Part of FLAGORGY flags)
+;
+; This flag indicates whether program P25 (Auto Optics Positioning for
+; Rendezvous Navigation) is currently operating. P25 is part of the P20-P25
+; rendezvous navigation suite that provides automated optical tracking of
+; the Command Module during rendezvous operations.
+;
+; MISSION CONTEXT: During Apollo 11's rendezvous on July 21, 1969, this flag
+; coordinated the automatic optics positioning system. When SET, it indicated
+; P25 was actively controlling the Alignment Optical Telescope (AOT) to track
+; Columbia for relative navigation state updates.
+;
+; PROGRAM COORDINATION:
+;   SET: P25 is running - automatic optical tracking active
+;   RESET: P25 not running - manual optics or radar navigation
+;
+; CROSS-REFERENCES:
+;   - THE_LUNAR_LANDING.agc: Part of FLAGORGY initialization
+;   - P20-P25.agc: Primary program setting/clearing this flag
+;   - Rendezvous navigation suite coordination
+;
+; NOTE: This flag is part of the critical FLAGORGY set that manages
+; operational mode transitions during powered flight phases.
+; ----------------------------------------------------------------------------
 # BIT 9 FLAG 0	(S)
 P25FLAG		=	006D			# 	P25 OPERATING		P25 NOT OPERATING
 P25FLBIT	=	BIT9
@@ -275,6 +414,34 @@ P25FLBIT	=	BIT9
 IMUSE		=	007D			# 	IMU IN USE		IMU NOT IN USE
 IMUSEBIT	=	BIT8
 
+; ----------------------------------------------------------------------------
+; RNDVZFLG - Rendezvous Radar Active Status (Part of FLAGORGY flags)
+;
+; This flag indicates whether program P20 (Rendezvous Navigation) is actively
+; running with rendezvous radar in use. P20 provides real-time relative
+; navigation state updates during the rendezvous phase using radar tracking
+; of the Command Module.
+;
+; MISSION CONTEXT: After Eagle's ascent from the lunar surface on July 21,
+; 1969, this flag was SET to activate P20's radar-based rendezvous navigation.
+; The rendezvous radar measured range, range rate, and angles to Columbia,
+; providing the navigation data needed for Aldrin and Armstrong to guide
+; Eagle back to dock with Collins in lunar orbit.
+;
+; PROGRAM COORDINATION:
+;   SET: P20 running with rendezvous radar active and tracking CSM
+;   RESET: P20 not running or operating without radar
+;
+; CROSS-REFERENCES:
+;   - THE_LUNAR_LANDING.agc: Part of FLAGORGY initialization for mode control
+;   - P20-P25.agc: Primary rendezvous navigation program using this flag
+;   - RADAR_LEADIN_ROUTINES.agc: Radar interface respects this flag
+;   - Ascent and rendezvous sequence programs
+;
+; HISTORICAL SIGNIFICANCE: This flag coordinated one of the most critical
+; phases of Apollo 11 - the rendezvous that reunited the landing crew with
+; the Command Module for the return journey to Earth.
+; ----------------------------------------------------------------------------
 # BIT 7 FLAG 0	(S)
 RNDVZFLG	=	008D			#	P20 RUNNING (RADAR	P20 NOT RUNNING
 RNDVZBIT	=	BIT7			# 	IN USE)
@@ -306,6 +473,71 @@ R10FLBIT	=	BIT2			# 	ALTITUDE & ALTITUDE 	SET, R10 ALSO OUTPUT
 OLDESFLG	=	014D			# 	R29 GYRO CMD LOOP	R29 GYRO CMD LOOP
 OLDESBIT	=	BIT1			# 	REQUESTED		NOT REQUESTED
 
+; ============================================================================
+; FLAGWORD 1: RCS CONFIGURATION, DISPLAY INITIALIZATION, AND STATE UPDATES
+;
+; This flagword manages Reaction Control System (RCS) jet configuration,
+; display system initialization sequences, navigation state vector update
+; permissions, landing program operational modes, and numerical iteration
+; control parameters.
+;
+; RCS CONFIGURATION:
+;   - NJETSFLG: Selects two-jet vs four-jet RCS burn mode
+;     Two-jet mode conserves propellant during low-thrust maneuvers
+;     Four-jet mode provides higher control authority during critical phases
+;
+; DISPLAY SYSTEM INITIALIZATION:
+;   - DIDFLAG: Indicates whether inertial data is available for display
+;     SET: Data available, normal display operations proceed
+;     RESET: Perform display data initialization functions first
+;     Critical for preventing display of invalid navigation data
+;
+; NAVIGATION STATE UPDATE CONTROL:
+;   Three-flag system manages update permissions during mission operations:
+;   - VEHUPFLG: Designates which vehicle state vector is being updated
+;     SET: CSM (Command Module) state vector update in progress
+;     RESET: LM (Lunar Module) state vector update in progress
+;   - UPDATFLG: Controls whether optical mark updates are permitted
+;     Used by P20-P25 rendezvous navigation and P51-P53 alignment
+;   - NOUPFLAG: Master enable/disable for all state vector updates
+;     SET: Neither CSM nor LM state vector may be updated (freeze state)
+;     RESET: Updates allowed (controlled by VEHUPFLG and UPDATFLG)
+;   - TRACKFLG: Controls whether optical tracking operations are allowed
+;
+; LANDING PROGRAM MODE (P66):
+;   - RODFLAG: Controls P66 (LM final approach rate-of-descent) behavior
+;     SET: Normal P66 operation continues through restart
+;     RESET: P66 reinitialization performed (restart clears flag)
+;     P66 allowed Armstrong manual rate-of-descent control during final
+;     approach, providing capability to slow descent if needed
+;
+; NUMERICAL ITERATION CONTROL:
+;   Lambert targeting and orbital mechanics routines use iterative solvers:
+;   - SLOPESW: Selects iteration algorithm
+;     SET: Use bias method in iterator
+;     RESET: Use regular falsi (false position) method
+;   - GUESSW: Indicates whether starting value exists for iteration
+;     SET: No starting value available, algorithm must generate initial guess
+;     RESET: Starting value for iteration exists, convergence faster
+;
+; EARTH RADIUS COMPUTATION:
+;   - ERADFLAG: Selects Earth radius calculation method
+;     SET: Compute REARTH using Fischer ellipsoid model (latitude-dependent)
+;     RESET: Use constant REARTH from pad-loaded value (faster, less accurate)
+;     Affects entry targeting accuracy and transearth navigation precision
+;
+; DISPLAY/LANDING PROGRAM COORDINATION:
+;   - R61FLAG: Selects landing radar data display routine
+;     SET: Run R61 (standard LEM landing radar display)
+;     RESET: Run R65 (alternate LEM display mode)
+;
+; CROSS-REFERENCES:
+;   - RCS-CSM_DIGITAL_AUTOPILOT.agc: Uses NJETSFLG for jet selection
+;   - DISPLAY_INTERFACE_ROUTINES.agc: Checks DIDFLAG before display updates
+;   - P20-P25.agc: Controls UPDATFLG and TRACKFLG during navigation
+;   - P66.agc: Uses RODFLAG for landing mode control (if present in codebase)
+;   - INTEGRATION_INITIALIZATION.agc: Uses numerical iteration flags
+; ============================================================================
 
 FLAGWRD1	=	STATE +1		# (015-029)
 
@@ -375,6 +607,37 @@ GUESSBIT	=	BIT2			#	FOR ITERATION		ITERATION EXISTS
 # BIT 1 FLAG 1
 		=	029D
 		=	BIT1			# OH 2009-05-15 Scan does not have this line
+
+; ============================================================================
+; FLAGWORD 2: RENDEZVOUS AND NAVIGATION CONTROL FLAGS
+;
+; This flagword manages orbital rendezvous operations, navigation mode
+; selection, and guidance computation options used primarily by programs
+; P20-P25 (rendezvous navigation) and P30-P37 (maneuver targeting).
+;
+; RENDEZVOUS FLAGS:
+;   - Radar search and acquisition modes
+;   - Line of sight computation control
+;   - Active vehicle designation (LM vs CSM)
+;   - Final pass vs interim computation selection
+;
+; GUIDANCE AND STEERING FLAGS:
+;   - Thrust availability monitoring
+;   - Minimum impulse vs continuous burn modes
+;   - External delta-V vs Lambert targeting selection
+;   - Preferred attitude computation status
+;
+; MISSION CONTEXT:
+; During Apollo 11's rendezvous on July 21, 1969, these flags coordinated the
+; LM's ascent targeting and subsequent rendezvous with Columbia. They enabled
+; the guidance computer to select appropriate computation modes and configure
+; the rendezvous radar for tracking the Command Module during approach.
+;
+; CROSS-REFERENCES:
+;   - P20-P25.agc: Rendezvous navigation using these mode flags
+;   - P30-P37.agc: External delta-V programs using guidance flags
+;   - RADAR_LEADIN_ROUTINES.agc: Responds to radar mode flag settings
+; ============================================================================
 
 FLAGWRD2	=	STATE +2		# (030-044)
 
@@ -451,6 +714,44 @@ CALC2BIT	=	BIT2			#	STARTING PROCEDURE	PROCEDURE
 NODOFLAG	=	044D			#	V37 NOT PERMITTED	V37 PERMITTED
 NODOBIT		=	BIT1
 
+; ----------------------------------------------------------------------------
+; FLAGWRD3 (Bits 045-059): NAVIGATION MODES AND COORDINATE SYSTEMS
+;
+; This flagword controls navigation state vector management, coordinate frame
+; selection, and orbital integration parameters.
+;
+; COORDINATE SYSTEM FLAGS (REFSMFLG, LUNAFLAG):
+; - REFSMFLG: Reference Stable Member Matrix validity (*** PROTECTED FROM
+;   FRESH START *** - survives system resets)
+; - LUNAFLAG: Selects lunar vs. Earth latitude-longitude coordinate systems
+; - Used throughout PLANETARY_INERTIAL_ORIENTATION.agc for frame transforms
+;
+; INTEGRATION MODE FLAGS (INTYPFLG, VINTFLAG, D6OR9FLG, DIM0FLAG, PRECIFLG):
+; - Control Encke vs. conic integration methods in ORBITAL_INTEGRATION.agc
+; - Select CSM vs. LM state vector for propagation
+; - Control W-matrix dimensionality (6x6 vs. 9x9) for covariance propagation
+; - Engage precision integration modes when required
+;
+; STAR TRACKING FLAGS (VFLAG, CULTFLAG):
+; - Track number of stars in optical field of view for alignment
+; - Detect star occultation conditions during navigation sightings
+; - Interface with IMU alignment routines (P51-P53.agc)
+;
+; NAVIGATION STATE FLAGS (ORBWFLAG, STATEFLG):
+; - Indicate validity of W-matrix for orbital navigation
+; - Track permanent state vector update status
+; - Coordinate MEASUREMENT_INCORPORATION.agc with navigation updates
+;
+; GIMBAL LOCK PROTECTION (GLOKFAIL):
+; - Indicates gimbal lock has occurred (middle gimbal near ±90°)
+; - Triggers crew warning on DSKY (GIMBAL LOCK light)
+; - Prevents IMU operations during lock condition
+;
+; RENDEZVOUS RADAR FLAGS (NOR29FLG, READRFLG):
+; - Control R29 rendezvous radar data reading during powered flight
+; - Coordinate radar tracking with P20-P25.agc rendezvous programs
+; ----------------------------------------------------------------------------
+
 FLAGWRD3	=	STATE +3		# (045-059)
 
 						#	(SET)			(RESET)
@@ -521,6 +822,62 @@ D6OR9BIT	=	BIT2			#	FOR INTEGRATION		FOR INTEGRATION
 # BIT 1 FLAG 3	(S)
 DIM0FLAG	=	059D			#	W MATRIX IS TO BE	W MATRIX IS NOT TO
 DIM0BIT		=	BIT1			#	USED			USED
+
+; ----------------------------------------------------------------------------
+; FLAGWRD4 (Bits 060-074): DSKY DISPLAY MANAGEMENT AND KEYBOARD ARBITRATION
+;
+; This flagword implements the display priority system managing the single
+; DSKY (Display and Keyboard) unit shared by all LM programs. Controls three
+; display priority levels and keyboard access arbitration.
+;
+; DISPLAY PRIORITY LEVELS:
+; Three concurrent display types compete for the single DSKY screen:
+;
+; 1. PRIORITY DISPLAYS (highest):
+;    - Critical mission data requiring immediate crew attention
+;    - Can interrupt mark and normal displays
+;    - PRIODFLG: Priority display active in ENDIDLE loop
+;    - Examples: Program alarms, critical navigation updates
+;
+; 2. MARK DISPLAYS (medium):
+;    - Optical navigation mark data during star/landmark sightings
+;    - Can interrupt normal displays but not priority displays
+;    - MRKIDFLG: Mark display active in ENDIDLE loop
+;    - Used during IMU alignment (P51-P53.agc) and optical tracking
+;
+; 3. NORMAL DISPLAYS (lowest):
+;    - Standard program data displays
+;    - Can be interrupted by priority or mark displays
+;    - NRMIDFLG: Normal display active in ENDIDLE loop
+;    - Most mission programs display data at this level
+;
+; DISPLAY INTERRUPT COORDINATION:
+; Manages what happens when higher-priority display preempts current display:
+; - MRUPTFLG: Mark display interrupted by priority display
+; - NRUPTFLG: Normal display interrupted by priority or mark
+; - MKOVFLAG: Mark display currently over normal display
+; - Enables display restoration after higher-priority display completes
+;
+; KEYBOARD ARBITRATION FLAGS:
+; Controls crew keyboard access when multiple programs request DSKY input:
+; - MRKNVFLG: Astronaut using keyboard during mark display initiation
+; - NRMNVFLG: Astronaut using keyboard during normal display initiation
+; - PRONVFLG: Astronaut using keyboard during priority display initiation
+; - PINBRFLG: Astronaut has interfered with existing display by keying input
+; - Prevents display corruption from simultaneous keyboard operations
+;
+; SPECIAL DISPLAY CONTROL FLAGS:
+; - PDSPFLAG: P20 (rendezvous nav) converts normal display to priority in R60
+; - MWAITFLG/NWAITFLG: Higher-priority display operating when mark/normal
+;   display initiated (defers lower-priority display until completion)
+; - XDSPFLAG: Mark display protected from interruption (special mark info mode)
+;
+; ARCHITECTURE NOTE:
+; This priority system prevents display "thrashing" on the single DSKY unit
+; while ensuring critical information reaches crew during mission-critical
+; phases. The ENDIDLE loop (DISPLAY_INTERFACE_ROUTINES.agc) implements the
+; arbitration logic using these flags.
+; ----------------------------------------------------------------------------
 
 FLAGWRD4	=	STATE +4		# (060-074)
 
@@ -605,6 +962,48 @@ MKOVBIT		=	BIT3			#	NORMAL			NORMAL
 XDSPFLAG	=	074D			#	MARK DISPLAY NOT	NO SPECIAL MARK
 XDSPBIT		=	BIT1			#	TO BE INTERRUPTED	INFORMATION
 
+; ============================================================================
+; FLAGWORD 5: ENGINE CONTROL AND MANEUVER CONFIGURATION FLAGS
+;
+; This flagword manages engine throttle control, jet selection, attitude
+; maneuver configuration, and radar monitoring modes. Several flags directly
+; control safety-critical operations during powered flight phases.
+;
+; ENGINE AND THROTTLE CONTROL FLAGS:
+;   - NOTHROTL: Inhibits full throttle on descent engine (prevents overburn)
+;   - ENGONFLG: Tracks engine on/off state
+;   - SNUFFER: Disables U,V jets during descent propulsion system (DPS) burns
+;
+; MANEUVER CONFIGURATION FLAGS:
+;   - 3AXISFLG: Selects three-axis vs single-axis attitude maneuvers
+;   - MGLVFLAG: Controls coordinate system selection (local vertical vs gimbal)
+;
+; RADAR MONITORING FLAGS:
+;   - R77FLAG: Suppresses radar alarms during R77 diagnostic routine
+;   - NORRMON: Bypasses rendezvous radar gimbal monitoring
+;   - RNGSCFLG: Tracks scale changes during RR readings
+;
+; NAVIGATION AND GUIDANCE FLAGS:
+;   - RENDWFLG: Indicates W matrix validity for rendezvous navigation
+;   - SOLNSW: Lambert targeting convergence status
+;   - DMENFLG: Controls measurement vector dimension (6 or 9 elements)
+;
+; DISPLAY FLAGS:
+;   - DSKYFLAG: Controls DSKY display output
+;
+; MISSION CONTEXT:
+; During Apollo 11's descent on July 20, 1969, NOTHROTL prevented the descent
+; engine from achieving full throttle during critical low-altitude phases where
+; controlled deceleration was required. This flag was part of the throttle
+; management system that enabled Armstrong's manual landing site selection.
+;
+; CROSS-REFERENCES:
+;   - THROTTLE_CONTROL_ROUTINES.agc: Uses NOTHROTL flag
+;   - THE_LUNAR_LANDING.agc: Sets NOTHROTL during descent phases
+;   - TJET_LAW.agc: Responds to SNUFFER for jet selection
+;   - ATTITUDE_MANEUVER_ROUTINE.agc: Uses 3AXISFLG configuration
+; ============================================================================
+
 FLAGWRD5	=	STATE +5		# (075-089)
 
 						#	(SET)			(RESET)
@@ -680,6 +1079,62 @@ RENDWFLG	=	089D			#	W MATRIX VALID		W MATRIX INVALID
 						#	FOR RENDEZVOUS		FOR RENDEZVOUS
 RENDWBIT	=	BIT1			#	NAVIGATION		NAVIGATION
 
+
+; ============================================================================
+; FLAGWORD 6: LANDING REDESIGNATION AND TARGETING FLAGS
+;
+; This flagword contains critical flags controlling lunar landing site
+; redesignation, targeting operations, and coordinate system states. Several
+; flags here were part of the FLAGORGY subroutine in THE_LUNAR_LANDING.agc
+; that configured the landing sequence.
+;
+; LANDING MODE FLAGS (FLAGORGY group):
+;   - MUNFLAG: Selects whether servicer calls MUNRVG (set) or CALCRVG (reset)
+;              for navigation state vector computation during descent
+;   - REDFLAG: Enables/inhibits landing site redesignation by crew
+;              When SET, astronaut can use manual redesignation controls
+;              When RESET, landing site is locked to computed target
+;
+; TARGETING AND MANEUVER FLAGS:
+;   - NTARGFLG: Indicates astronaut manually overwrote delta-velocity at
+;               Terminal Phase Initiation (TPI) or Midcourse (TPM) in P34/P35
+;   - S32.1F1: Delta-V at Coelliptic Sequence Initiation (CSI) time exceeds
+;              maximum allowable value (requires retargeting)
+;   - S32.1F2/S32.1F3A/S32.1F3B: Track Newton iteration stages in S32.1
+;              targeting computations (ordered pair logic for convergence)
+;
+; GIMBAL CONTROL FLAGS:
+;   - GMBDRVSW: Indicates TRIMGIMB (trim gimbal routine) has completed
+;
+; COORDINATE SYSTEM FLAGS:
+;   - ATTFLAG: Indicates LM attitude is available in Moon-fixed coordinates
+;              Essential for landing radar data processing and touchdown
+;
+; SERVICER FLAGS:
+;   - AUXFLAG: Controls DVMON (delta-velocity monitor) execution in servicer
+;              background tasks based on IDLEFLAG state
+;
+; MISSION CONTEXT:
+; During Apollo 11's descent, REDFLAG was SET to permit Armstrong to manually
+; redesignate the landing site when he observed the computer was guiding Eagle
+; toward a boulder field. At approximately 500 feet altitude, Armstrong used
+; the Attitude Controller Assembly (ACA) to slew the landing point downrange,
+; extending the powered descent time and reducing fuel margins to ~25 seconds
+; at touchdown. This manual redesignation capability, controlled by REDFLAG,
+; was essential to mission success.
+;
+; MUNFLAG controlled the navigation computation method during descent, selecting
+; between the MUNRVG (Munakata algorithm) and CALCRVG (calculated R and V)
+; routines for state vector propagation.
+;
+; CROSS-REFERENCES:
+;   - THE_LUNAR_LANDING.agc: Sets MUNFLAG and REDFLAG in FLAGORGY subroutine
+;   - LUNAR_LANDING_GUIDANCE_EQUATIONS.agc: Uses REDFLAG for redesignation
+;   - SERVICER.agc: Uses MUNFLAG to select navigation computation method
+;   - ATTITUDE_MANEUVER_ROUTINE.agc: Uses ATTFLAG for coordinate validation
+;   - P32-P35_P72-P75.agc: Uses S32 iteration flags for targeting convergence
+;   - P34-35_P74-75.agc: Uses NTARGFLG for manual override tracking
+; ============================================================================
 
 FLAGWRD6	=	STATE +6		# (090-104)
 
@@ -757,6 +1212,87 @@ ATTFLAG		=	104D			#	LEM ATTITUDE EXISTS	NO LEM ATTITUDE
 # Page 77
 ATTFLBIT	=	BIT1			#	COORDINATES		FIXED COORDINATES
 
+; ============================================================================
+; FLAGWORD 7: IGNITION CONTROL, DISPLAYS, AND SERVICER FLAGS
+;
+; This flagword contains critical flags controlling powered flight ignition
+; sequencing, crew displays during landing, servicer background task control,
+; and targeting computation modes. Several flags coordinate between mission
+; programs and the servicer routine for navigation state monitoring.
+;
+; IGNITION AND BURN CONTROL FLAGS:
+;   - IGNFLAG: Indicates Time of Ignition (TIG) has arrived for powered burn
+;              Controls transition from coast to powered flight in burn programs
+;   - ASTNFLAG: Indicates astronaut has manually approved engine ignition
+;               Safety interlock requiring crew GO before automatic ignition
+;   - ITSWICH: Controls whether R34 should compute TPI (Terminal Phase Initiation)
+;              time or if TPI has already been computed and stored
+;
+; LANDING DISPLAY FLAGS:
+;   - SWANDISP: Enables/disables landing analog displays (altitude rate,
+;               horizontal velocity indicators on crew panel during descent)
+;               SET during P63/P64 landing programs to provide crew situational
+;               awareness. Critical for Armstrong's monitoring during Apollo 11.
+;
+; SERVICER AND MONITOR FLAGS:
+;   - IDLEFLAG: Controls DV (delta-velocity) monitor execution in servicer
+;               When RESET, servicer runs DVMON to track accumulated velocity
+;               changes from RCS firings and verify against planned maneuvers
+;   - AVEGFLAG: Indicates AVERAGEG (average acceleration) computation desired
+;               Used by servicer to integrate IMU acceleration data
+;   - V37FLAG: Indicates AVERAGEG computation currently running in servicer
+;              State tracking flag for servicer background task execution
+;
+; TARGETING COMPUTATION FLAGS:
+;   - NORMSW: Controls whether Lambert targeting routine computes its own
+;             unit normal vector or uses externally-provided normal as input
+;   - RVSW: Selects final state vector computation mode in time-theta targeting
+;           Determines whether to compute state at time-delta or time-theta
+;   - MANUFLAG: Indicates attitude maneuver in progress during Rendezvous Radar
+;               (RR) search operations. Coordinates autopilot with radar tracking.
+;
+; W-MATRIX AND NAVIGATION FLAGS:
+;   - V67FLAG: Indicates astronaut manually overwrote W-matrix initial values
+;              W-matrix contains navigation state covariance for Kalman filtering
+;   - UPLOCKFL: Indicates K-KBAR-K update computation failed (uplink lock failure)
+;               Prevents bad navigation updates from corrupting state vector
+;
+; PROGRAM CONTROL FLAGS:
+;   - VERIFLAG: Changed when V33E (proceed with external delta-V) occurs at
+;               end of P27 (update program), tracking crew input acceptance
+;   - V82EMFLG: Indicates spacecraft vicinity (Moon vs Earth) for coordinate
+;               frame selection and ephemeris computation
+;   - TFFSW: Selects between calculating time of free fall (TFF) or time to
+;            perigee (TPERIGEE) in trajectory computations
+;
+; MISSION CONTEXT:
+; During Apollo 11's descent, SWANDISP was SET to enable the landing analog
+; displays that showed altitude rate and horizontal velocity. Armstrong and
+; Aldrin monitored these displays continuously during the final approach,
+; with Armstrong calling out "Down two and a half" (feet per second descent
+; rate) repeatedly during the last moments before touchdown.
+;
+; ASTNFLAG provided the crew safety interlock for engine ignition. Before
+; any powered burn (descent engine, ascent engine), this flag had to be SET
+; by astronaut action (typically PRO key on DSKY) to permit ignition. This
+; prevented uncommanded engine starts due to software or hardware faults.
+;
+; IDLEFLAG and AVEGFLAG controlled the servicer routine's monitoring of
+; spacecraft acceleration and velocity changes, essential for verifying that
+; RCS thruster firings achieved intended velocity corrections and detecting
+; anomalous accelerations that might indicate system failures.
+;
+; CROSS-REFERENCES:
+;   - THE_LUNAR_LANDING.agc: Sets SWANDISP to enable descent displays
+;   - LANDING_ANALOG_DISPLAYS.agc: Uses SWANDISP to control display updates
+;   - P40-P47.agc: Sets IGNFLAG and ASTNFLAG for SPS/DPS burn sequencing
+;   - SERVICER.agc: Uses IDLEFLAG, AVEGFLAG, V37FLAG for background tasks
+;   - P32-P35_P72-P75.agc: Uses NORMSW and RVSW for Lambert targeting modes
+;   - P34-35_P74-75.agc: Sets ITSWICH for TPI computation control
+;   - UPDATE_PROGRAM.agc: Uses VERIFLAG to track P27 crew acceptance
+;   - MEASUREMENT_INCORPORATION.agc: Uses UPLOCKFL to validate nav updates
+; ============================================================================
+
 FLAGWRD7	=	STATE +7		# (105-119)
 
 						#	(SET)			(RESET)
@@ -825,6 +1361,96 @@ V82EMBIT	=	BIT2			#
 TFFSW		=	119D			#	CALCULATE TPERIGEE	CALCULATE TFF
 TFFSWBIT	=	BIT1			#
 
+
+; ============================================================================
+; FLAGWORD 8: SPHERE OF INFLUENCE, SURFACE STATUS, AND TRAJECTORY FLAGS
+;
+; This flagword contains critical flags for coordinate system management,
+; spacecraft location tracking, trajectory computation modes, and conic
+; solution handling. Several flags are PROTECTED FROM FRESH START to preserve
+; essential state information across computer restarts.
+;
+; SPHERE OF INFLUENCE FLAGS (PROTECTED FROM FRESH START):
+;   - CMOONFLG: Indicates Command Module permanent state in lunar sphere
+;               (SET) or Earth sphere (RESET) of gravitational influence
+;               Determines primary gravitational body for trajectory computation
+;   - LMOONFLG: Indicates Lunar Module permanent state in lunar sphere
+;               (SET) or Earth sphere (RESET) of gravitational influence
+;               Essential for proper ephemeris and coordinate frame selection
+;
+; SURFACE OPERATION FLAG (PROTECTED FROM FRESH START):
+;   - SURFFLAG: Indicates LM is on lunar surface (SET) or in flight (RESET)
+;               This flag is SET at touchdown and remains SET during surface
+;               operations (21.5 hours for Apollo 11). Critical for:
+;               * Disabling descent programs that require flight state
+;               * Enabling surface navigation and alignment modes
+;               * Coordinating ascent preparation and ignition sequencing
+;               * Preventing inadvertent guidance mode changes on surface
+;               PROTECTED to preserve surface state across any restart events
+;               during critical surface operations or ascent countdown.
+;
+; CONIC TRAJECTORY SOLUTION FLAGS:
+;   - INFINFLG: Indicates no conic solution exists, requiring closure through
+;               infinity (SET) vs normal conic solution exists (RESET)
+;               Occurs when trajectory hyperbolic escape or insufficient data
+;   - COGAFLAG: Indicates COGA (Conic Orbital Guidance) routine overflow due
+;               to near-rectilinear trajectory (SET) vs valid conic (RESET)
+;   - APSESW: Indicates RDESIRED (desired radius) is outside (SET) or inside
+;             (RESET) the pericenter-apocenter range in time-radius iteration
+;   - ORDERSW: Controls whether Lambert iterator uses second-order minimum
+;              mode (SET) or first-order standard mode (RESET) for convergence
+;
+; INTEGRATION FLAGS:
+;   - NEWIFLG: Indicates first pass through integration routine (SET) vs
+;              succeeding iteration of integration (RESET)
+;              Used by ORBITAL_INTEGRATION.agc for initialization control
+;   - RPQ FLAG: Indicates RPQ vector (between secondary body and primary body)
+;               not yet computed (SET) vs already computed (RESET)
+;
+; DISPLAY FLAGS:
+;   - FLUNDISP: Controls whether current guidance displays are inhibited (SET)
+;               or permitted (RESET). Used during mode transitions to prevent
+;               confusing or invalid display data from appearing on DSKY.
+;
+; PROGRAM SELECTION FLAGS:
+;   - P39/79SW: Indicates P39 or P79 programs operating (SET) vs P38 or P78
+;               programs operating (RESET). Selects between rendezvous program
+;               variants for different mission phases.
+;
+; MISSION CONTEXT:
+; SURFFLAG was one of the most critical flags in the Apollo 11 mission. At
+; the moment of touchdown (102:45:40 MET, July 20, 1969), when the contact
+; probes touched the lunar surface and Armstrong announced "Contact light",
+; SURFFLAG was SET. This single bit transition:
+; - Terminated the descent guidance programs
+; - Disabled throttle control (engine shutdown followed immediately)
+; - Enabled surface navigation modes for star alignment
+; - Protected against inadvertent guidance mode activation
+; - Persisted through the 21.5-hour surface stay
+; - Coordinated with ascent program initialization
+;
+; The PROTECTED status of SURFFLAG, CMOONFLG, and LMOONFLG was essential.
+; If a restart occurred during surface operations (none did on Apollo 11,
+; but hardware transients were possible), these flags had to survive to
+; maintain correct operational context. Losing SURFFLAG during surface stay
+; could have caused the computer to think it was still in powered descent,
+; with potentially dangerous consequences for ascent preparation.
+;
+; The sphere of influence flags (CMOONFLG/LMOONFLG) managed the transition
+; between Earth-centered and Moon-centered coordinate systems during the
+; translunar and transearth coast phases. Proper flag state ensured the
+; correct gravitational models and ephemeris calculations were used.
+;
+; CROSS-REFERENCES:
+;   - THE_LUNAR_LANDING.agc: Sets SURFFLAG at touchdown detection
+;   - ASCENT_GUIDANCE.agc: Checks SURFFLAG before ascent ignition
+;   - FRESH_START_AND_RESTART.agc: Protects SURFFLAG/CMOONFLG/LMOONFLG
+;   - ORBITAL_INTEGRATION.agc: Uses NEWIFLG, CMOONFLG, LMOONFLG for setup
+;   - CONIC_SUBROUTINES.agc: Uses INFINFLG, COGAFLAG, APSESW, ORDERSW
+;   - P39_P79.agc: Uses P39/79SW for program variant selection
+;   - DISPLAY_INTERFACE_ROUTINES.agc: Uses FLUNDISP to control updates
+;   - PLANETARY_INERTIAL_ORIENTATION.agc: Uses sphere flags for frame selection
+; ============================================================================
 
 FLAGWRD8	=	STATE +8D		# (120-134)
 
@@ -898,6 +1524,32 @@ INITABIT	=	BIT2			#	P57			(CHECK RESET-MILLARD)
 360SW		=	134D			#	TRANSFER ANGLE NEAR	TRANSFER ANGLE NOT
 360SWBIT	=	BIT1			#	360 DEGREES		NEAR 360 DEGREES
 
+; ----------------------------------------------------------------------------
+; FLAGWRD9 (Bits 135-149): ASCENT GUIDANCE AND INTEGRATION CONTROL
+;
+; This flagword manages ascent guidance modes, abort control, and numerical
+; integration parameters used during powered flight from the lunar surface.
+;
+; ASCENT GUIDANCE FLAGS (FLVR, FLPC, FLPI, FLAP, FLRCS):
+; - Control guidance law selection during lunar ascent
+; - Enable/disable specific guidance components (velocity, position, attitude)
+; - Coordinate thrust vector control and RCS jet selection
+; - Used heavily in ASCENT_GUIDANCE.agc and P12.agc during Eagle's return
+;
+; ABORT FLAGS (LETABORT):
+; - Enable abort mode capability
+; - Interfaces with P70-P71.agc abort programs
+; - Critical safety feature for crew emergency return
+;
+; INTEGRATION CONTROL FLAGS (AVEMIDSW, MIDFLAG, MID1FLAG-MID3FLAG):
+; - Control orbital integration sequencing
+; - Manage Encke method rectification intervals
+; - Coordinate state vector propagation in ORBITAL_INTEGRATION.agc
+;
+; MISSION CONTEXT: These flags were active during Eagle's ascent from
+; Tranquility Base on July 21, 1969, managing the 7-minute powered climb
+; to rendezvous orbit with Columbia.
+; ----------------------------------------------------------------------------
 
 FLAGWRD9	=	STATE +9D		# (135-149)
 
@@ -975,6 +1627,32 @@ AVEMDBIT	=	BIT1			#	DON'T WRITE OVER RN, 	PIPTIME
 
 RASFLAG		EQUALS	FLGWRD10		# WAS ONLY AN INSTALL-ERASTALL FLAG
 
+; ----------------------------------------------------------------------------
+; FLGWRD10 (Bits 150-164): INTEGRATION STATUS AND STAGE CONFIGURATION
+;
+; This flagword manages orbital integration state tracking and the critical
+; ascent/descent stage configuration flag.
+;
+; INTEGRATION FLAGS (INTFLAG, REINTFLG):
+; - Track whether orbital integration computation is currently active
+; - Control restart behavior for integration routines
+; - Interface with ORBITAL_INTEGRATION.agc state vector propagation
+;
+; STAGE CONFIGURATION FLAG (APSFLAG):
+; - **CRITICAL**: Indicates Ascent Propulsion System (APS) vs Descent (DPS)
+; - SET = Ascent stage active, RESET = Descent stage active
+; - *** PROTECTED FROM FRESH START *** (survives system resets)
+; - This flag changed state when Eagle jettisoned its descent stage after
+;   liftoff from the lunar surface, permanently reconfiguring the LM from
+;   landing to rendezvous configuration
+; - Used throughout guidance and control software to select stage-specific
+;   parameters (mass properties, thrust levels, RCS configurations)
+;
+; MISSION CONTEXT: APSFLAG was SET at approximately 124:22:00 MET when
+; Eagle's ascent engine ignited for the return to orbit, and remained SET
+; throughout rendezvous with Columbia.
+; ----------------------------------------------------------------------------
+
 # Page 82
 FLGWRD10	=	STATE +10D		# (150-164)
 
@@ -1043,10 +1721,46 @@ REINTBIT	=	BIT7			#	TO BE RESTARTED		NOT TO BE RESTARTED
 
 
 
+; ============================================================================
+; FLAGWORD 11: LANDING RADAR CONTROL FLAGS
+;
+; This flagword is dedicated entirely to landing radar (LR) management during
+; powered descent. The landing radar provides critical altitude and velocity
+; measurements during the final 50,000 feet of descent to the lunar surface.
+;
+; During Apollo 11's descent on July 20, 1969, these flags controlled:
+; - Whether to accept or bypass radar altitude measurements
+; - Whether to accept or bypass radar velocity measurements
+; - Status of radar data validity and quality
+; - Radar repositioning and lock-on states
+; - Crew control over radar data incorporation
+;
+; The landing radar was essential for Armstrong and Aldrin's safe touchdown,
+; providing the altitude and descent rate information displayed on the DSKY
+; and fed to the guidance equations in LUNAR_LANDING_GUIDANCE_EQUATIONS.agc.
+; ============================================================================
+
 FLGWRD11	=	STATE +11D		# (165-179)
 
 						#	(SET)			(RESET)
 
+; ----------------------------------------------------------------------------
+; LRBYPASS - Landing Radar Bypass Control (Part of FLAGORGY flags)
+;
+; This flag enables complete bypass of landing radar altitude and velocity
+; data updates to the navigation state. When SET, all LR measurements are
+; ignored regardless of their validity or quality.
+;
+; MISSION CONTEXT: During nominal Apollo 11 descent, this flag remained RESET,
+; allowing radar data to update the guidance system. It could be SET by crew
+; if radar malfunctioned or provided erroneous data. The flag provided abort
+; protection - if radar failed, crew could land using inertial data alone.
+;
+; CROSS-REFERENCES:
+;   - THE_LUNAR_LANDING.agc: Part of FLAGORGY initialization
+;   - LUNAR_LANDING_GUIDANCE_EQUATIONS.agc: Checks this flag before using LR
+;   - RADAR_LEADIN_ROUTINES.agc: Radar interface respects this bypass flag
+; ----------------------------------------------------------------------------
 # BIT 15 FLAG 11 (L)(R12)
 LRBYPASS	=	165D			#	BYPASS ALL LANDING	DO NOT BYPASS LR
 LRBYBIT		=	BIT15			#	RADAR UPDATES		UPDATES
@@ -1119,6 +1833,41 @@ HFLSHBIT	=	BIT1			#	LAMP SHOULD BE		LAMP SHOULD NOT BE
 						#	FLASHING		FLASHING
 
 RADMODES	EQUALS	FLGWRD12		# RADAR FLAG WORD
+
+; ============================================================================
+; FLAGWORD 12: RADAR CONTROL AND STATUS FLAGS (formerly RADMODES)
+;
+; This flagword manages all radar system operations for both the Landing Radar
+; (LR) and Rendezvous Radar (RR). It controls radar modes, monitors data
+; validity, tracks positioning sequences, and coordinates radar measurements
+; with the navigation state.
+;
+; LANDING RADAR (LR) FLAGS:
+;   - Altitude scale selection (high/low range)
+;   - Position selection (antenna position 1 or 2)
+;   - Data validity (altitude fail, velocity fail flags)
+;   - Measurement quality monitoring
+;
+; RENDEZVOUS RADAR (RR) FLAGS:
+;   - Antenna mode selection (mode 1 or 2)
+;   - Designate and reposition status
+;   - CDU zeroing operations
+;   - Auto mode control
+;   - Data failure detection
+;   - Range scale selection (high/low)
+;
+; MISSION CONTEXT:
+; During Apollo 11's descent on July 20, 1969, these flags managed the landing
+; radar that provided altitude and velocity data crucial for the final approach.
+; During ascent and rendezvous on July 21, these flags coordinated rendezvous
+; radar tracking of Columbia for relative navigation.
+;
+; CROSS-REFERENCES:
+;   - RADAR_LEADIN_ROUTINES.agc: Primary radar interface routines
+;   - LUNAR_LANDING_GUIDANCE_EQUATIONS.agc: Uses LR data quality flags
+;   - P20-P25.agc: Uses RR status and control flags
+;   - THE_LUNAR_LANDING.agc: Monitors radar status during descent
+; ============================================================================
 
 FLGWRD12	=	STATE +12D		# (180-194)		WAS RADMODES
 
@@ -1196,6 +1945,45 @@ TURNONBT	=	BIT1			#	IN PROGRESS.  (ZERO	SEQUENCE IN PROGRESS
 						#	MODE)
 
 DAPBOOLS	EQUALS	FLGWRD13		# DIGITAL AUTOPILOT FLAGWORD
+
+; ============================================================================
+; FLAGWORD 13: DIGITAL AUTOPILOT CONTROL FLAGS (formerly DAPBOOLS)
+;
+; This flagword manages the Digital Autopilot (DAP), which controls spacecraft
+; attitude and translation using the Reaction Control System (RCS) thrusters.
+; The DAP is the primary flight control system for the Lunar Module during all
+; mission phases when the main engines are not firing.
+;
+; DAP CONFIGURATION FLAGS:
+;   - RCS jet selection (4-jet, 2-jet translation modes)
+;   - Automatic vs manual attitude control
+;   - Minimum impulse mode (fuel conservation)
+;   - Ullage control during engine burns
+;
+; DOCKING AND RENDEZVOUS FLAGS:
+;   - CSM docked status (changes mass properties and RCS configuration)
+;   - Orbit rate (affects attitude control gains)
+;   - Docking axis selection
+;
+; MANEUVER CONTROL FLAGS:
+;   - Automatic rotation rate selection
+;   - Attitude hold modes
+;   - Translation enable/disable
+;   - Gimbal drive test modes
+;
+; MISSION CONTEXT:
+; The DAP maintained LM attitude throughout all mission phases: during lunar
+; orbit, the descent to the surface, Neil Armstrong's manual landing site
+; selection, the ascent from Tranquility Base, and rendezvous with Columbia.
+; These flags configured the DAP for each mission phase, optimizing thruster
+; usage to conserve precious RCS propellant.
+;
+; CROSS-REFERENCES:
+;   - P-AXIS_RCS_AUTOPILOT.agc: Pitch axis control using these flags
+;   - Q_R-AXIS_RCS_AUTOPILOT.agc: Yaw/roll axis control using these flags
+;   - TJET_LAW.agc: Jet firing logic responds to these configuration flags
+;   - DAPIDLER_PROGRAM.agc: DAP background processing and flag monitoring
+; ============================================================================
 
 # Page 87
 FLGWRD13	=	STATE +13D		# (195-209)	WAS DAPBOOLS

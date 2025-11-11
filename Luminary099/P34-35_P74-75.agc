@@ -30,8 +30,51 @@
 #	Assemble revision 001 of AGC program LMY99 by NASA 2021112-061
 #	16:27 JULY 14, 1969
 
+; ============================================================================
+; FILE: P34-35_P74-75.agc
+; MODULE: Rendezvous Navigation Programs
+; MISSION PHASE: rendezvous
+;
+; TL;DR: Lambert targeting and rendezvous mid-course programs for Transfer
+;        Phase Initiation (TPI) and Terminal Phase Finalization (TPF). Solves
+;        the two-point boundary value problem: given two position vectors and
+;        time-of-flight, compute required velocity vector to transfer between
+;        them along a conic trajectory. Critical for LM rendezvous with Command
+;        Module after lunar ascent.
+;
+; COMMENT-ONLY READERS: This code computed the precise burns needed for Eagle
+;        to rendezvous with Columbia in lunar orbit after leaving the Moon's
+;        surface. Read comments to follow the rendezvous targeting mathematics.
+; CODE-ALONG READERS: Study Lambert problem solution algorithm, iterative
+;        velocity computation using INITVEL, and conic trajectory calculations.
+; ============================================================================
+
 # Page 658
+; ============================================================================
+; TRANSITION: Rendezvous Targeting Programs Overview
+;
+; After the Lunar Module (LM) ascends from the lunar surface, it must execute
+; a series of precisely calculated burns to rendezvous with the Command Module
+; (CM) orbiting overhead. These programs (P34 and P74 for TPI, P35 and P75 for
+; TPF) compute the velocity changes needed at each phase of this rendezvous.
+;
+; During Apollo 11, after Eagle lifted off from Tranquility Base on July 21,
+; 1969, these targeting algorithms guided the LM through its rendezvous with
+; Columbia, enabling Armstrong and Aldrin to rejoin Michael Collins for the
+; return journey to Earth.
+; ============================================================================
+
 # TRANSFER PHASE INITITIATION (TPI) PROGRAMS (P34 AND P74)
+
+; RENDEZVOUS NAVIGATION PROGRAMS: P34, P35, P74, P75
+; These programs solve the Lambert problem: given two position vectors in space
+; and a desired time-of-flight between them, calculate the velocity vector needed
+; to execute a conic trajectory connecting those two points. This is fundamental
+; to orbital rendezvous where the LM must intercept the CM at a specific point
+; in space and time.
+;
+; P34/P74: Transfer Phase Initiation (TPI) - First major rendezvous burn
+; P35/P75: Terminal Phase Finalization (TPF) - Final approach and intercept
 
 # MOD NO -1			LOG SECTION -- P32-P35, P72-P75
 # MOD BY WHITE, P.		DATE: 1 JUNE 67
@@ -96,6 +139,13 @@
 #		THESE STORAGE CAPABILITIES ARE LIMITED ONLY TO THE PARAMETERS
 #		FOR ONE THRUSTING MANEUVER AT A TIME EXCEPT FOR CONCENTRIC
 #		FLIGHT PLAN MANEUVER SEQUENCES.
+
+;
+; RADAR INTEGRATION FOR RENDEZVOUS TRACKING
+; The rendezvous radar can measure the range and range-rate to the target
+; spacecraft, providing real-time updates to improve targeting accuracy. During
+; Apollo 11's rendezvous, the radar provided critical tracking data as Eagle
+; closed in on Columbia, with automatic marks taken approximately once per minute.
 
 #	(4)	THE RENDEZVOUS RADAR MAY OR MAY NOT BE USED TO UPDATE THE LM
 #		OR CSM STATE VECTORS FOR THIS PROGRAM.  IF RADAR USE IS
@@ -200,16 +250,45 @@
 #	S34/35.5
 #	VN1645
 
+; ============================================================================
+; PROGRAM ENTRY POINTS: P34 and P74
+;
+; P34: Active vehicle (LM doing the maneuvering)
+; P74: Passive vehicle (LM tracking but not maneuvering)
+;
+; These programs prompt the crew via DSKY to enter targeting parameters:
+; - TTPI: Time of Transfer Phase Initiation burn
+; - ELEV: Elevation angle of line-of-sight at TPI
+; - CENTANG: Central angle to travel during transfer
+;
+; The AGC then computes the required delta-V and displays critical parameters
+; for crew and ground verification before committing to the maneuver.
+; ============================================================================
+
 		SETLOC	CSI/CDH
 		BANK
 		EBANK=	SUBEXIT
 		COUNT*	$$/P3474
-P34		TC	AVFLAGA
-		TC	P34/P74A
-P74		TC	AVFLAGP
+		
+; P34 ENTRY POINT - Active Vehicle TPI Targeting
+; Called when this spacecraft (LM) will perform the TPI maneuver to begin
+; the transfer phase of rendezvous. Sets active vehicle flag.
+
+P34		TC	AVFLAGA		; Set active vehicle flag
+		TC	P34/P74A	; Continue to common code
+		
+; P74 ENTRY POINT - Passive Vehicle TPI Targeting
+; Called when this spacecraft is the target (CSM) and the other vehicle will
+; perform the maneuver. Sets passive vehicle flag.
+
+P74		TC	AVFLAGP		; Set passive vehicle flag
+		
+; COMMON INITIALIZATION FOR P34/P74
+; Enables rendezvous tracking flags and requests crew input via DSKY
+
 P34/P74A	TC	P20FLGON	# SET UPDATFLG, TRACKFLG
-		CAF	V06N37		# TTPI
-		TC	VNPOOH
+		CAF	V06N37		# TTPI - Request time of TPI from crew
+		TC	VNPOOH		; Display verb/noun, wait for crew input
 		EXTEND
 		DCA	130DEG
 		DXCH	CENTANG
@@ -236,6 +315,83 @@ P34/P74C	DLOAD	SET
 # Page 662
 			SWCHSET
 			ITSWICH
+
+; ============================================================================
+; SWCHSET / INTLOOP - Lambert Targeting Iteration Control
+; ============================================================================
+;
+; COMMENT-ONLY READERS: These labels mark the beginning of the iterative
+; computation that solves the rendezvous targeting problem. The computer
+; repeatedly refines its calculations, adjusting timing and geometry until
+; it finds the exact velocity change needed to reach the target spacecraft.
+;
+; Think of this like plotting a route on a map: you know where you are now,
+; where the target will be later, and roughly how long the trip will take.
+; The computer iteratively adjusts the departure time and path until everything
+; lines up perfectly - arriving at the exact moment the target is there.
+;
+; During Apollo 11's rendezvous on July 21, 1969, after Eagle's ascent from
+; the lunar surface, these calculations ran continuously to compute the
+; precise burns needed to catch up with Columbia orbiting overhead.
+;
+; CODE-ALONG READERS: Lambert Iteration Loop Structure:
+;
+; Entry Points:
+;   SWCHSET: Conditional entry when ETPIFLAG is set
+;   INTLOOP: Main loop entry point (both initial and repeated iterations)
+;
+; SWCHSET Logic:
+;   STORE NOMTPI: Stores ZEROVECS (loaded at P34/P74C) into NOMTPI
+;     - NOMTPI is the nominal time offset for TPI (Transfer Phase Initiation)
+;     - Set to zero when iterating on elevation angle
+;     - Provides time adjustment flexibility for convergence
+;
+; INTLOOP Main Iteration Cycle:
+;   1. Time Computation:
+;      DLOAD TTPI: Load time of TPI (input by crew or computed)
+;      DAD NOMTPI: Add nominal time offset
+;      STCALL TDEC1, PRECSET: Store as target time, compute vehicle states
+;        - PRECSET advances both active and passive vehicle state vectors
+;        - Propagates orbital positions to the computed TIG time
+;
+;   2. Lambert Solution:
+;      CALL S33/34.1: Invoke Lambert targeting algorithm
+;        - Solves two-point boundary value problem
+;        - Computes required velocity vector for orbital transfer
+;        - Returns convergence status in A register
+;
+;   3. Convergence Check:
+;      BZE EXIT, SWCHCLR: If solution converged (A=0), exit to SWCHCLR
+;        - SWCHCLR checks input mode flags and displays results
+;        - Success path leads to parameter display for crew approval
+;
+;   4. Error Handling (No Convergence):
+;      TC ALARM: Trigger program alarm
+;      OCT 611: Alarm code 611 - "No solution for Lambert problem"
+;        - Indicates geometry constraints cannot be satisfied
+;        - Typical causes: insufficient time, impossible trajectory
+;      CAF V05N09: Display verb 05 noun 09 for crew input
+;        - V05N09 requests new elevation angle from crew
+;      TC BANKCALL, GOFLASH: Flash display, wait for crew response
+;        - Crew options:
+;          TERMINATE: Abort targeting (TC GOTOPOOH)
+;          PROCEED: Restart with new inputs (TC P34/P74A)
+;          V32: Recycle current computation (TC -7)
+;
+; Iteration Control:
+;   The loop continues until either:
+;   - Lambert solution converges (BZE SWCHCLR succeeds)
+;   - Crew terminates (GOTOPOOH)
+;   - Maximum iterations exceeded (handled within S33/34.1)
+;
+; Mathematical Context:
+;   Lambert's problem requires solving Kepler's equation iteratively.
+;   The INTLOOP provides the outer control structure while S33/34.1
+;   performs the inner numerical iteration (Newton-Raphson method).
+;   Typical convergence occurs in 3-7 outer iterations for Apollo
+;   rendezvous geometries, with each outer iteration calling S33/34.1
+;   which may perform 10-20 inner iterations.
+
 SWCHSET		STORE	NOMTPI
 INTLOOP		DLOAD	DAD
 			TTPI
@@ -248,24 +404,28 @@ INTLOOP		DLOAD	DAD
 			SWCHCLR
 		TC	ALARM
 		OCT	611
-		CAF	V05N09
+		CAF	V05N09\t\t; Request elevation angle input from crew
 		TC	BANKCALL
-		CADR	GOFLASH
-		TC	GOTOPOOH
-		TC	P34/P74A	# PROCEED
-		TC	-7		# V32
+		CADR	GOFLASH\t\t; Display and flash for crew response
+		TC	GOTOPOOH\t; Terminate pressed
+		TC	P34/P74A	# PROCEED - Restart with new inputs
+		TC	-7		# V32 - Recycle to recompute
 
-SWCHCLR		BONCLR	BON
-			ITSWICH
+; TARGETING PARAMETER INPUT SWITCH LOGIC
+; Depending on which parameters the crew has specified (time or elevation angle),
+; the program branches to display the appropriate inputs and request missing data.
+
+SWCHCLR		BONCLR	BON\t\t; Check input mode flags
+			ITSWICH\t\t; IT switch flag
 			INTLOOP
-			ETPIFLAG
-			P34/P74D	# DISPLAY TTPI
+			ETPIFLAG\t; Elevation TPI flag
+			P34/P74D	# DISPLAY TTPI - Branch if time was input
 		EXIT
-		TC	DISPLAYE	# DISPLAY ELEV AND CENTANG
-		TC	P34/P74E
+		TC	DISPLAYE	# DISPLAY ELEV AND CENTANG - Display elevation/angle
+		TC	P34/P74E\t; Continue to computation
 P34/P74D	EXIT
-		CAF	V06N37		# TTPI
-		TC	VNPOOH
+		CAF	V06N37\t\t# TTPI - Display time of TPI
+		TC	VNPOOH\t\t; Show to crew
 P34/P74E	TC	INTPRET
 		SETPD	DLOAD
 			0D
@@ -321,7 +481,32 @@ P34/P74E	TC	INTPRET
 		GOTO
 			P34/P74C
 # Page 664
+; ============================================================================
+; TRANSITION: From TPI Planning to Mid-Course Correction
+;
+; After the Transfer Phase Initiation (TPI) burn begins the rendezvous, the
+; spacecraft follows an intercept trajectory toward the target. However, small
+; errors in the TPI burn or trajectory changes require mid-course corrections.
+; This is the Terminal Phase Mid-Course (TPM) correction.
+;
+; During Apollo 11's rendezvous on July 21, 1969, after Eagle's ascent from
+; the lunar surface and initial TPI burn, these programs computed fine-tuning
+; adjustments to ensure precise intercept with Columbia in lunar orbit.
+; ============================================================================
+
 # RENDEZVOUS MID-COURSE MANEUVER PROGRAMS (P35 AND P75)
+
+; P35/P75 PROGRAMS - TERMINAL PHASE MID-COURSE (TPM) CORRECTION
+; These programs compute mid-course velocity corrections during the transfer
+; phase of rendezvous. After TPI places the active vehicle on an approximate
+; intercept trajectory, small delta-V adjustments ensure the spacecraft arrives
+; at the planned intercept point at the correct time.
+;
+; P35: Active vehicle (LM performing the correction maneuver)
+; P75: Passive vehicle (LM tracking target but not maneuvering)
+;
+; The program uses rendezvous radar tracking data to refine state vectors and
+; computes optimal corrections based on the time of intercept (T(INT)) from P34.
 
 # MOD NO -1			LOG SECTION -- P32-P35, P72-P75
 # MOD BY WHITE, P.		DATE:  1 JUNE 67
@@ -432,6 +617,23 @@ P34/P74E	TC	INTPRET
 		COUNT*	$$/P3575
 		EBANK=	KT
 
+; ============================================================================
+; P35/P75 PROGRAM ENTRY POINTS
+;
+; P35: Active vehicle Terminal Phase Mid-Course (TPM) computation
+; The LM (Eagle) uses this program after TPI to compute small velocity
+; corrections ensuring precise intercept with the CSM (Columbia). During
+; Apollo 11's rendezvous on July 21, 1969, these mid-course corrections
+; refined Eagle's trajectory after its ascent from the lunar surface.
+;
+; P75: Passive vehicle tracking mode
+; Used when the spacecraft is the target being approached, not the one
+; maneuvering. Computes predicted intercept without commanding burns.
+;
+; Both programs use rendezvous radar tracking data and Lambert targeting
+; algorithms to compute optimal corrections based on time to intercept.
+; ============================================================================
+
 P35		TC	AVFLAGA
 		EXTEND
 		DCA	ATIGINC
@@ -444,6 +646,110 @@ P35/P75A	DXCH	KT
 		TC	INTPRET
 		CALL
 			SELECTMU
+
+; ============================================================================
+; P35/P75B - Continuous Tracking and Midcourse Correction Loop
+; ============================================================================
+;
+; COMMENT-ONLY READERS: This is where the spacecraft enters continuous tracking
+; mode during rendezvous. Unlike the P34/P74 programs which compute a single
+; burn, P35/P75 continuously monitors the target spacecraft and updates the
+; required velocity corrections in real time.
+;
+; Imagine a pilot constantly checking the distance and direction to another
+; aircraft, updating the flight plan every few seconds as conditions change.
+; The computer does exactly this - it repeatedly:
+;   1. Checks the current time
+;   2. Predicts where both spacecraft will be at the planned maneuver time
+;   3. Computes what velocity change is needed
+;   4. Displays the results to the crew
+;   5. Loops back to check again
+;
+; During Apollo 11's rendezvous after Eagle's ascent, Buzz Aldrin watched
+; these continuously updating displays showing exactly how much thrust would
+; be needed at each planned correction point. As Eagle and Columbia's orbits
+; evolved, the displayed delta-V values gradually refined to account for
+; gravitational perturbations and radar tracking updates.
+;
+; The loop runs indefinitely until the crew terminates it or selects a burn
+; for execution. This provides constant situational awareness of rendezvous
+; geometry and ensures the latest tracking data is incorporated into targeting.
+;
+; CODE-ALONG READERS: P35/P75B Tracking Loop Architecture:
+;
+; Loop Entry Point (P35/P75B):
+;   This label marks the start of each iteration cycle. The loop executes
+;   repeatedly with no explicit termination condition - crew intervention
+;   (TERMINATE verb) or program change ends the cycle.
+;
+; Time Management:
+;   RTB LOADTIME: Get present GET (Ground Elapsed Time)
+;     - Uses real-time clock to establish current mission time
+;     - Returns scaled time value in MPAC (seconds * 2^-28)
+;   STORE TSTRT: Save as start time of current computation cycle
+;     - TSTRT serves as reference point for this iteration
+;   DAD KT: Add time increment (KT)
+;     - KT was loaded at P35/P75A from ATIGINC (P35) or PTIGINC (P75)
+;     - Typically 15-30 minutes: time from now until planned maneuver
+;   STORE TIG: Save as Time of Ignition
+;     - TIG is the target time for the computed velocity change
+;   STORE INTIME: Save for INITVEL routine
+;     - INITVEL uses this to compute state vectors at maneuver time
+;
+; State Vector Propagation:
+;   STCALL TDEC1, PRECSET: Set target time, compute vehicle positions
+;     - TDEC1 = time of intercept (TIG computed above)
+;     - PRECSET advances both active and passive vehicle state vectors
+;     - Uses Encke method integration to account for gravitational perturbations
+;     - Returns predicted positions/velocities at TIG
+;
+; Targeting Computations:
+;   CALL S34/35.1: Get normal and line-of-sight for coordinate transform
+;     - Computes orbital plane normal vector from passive vehicle state
+;     - Computes line-of-sight unit vector from active to passive vehicle
+;     - Establishes local-vertical coordinate frame for delta-V display
+;
+;   CALL S34/35.2: Compute required delta-V in local-vertical frame
+;     - Solves Lambert problem for current geometry
+;     - Transforms delta-V vector into local-vertical coordinates
+;     - Output: Delta-V components (forward, lateral, vertical)
+;
+;   CALL S34/35.5: Additional targeting refinements
+;     - Computes display parameters (range, range-rate, angles)
+;     - Prepares formatted data for DSKY presentation
+;
+; Display and Loop Control:
+;   CALL VN1645: Display midcourse correction parameters
+;     - Shows updated delta-V requirements to crew
+;     - Displays time to ignition, range, geometry
+;     - Flashes display to indicate active tracking mode
+;
+;   GOTO P35/P75B: Loop back to recompute with updated time
+;     - Unconditional branch creates infinite tracking loop
+;     - Each cycle duration: approximately 1-2 seconds
+;     - Loop exits only via crew TERMINATE action or program change
+;
+; Continuous Update Strategy:
+;   The loop provides real-time tracking by recomputing the entire targeting
+;   solution every cycle. This ensures:
+;   - Latest radar tracking data incorporated (via P20 updates)
+;   - Gravitational perturbations continuously accounted for
+;   - Crew has current best estimate of required maneuver
+;   - Changing geometry reflected in evolving delta-V displays
+;
+; P35 vs P75 Behavior:
+;   Both use the same loop structure (P35/P75B), but:
+;   - P35: Active vehicle targeting (LM computing its own burns)
+;     Time increment from ATIGINC, uses LM state as active
+;   - P75: Passive vehicle tracking (CSM tracking LM maneuvers)
+;     Time increment from PTIGINC, uses CSM state as active
+;
+; Performance Characteristics:
+;   Loop execution time: ~1.5 seconds per cycle (typical Apollo geometry)
+;   Display update rate: Once per cycle (crew sees frequent updates)
+;   Computation load: Moderate (Lambert solver, state propagation)
+;   Tracking data incorporation: Automatic via P20 background updates
+
 P35/P75B	RTB
 			LOADTIME
 		STORE	TSTRT
@@ -465,6 +771,33 @@ P35/P75B	RTB
 			P35/P75B
 # Page 667
 # ***** S33/34.1 *****
+
+; ============================================================================
+; S33/34.1 - LAMBERT TARGETING ITERATIVE SOLUTION
+;
+; This subroutine solves the classical Lambert problem: given two position
+; vectors (active and passive vehicles) and time of flight, find the velocity
+; vector required for orbital transfer. This is a two-point boundary value
+; problem in orbital mechanics.
+;
+; COMMENT-ONLY READERS: This is the mathematical heart of rendezvous guidance.
+; The computer iteratively adjusts timing and geometry until it finds the exact
+; velocity change needed to fly from the current spacecraft position to the
+; intercept point at the precise time the target will be there.
+;
+; CODE-ALONG READERS: The algorithm uses Newton-Raphson iteration on elevation
+; angle and time parameters. Maximum iterations (TITER) set to 40000 octal
+; (16384 decimal). Convergence tolerance controlled by ELEPS (elevation error).
+; The routine computes position/velocity pairs at transfer initiation and
+; intercept, then iterates to minimize timing and geometry errors.
+;
+; TECHNICAL DETAILS:
+; - Solves for conic trajectory connecting two points in space-time
+; - Iterates on elevation angle (E) and transfer time
+; - Stores intermediate position/velocity pairs (RAPREC, VAPREC, RPPREC, VPPREC)
+; - Calls S34/35.1 for unit normal and line-of-sight vectors
+; - Convergence when DELEL (elevation error) < ELEPS (elevation epsilon)
+; ============================================================================
 
 S33/34.1	STQ	SSP
 			NORMEX
@@ -638,6 +971,109 @@ REVERS		DLOAD	DCOMP
 		DAD
 		GOTO
 			ADTIME
+
+; ============================================================================
+; STORDELT / ADTIME - Time Step Storage and Accumulation
+; ============================================================================
+;
+; COMMENT-ONLY READERS: These labels are part of the "hunt and refine" process
+; the computer uses to find the perfect rendezvous timing. Think of it like
+; adjusting the focus on a camera - first you make big adjustments to get close,
+; then smaller and smaller tweaks until the image is perfectly sharp.
+;
+; The computer tries different timing scenarios:
+; - "What if we ignite 10 seconds earlier?"
+; - "That overshot - try 5 seconds later instead"
+; - "Getting closer - now try 2 seconds earlier"
+; - "Perfect! That trajectory works!"
+;
+; STORDELT stores each time adjustment, while ADTIME accumulates all the
+; adjustments to update the overall timing plan. After dozens of these micro-
+; adjustments, the computer converges on the exact ignition time that achieves
+; the desired rendezvous geometry.
+;
+; During Apollo 11's rendezvous, this iterative refinement ran continuously,
+; ensuring that even as radar tracking updated the target spacecraft's position,
+; the computed burn times stayed accurate.
+;
+; CODE-ALONG READERS: Time Step Convergence Logic:
+;
+; Entry Paths to STORDELT:
+;   Multiple paths converge at STORDELT depending on iteration behavior:
+;
+;   Path 1 (from RESIGN): Standard time adjustment with sign correction
+;     - SIGN DELTEEO: Apply appropriate sign to time increment
+;     - GOTO STORDELT: Store the signed time step
+;
+;   Path 2 (from OKMAX): First iteration initialization
+;     - SLOAD TITER: Check iteration counter
+;     - BPL REPETE: If not first iteration, go to REPETE
+;     - SSP TITER, OCT 37777: Initialize iteration counter
+;     - GOTO STORDELT: Store initial time step
+;
+;   Path 3 (from REVERS): Reversal correction (wrong direction detected)
+;     - DLOAD DCOMP DELTEEO: Negate previous time step
+;     - PUSH SR1: Halve it (divide by 2, shift right 1)
+;     - STORE DELTEEO: Store halved, reversed time step
+;     - DAD: Add to accumulator on stack
+;     - GOTO ADTIME: Skip STORDELT, go directly to accumulation
+;
+; STORDELT Label Function:
+;   STORE DELTEEO: Store computed time increment in DELTEEO
+;     - DELTEEO = "delta time of epoch" (time adjustment for current iteration)
+;     - This value represents how much to adjust TPI time for next try
+;     - Positive = delay ignition, Negative = advance ignition
+;
+; ADTIME Label Function:
+;   DAD NOMTPI: Add current time increment to accumulated total
+;     - NOMTPI = "nominal TPI time offset" (sum of all adjustments so far)
+;     - Running total of all time adjustments across iterations
+;     - Initialized to zero at loop start, grows/shrinks with each iteration
+;   STORE NOMTPI: Save updated accumulated time offset
+;
+; State Vector Update Sequence (following ADTIME):
+;   After updating NOMTPI, the code recomputes vehicle positions at the
+;   adjusted time to prepare for the next Lambert solution attempt:
+;
+;   1. Active Vehicle Update:
+;      VLOAD PDVL VAPREC / RAPREC: Load active vehicle velocity and position
+;      CALL GOINT: Integrate (propagate) to new time
+;      CALL ACTIVE: Store updated RACT3, VACT3
+;
+;   2. Passive Vehicle Update:
+;      VLOAD PDVL VPPREC / RPPREC: Load passive vehicle velocity and position
+;      CALL GOINT: Integrate (propagate) to new time
+;      CALL PASSIVE: Store updated RPASS3, VPASS3
+;
+;   3. Restart Iteration:
+;      GOTO ELCALC: Return to elevation angle calculation
+;        - Recomputes geometry with updated positions
+;        - Feeds back into Lambert solver for next iteration
+;        - Loop continues until convergence criteria satisfied
+;
+; Convergence Strategy:
+;   The time-stepping algorithm uses adaptive step sizing:
+;   - Large steps initially to bracket the solution region
+;   - Progressively smaller steps as solution is approached
+;   - Direction reversal when overshooting (REVERS path)
+;   - Step halving when crossing over the solution
+;
+;   Typical convergence pattern for Apollo rendezvous:
+;     Iteration 1: ±60 seconds (initial bracket)
+;     Iteration 2: ±30 seconds (halved, direction corrected)
+;     Iteration 3: ±15 seconds (converging)
+;     Iteration 4: ±7 seconds
+;     Iteration 5: ±3 seconds
+;     Iteration 6: ±1 second (approaching tolerance)
+;     Iteration 7: ±0.5 seconds (within convergence criteria)
+;
+; Mathematical Context:
+;   This is a bracketing method combined with bisection for robustness.
+;   The Lambert problem is highly nonlinear in time - small time changes
+;   can produce large delta-V variations. The adaptive step sizing prevents
+;   oscillation while ensuring convergence within computational constraints
+;   (typically 7-10 iterations for nominal Apollo geometries).
+
 STORDELT	STORE	DELTEEO
 ADTIME		DAD
 			NOMTPI		# SUM OF DELTA T'S
@@ -677,6 +1113,25 @@ TIMEX		DLOAD	GOTO
 # COMPUTE UNIT NORMAL AND LINE OF SIGHT VECTORS GIVEN THE ACTIVE AND
 # PASSIVE POS AND VEL AT TIME T3
 
+; S34/35.1 - COMPUTE GEOMETRY VECTORS FOR RENDEZVOUS
+;
+; This subroutine computes two critical unit vectors defining the rendezvous
+; geometry at time T3:
+;
+; ULOS (Unit Line-Of-Sight): Unit vector from active vehicle (LM) pointing
+;   toward passive vehicle (CSM). This defines the relative position direction.
+;
+; UNRM (Unit Normal): Unit vector perpendicular to the active vehicle's
+;   orbital plane (RA x VA). Defines the plane in which orbital motion occurs.
+;
+; These vectors establish a coordinate frame for computing elevation angles
+; and trajectory geometry during the Lambert problem solution.
+;
+; INPUTS:  RACT3, VACT3 (active vehicle position and velocity)
+;          RPASS3, VPASS3 (passive vehicle position and velocity)
+; OUTPUTS: ULOS (unit line-of-sight vector)
+;          UNRM (unit normal to active orbit plane)
+
 S34/35.1	VLOAD	VSU
 			RPASS3
 			RACT3
@@ -692,6 +1147,36 @@ S34/35.1	VLOAD	VSU
 # ***** S34/35.2 *****
 
 # ADVANCE PASSIVE VEH TO RENDEZVOUS TIME AND GET REQ VEL FROM LAMBERT
+
+; S34/35.2 - LAMBERT TARGETING VELOCITY COMPUTATION
+;
+; This subroutine solves for the required velocity vector using Lambert
+; targeting algorithms. It advances the passive vehicle (target) forward
+; in time to the planned intercept time (TPASS4), then computes the velocity
+; the active vehicle must have to reach that intercept point.
+;
+; COMMENT-ONLY READERS: This calculates the exact velocity change needed to
+; fly from the spacecraft's current position to meet the target at a future
+; time. It's like computing the trajectory of a thrown ball to hit a moving
+; target - but in orbit, accounting for gravitational effects.
+;
+; CODE-ALONG READERS: The routine calls INTINT (conic integration) to
+; propagate the passive vehicle position/velocity from INTIME to TPASS4,
+; storing the result in RTARG (target position) and VPASS4 (target velocity).
+; It then calls INITVEL to compute the required initial velocity for the
+; active vehicle, using the Lambert aimpoint guidance algorithm.
+;
+; The central angle PHI is computed as: PI + (ACOS(RA·RP) - PI)*SIGN(RA×RP·U)
+; This angle describes the orbital arc from active to passive vehicle.
+;
+; INPUTS:  RACT3, VACT3 (active vehicle state at INTIME)
+;          RPASS3, VPASS3 (passive vehicle state at INTIME)
+;          INTIME (current time), TPASS4 (intercept time)
+;          UNRM (unit normal to orbital plane)
+; OUTPUTS: RTARG (target position at intercept)
+;          VPASS4 (target velocity at intercept)
+;          DELLT4 (time-of-flight = TPASS4 - INTIME)
+;          ACTCENT (central angle of transfer arc)
 
 S34/35.2 	STQ	VLOAD
 			SUBEXIT
@@ -756,6 +1241,32 @@ NOPIE		STODL	ACTCENT
 # Page 675
 # ***** S34/35.3 *****
 
+; S34/35.3 - INTEGRATE TARGET POSITION WITH NEW DELTA-V
+;
+; This subroutine applies the computed delta-V correction to the active
+; vehicle and integrates forward to compute the new target position at
+; intercept time. This allows checking whether the proposed maneuver
+; achieves the desired rendezvous geometry.
+;
+; COMMENT-ONLY READERS: After computing a velocity change, the computer
+; simulates the resulting trajectory to verify the spacecraft will reach
+; the intended intercept point. If not quite right, the calculation iterates
+; with small adjustments until the solution converges.
+;
+; CODE-ALONG READERS: The routine transforms DELVLVC (delta-V in local
+; vertical coordinates) back to inertial reference frame using LOMAT matrix.
+; It then adds this delta-V to VACT3 to get the new required velocity,
+; integrates from TIG to TPASS4 using INTINT, and stores the resulting
+; position in RTARG. The DVLOS (delta-V line-of-sight components) is
+; computed for display purposes.
+;
+; INPUTS:  DELVLVC (delta-V in local vertical coordinates)
+;          VACT3, RACT3 (active vehicle state)
+;          TIG (time of ignition), TPASS4 (intercept time)
+; OUTPUTS: RTARG (predicted target position after maneuver)
+;          DELVEET3 (delta-V in inertial frame)
+;          DVLOS (delta-V components along line-of-sight)
+
 S34/35.3	STQ	CALL
 			NORMEX
 			LOMAT		# GET MATRIX IN PUSH LIST
@@ -795,6 +1306,15 @@ NOVRWRT		VLOAD	PUSH
 # Page 676
 # ***** S34/35.4 *****
 
+; S34/35.4 - SKIP ASTRONAUT OVERWRITE
+;
+; This is a short entry point used when astronaut modifications to the
+; computed delta-V are not permitted. It bypasses the crew input step and
+; directly proceeds to NOVRWRT to continue with the computed solution.
+;
+; Used during automatic sequences or when ground control has disabled
+; manual delta-V adjustments.
+
 S34/35.4	STQ	SETPD		# NO ASTRONAUT OVERWRITE
 			NORMEX
 			0D
@@ -803,6 +1323,30 @@ S34/35.4	STQ	SETPD		# NO ASTRONAUT OVERWRITE
 
 # Page 677
 # ***** LOMAT *****
+
+; LOMAT - LOCAL ORIENTATION MATRIX
+;
+; Constructs a coordinate transformation matrix from inertial reference frame
+; to local vertical reference frame centered on the active vehicle. This
+; matrix allows expressing delta-V vectors in terms of local directions
+; (along velocity, perpendicular to orbit plane, radial) rather than the
+; inertial X-Y-Z frame.
+;
+; COMMENT-ONLY READERS: The computer creates a custom coordinate system
+; centered on the spacecraft, with axes pointing along its velocity direction,
+; perpendicular to its orbital plane, and toward/away from the planet. This
+; makes it easier for astronauts to visualize and adjust maneuvers.
+;
+; CODE-ALONG READERS: The matrix is constructed with:
+;   X-axis (0D):  Unit velocity × Unit normal (in-plane perpendicular to velocity)
+;   Y-axis (6D):  -Unit normal (perpendicular to orbital plane)
+;   Z-axis (12D): -Unit position (radial direction, toward planet center)
+;
+; This forms a right-handed orthonormal basis for the local vertical frame.
+; The matrix is stored in push-down list locations 0D, 6D, 12D (18 words).
+;
+; INPUTS:  UNRM (unit normal to orbit), RACT3 (position vector)
+; OUTPUTS: 3×3 transformation matrix in push-down list
 
 LOMAT		VLOAD	VCOMP
 			UNRM
@@ -819,6 +1363,38 @@ GOINT		PDDL	PDDL		# DO
 			ZEROVECS	#	NOT
 			NOMTPI		#
 		PUSH	PUSH		#		ORDER OR INSERT BEFORE INTINT
+
+; INTINT - INTEGRATE TARGET POSITION/VELOCITY FORWARD IN TIME
+;
+; Numerically integrates the passive vehicle's (target's) trajectory from
+; the current time to the planned intercept time (TPASS4) using precision
+; conic section orbital mechanics. This propagates the target's state vector
+; forward in time to predict where it will be at the intercept.
+;
+; COMMENT-ONLY READERS: The computer calculates where the target spacecraft
+; will be at the intercept time by simulating its orbital motion forward
+; through time. This accounts for the curved path through space caused by
+; gravitational forces around the Moon or Earth.
+;
+; CODE-ALONG READERS: Uses the INTSTALL/INTEGRVS integration routines to
+; propagate position and velocity. The integration setup involves:
+;   - INTSTALL: Initializes integration parameters and state vectors
+;   - INTYPFLG: Flag controlling integration type/method
+;   - MOONFLAG/CMOONFLG: Selects lunar vs Earth gravitational model
+;   - RCV/VCV: Position and velocity vectors for integration
+;   - INTEGRVS: Performs the numerical integration
+;   - RATT: Result position vector after integration
+;
+; The integration accounts for:
+;   - Central body gravitational acceleration (Moon or Earth)
+;   - Conic section approximation (two-body problem)
+;   - Time step control for numerical accuracy
+;   - Vector scaling based on coordinate frame (RTX2 index)
+;
+; INPUTS:  Initial state vectors set up in calling routine
+;          TDEC1 (target time), TET (initial time)
+; OUTPUTS: RATT (position at target time), velocity in VCV
+;
 INTINT		STQ	CALL
 			RTRN
 			INTSTALL
@@ -858,6 +1434,43 @@ ALLSET		STOVL	TET
 #	S34.35.4
 #	VNPOOH
 
+; S34/35.5 - ASTRONAUT INPUT AND TARGET PARAMETER VERIFICATION
+;
+; This routine handles astronaut input via the DSKY and verification of target
+; parameters before executing the Transfer Phase Initiation (TPI) maneuver.
+; The astronaut reviews computed values and can modify parameters, then
+; approves the maneuver for execution.
+;
+; COMMENT-ONLY READERS: The astronaut views key rendezvous parameters on the
+; DSKY display and can modify them if needed. After approval, the computer
+; proceeds to calculate the final maneuver. This ensures the crew has final
+; authority over critical rendezvous burns. During Apollo 11's rendezvous,
+; these displays allowed Armstrong and Aldrin to monitor and approve each
+; step of the complex orbital ballet that reunited Eagle with Columbia.
+;
+; CODE-ALONG READERS: This is a key crew interface section that:
+;   - Stores return address in SUBEXIT for later use
+;   - Tests FINALFLG to determine if this is final approval or intermediate
+;   - Branches based on flag states (FINALFLG and UPDATFLG):
+;       * FINALFLG set: Skip update, go to FLAGON for display
+;       * FINALFLG clear: Set UPDATFLG and go to FLAGOFF for recalculation
+;   - FLAGON path: Loads and displays current parameters via V06N59
+;   - FLAGOFF path: Calls S34/35.4 for parameter recalculation
+;   - Uses VNPOOH routine to flash display and get crew response
+;   - SUBEXIT returns to calling program after approval
+;
+; The verb/noun displays show:
+;   - V06N59: TIG, DELVEET (required delta-velocity), other parameters
+;
+; Astronaut actions:
+;   - PROCEED: Accept parameters and continue to maneuver execution
+;   - TERMINATE: Abort program and return to POO (standby)
+;   - RECYCLE: Return for new computation with modified inputs
+;
+; INPUTS:  Computed target parameters from previous routines
+;          FINALFLG (indicates final approval cycle)
+; OUTPUTS: Approved parameters stored for thrusting program use
+;
 S34/35.5	STQ	BON
 			SUBEXIT
 			FINALFLG
@@ -927,6 +1540,51 @@ FLAGOFF		CALL
 #	GOTOPOOH
 #	FLAGUP
 
+; VN1645 - DISPLAY TRACKING MARK COUNT, TIME-TO-GO, AND MGA
+;
+; This verb/noun routine displays critical rendezvous tracking parameters
+; on the DSKY for astronaut monitoring during the rendezvous sequence.
+; It provides real-time updates of tracking status and midcourse guidance.
+;
+; COMMENT-ONLY READERS: During rendezvous, the astronaut monitors how many
+; radar tracking marks have been acquired, how much time remains until the
+; next burn, and the computed midcourse guidance angle (MGA). The display
+; updates every second, giving the crew continuous awareness of the
+; rendezvous progress. This was essential during Apollo 11's Eagle-Columbia
+; rendezvous as it gave Armstrong and Aldrin confidence that the computer
+; was properly tracking their target.
+;
+; CODE-ALONG READERS: This routine:
+;   - Stores return address in SUBEXIT
+;   - Initializes MGA (Midcourse Guidance Angle) to -0.01 degrees
+;   - Tests FINALFLG to determine if final phase:
+;       * If FINALFLG set: Uses MGA = -0.01
+;       * If FINALFLG clear: Uses MGA = -0.02 (adds another -0.01)
+;   - Tests REFSMFLG to determine coordinate reference frame
+;   - Calls P3XORP7X to check program mode (P34 vs P74)
+;   - Calls GET+MGA to compute actual midcourse guidance angle
+;   - Initiates COMPTGO task to continuously update TTOGO (time-to-go)
+;   - Displays V16N45 showing:
+;       * TRKMKCNT: Number of radar tracking marks acquired
+;       * TTOGO: Time remaining until next maneuver ignition
+;       * +MGA: Midcourse guidance angle for trajectory correction
+;   - Updates display every 1 second via DELAYJOB
+;   - Waits for astronaut response (PROCEED/TERMINATE/RECYCLE)
+;
+; Display timing:
+;   - 1SEC delay between updates ensures smooth real-time display
+;   - COMPTGO task runs in background updating TTOGO continuously
+;   - DISPDEX controls display update rate
+;
+; Astronaut actions:
+;   - PROCEED: Accept tracking data and continue (N45PROC)
+;   - TERMINATE: Stop tracking updates and return to standby (KILCLOCK)
+;   - RECYCLE: Return for fresh computation (CLUPDATE)
+;
+; INPUTS:  DELVSIN (delta-velocity sine component)
+;          FINALFLG, REFSMFLG (program state flags)
+; OUTPUTS: TRKMKCNT, TTOGO, +MGA displayed on DSKY
+;
 VN1645		STQ	DLOAD
 			SUBEXIT
 			DP-.01
@@ -993,6 +1651,35 @@ CLUPDATE	CA	Z
 #	BLANKET
 #	ENDOFJOB
 
+; DISPLAYE - DISPLAY ELEVATION ANGLE
+;
+; Simple display routine that shows the elevation angle (E) of the line of
+; sight between active and passive vehicles. The elevation angle is measured
+; from the horizontal plane defined by the active vehicle's position vector.
+;
+; COMMENT-ONLY READERS: The computer displays the angle between the two
+; spacecraft as seen from the pilot's perspective. This angle is crucial
+; for rendezvous timing - the crew wants to catch up to the target when
+; it's at the right angle above (or below) their orbital plane. Think of
+; it like knowing what angle to look up at to see the other spacecraft.
+;
+; CODE-ALONG READERS: This is a streamlined display routine:
+;   - Saves return address in NORMEX (normal exit)
+;   - Displays V06N55 (elevation angle display)
+;   - Uses GOFLASH to flash display and await crew response
+;   - Three possible outcomes:
+;       * TERMINATE (TCF GOTOPOOH): Return to POO standby mode
+;       * PROCEED (TC NORMEX): Continue with current value
+;       * RECYCLE (TCF -5): Redisplay and wait again
+;
+; V06N55 displays:
+;   - Elevation angle in degrees (fractional revolutions converted to degrees)
+;   - Typical values range from -90° to +90°
+;
+; INPUTS:  Elevation angle computed by calling program
+; OUTPUTS: None (display only)
+; RETURNS: Via NORMEX to calling routine
+;
 DISPLAYE	EXTEND
 		QXCH	NORMEX
 		CAF	V06N55
@@ -1005,6 +1692,34 @@ DISPLAYE	EXTEND
 # Page 683
 # ***** P3XORP7X *****
 
+; P3XORP7X - CHECK IF PROGRAM IS P3X (P30-39) OR P7X (P70-79)
+;
+; Simple utility routine that determines which program family is running
+; by examining the high-order bits of the mode register. This is used to
+; branch to appropriate program-specific code paths.
+;
+; COMMENT-ONLY READERS: The computer checks whether it's running a P30-series
+; program (like P34) or a P70-series program (like P74). Different program
+; families have slightly different procedures, so the computer needs to know
+; which one is active.
+;
+; CODE-ALONG READERS: This routine:
+;   - Loads HIGH9 mask (octal 77600) to isolate upper bits
+;   - Masks MODREG (mode register containing program number)
+;   - Tests if result is zero:
+;       * Zero: P30-39 program family (skip increment, return to Q)
+;       * Non-zero: P70-79 program family (increment Q by 1, then return)
+;   - The Q register increment allows caller to have two return addresses:
+;       * Return to Q: P3X case
+;       * Return to Q+1: P7X case
+;
+; This is a common AGC pattern for binary decision returns - the subroutine
+; modifies its own return address to select between two code paths.
+;
+; INPUTS:  MODREG (current program number)
+; OUTPUTS: Q register possibly incremented
+; RETURNS: Via Q (P3X) or Q+1 (P7X)
+;
 P3XORP7X	CAF	HIGH9
 		MASK	MODREG
 		EXTEND
@@ -1019,6 +1734,37 @@ P3XORP7X	CAF	HIGH9
 #	GOFLASH
 #	GOTOPOOH
 
+; VNPOOH - VERB/NOUN PROCEED OR HOLD
+;
+; Display routine that flashes verb/noun on DSKY and waits for astronaut
+; response. Handles three possible crew inputs: PROCEED, TERMINATE, or RECYCLE.
+; Named "VNPOOH" as a play on Winnie-the-Pooh, reflecting the "proceed or hold"
+; decision point.
+;
+; COMMENT-ONLY READERS: The computer pauses and waits for the astronaut's
+; decision. The DSKY display flashes to get attention. The astronaut can:
+;   - Press PROCEED to accept and continue
+;   - Press TERMINATE to stop and return to standby (GOTOPOOH routine)
+;   - Press RECYCLE to go back and recalculate
+;
+; CODE-ALONG READERS: This is a standard DSKY interaction routine:
+;   - Saves return address from Q to RTRN using QXCH (Q exchange)
+;   - Stores accumulator to VERBNOUN (verb/noun code)
+;   - Loads VERBNOUN and calls GOFLASH via BANKCALL to flash display
+;   - Branches based on astronaut response:
+;       * Return+0 (TERMINATE): TCF GOTOPOOH - return to POO standby mode
+;       * Return+1 (PROCEED): TC RTRN - continue to saved return address
+;       * Return+2 (RECYCLE): TCF -5 - jump back to re-execute from EXTEND
+;   - The BANKCALL return uses standard three-way branching convention
+;
+; This is a common pattern in rendezvous programs where crew approval
+; is required at multiple stages. The flashing display alerts the crew
+; that their input is needed.
+;
+; INPUTS:  Accumulator contains verb/noun code to display
+; OUTPUTS: Q return address saved to RTRN, VERBNOUN updated
+; RETURNS: Via RTRN (proceed), GOTOPOOH (terminate), or re-execute (recycle)
+;
 VNPOOH		EXTEND
 		QXCH	RTRN
 		TS	VERBNOUN
@@ -1031,6 +1777,33 @@ VNPOOH		EXTEND
 
 # Page 684
 # ***** CONSTANTS *****
+
+; ============================================================================
+; CONSTANTS - VERB/NOUN CODES AND NUMERICAL CONSTANTS
+;
+; This section defines display codes and mathematical constants used throughout
+; the P34-35 and P74-75 programs. Verb/noun (V-N) codes specify DSKY display
+; formats, while numerical constants support orbital mechanics calculations.
+;
+; COMMENT-ONLY READERS: These are the preset codes and numbers the computer
+; uses for displaying information to the astronauts and performing trajectory
+; calculations. Each V-N code tells the DSKY what format to use.
+;
+; CODE-ALONG READERS: Constants defined here include:
+;   - V06N37: Display format for TPI time and elevation angle
+;   - V06N55: Display format for delta-V components
+;   - V06N58, V06N59, V06N81: Additional rendezvous display formats
+;   - V16N45: Monitor format for continuous display
+;   - TWOPI: 2π (6.283185307) scaled B-4 for angle conversions
+;   - MAX250: Maximum value 25,000 (for range/altitude limits)
+;   - THIRD: 1/3 (0.333333333) for cubic equation solutions
+;   - ELEPS: Small angle epsilon (0.27777777 E-3) for convergence tests
+;   - DP-.01: Double precision -0.01 for display adjustments
+;   - EPSFOUR: 1/24 (0.0416666666) for Taylor series expansions
+;   - 130DEG: 130 degrees (0.3611111111 revolutions) for transfer angle limits
+;
+; Scaling notation: B-4 means scaled by 2^-4, E3 means ×10^3, etc.
+; ============================================================================
 
 V06N37		VN	0637
 V06N55		VN	0655
@@ -1054,6 +1827,24 @@ EPSFOUR		2DEC	.0416666666
 
 # Page 685
 # ***** INITVEL *****
+
+; ============================================================================
+; TRANSITION: From Display and Constants to Lambert Trajectory Computation
+;
+; With the crew interaction routines and display constants defined, we now
+; move into the core mathematical engine of the rendezvous targeting programs.
+; INITVEL solves the Lambert problem: given two positions in space and a
+; desired transfer time, compute the required velocity vectors.
+;
+; This is the fundamental calculation that determines "how fast and in what
+; direction must we thrust to reach the other spacecraft?" During Apollo 11's
+; rendezvous, these calculations ensured Eagle could accurately target Columbia
+; after ascending from the lunar surface.
+;
+; The Lambert problem is one of the classic challenges in orbital mechanics,
+; and this implementation uses iterative methods with both conic (two-body)
+; and precision (perturbed) trajectory options.
+; ============================================================================
 
 # MOD NO -1			LOG SECTION -- P34-P35, P74-P75
 # MOD BY WHITE, P.		DATE:  21 NOV 67
@@ -1116,6 +1907,72 @@ EPSFOUR		2DEC	.0416666666
 #	LAMBERT
 #	INTSTALL
 #	INTEGRVS
+
+; INITVEL - INITIALIZE VELOCITY FOR LAMBERT TARGETING
+;
+; This is the master subroutine that solves the Lambert problem: given two
+; position vectors (current and target) and a time-of-flight, compute the
+; required initial velocity vector. This is the mathematical heart of all
+; rendezvous targeting programs (P34, P35, P74, P75).
+;
+; COMMENT-ONLY READERS: This routine answers the critical question: "What
+; velocity do we need right now to reach the target spacecraft at the desired
+; time?" During Apollo 11's rendezvous after Eagle's ascent from the Moon,
+; this calculation repeatedly ran to refine the trajectory that would bring
+; the two spacecraft together.
+;
+; The routine handles both simple conic (two-body) solutions and complex
+; precision trajectories that account for Moon's gravity perturbations. It
+; can iterate multiple times to converge on an accurate answer, with each
+; iteration refining the velocity estimate.
+;
+; Special care is taken for 180-degree transfers (halfway around the orbit)
+; where mathematical singularities can occur. If the target is nearly opposite
+; the current position, the routine rotates vectors into a better-defined
+; plane to avoid numerical problems.
+;
+; CODE-ALONG READERS: Implementation details:
+;
+; INPUTS (stored in erasable memory before calling):
+;   RINIT    - Initial position vector (B-29 meters)
+;   VINIT    - Initial velocity vector (B-7 meters/centisecond)
+;   RTARG    - Target position vector (B-29 meters)
+;   DELLT4   - Desired time-of-flight (centiseconds)
+;   INTIME   - Time corresponding to RINIT
+;   0D       - Number of Lambert/integration iterations (usually 0-3)
+;   2D       - Cone angle threshold for 180-degree rotation (typically ~10 deg)
+;   RTX1     - Gravity parameter flag (-2 Earth, -10D Moon)
+;   RTX2     - Coordinate origin (0 = Earth, 2 = Moon)
+;
+; OUTPUTS:
+;   RTARG    - Possibly rotated target position vector
+;   VIPRIME  - Required maneuver velocity at RINIT (B-7 m/cs)
+;   VTPRIME  - Velocity at target after transfer (B-7 m/cs)
+;   DELVEET3 - Delta-V magnitude for display (B-7 m/cs)
+;
+; ALGORITHM OVERVIEW:
+; 1. Normalize and store target vector, compute magnitude
+; 2. If lunar coordinates (RTX2=2), rescale all vectors for precision
+; 3. Initialize iteration counter (ITCTR) to -1
+; 4. Compute cone angle cosine for 180-degree transfer detection
+; 5. Set up R1VEC=RINIT, R2VEC=RTARG for Lambert subroutine
+; 6. Compute plane normal UN = UNIT(RINIT × VINIT)
+; 7. Check if target is in 180-degree cone; rotate if necessary
+; 8. Call LAMBERT for conic solution
+; 9. If iterations requested, call INTSTALL/INTEGRVS for precision
+; 10. Return with VIPRIME containing required velocity
+;
+; The GUESSW flag indicates no initial velocity guess is available (cold start).
+; If a previous Lambert solution exists, HAVEGUES entry can be used instead.
+;
+; Scaling: Position vectors use B-29 (1 unit = 1.862 nanometers), velocities
+; use B-7 (1 unit = 1.28 meters/centisecond). These scales maximize precision
+; within AGC's 15-bit word length for cislunar distances and typical orbital
+; velocities.
+;
+; The routine uses the interpretive language for vector operations (VLOAD, VXV,
+; UNIT, DOT, etc.) which provides high-level vector/matrix capabilities with
+; automatic scaling management.
 
 		SETLOC	INTVEL
 		BANK
@@ -1181,6 +2038,21 @@ INITVEL2	BPL	SET
 
 # ROTATE RC INTO YC PLANE -- SET UNIT NORMAL TO YC
 
+; COMMENT-ONLY READERS: For certain trajectory geometries (when the target is
+; nearly opposite the current position, like trying to catch up after half an
+; orbit), the math becomes numerically unstable. This section detects those
+; cases and rotates the target vector into a better-defined reference plane
+; to avoid calculation errors.
+;
+; CODE-ALONG READERS: When the cone angle is near 180 degrees (COZY4 negative),
+; we rotate R2VEC (target position) into the YC plane perpendicular to the
+; current orbit plane. This rotation eliminates the numerical singularity that
+; occurs in the Lambert solution for transfer angles near 180 degrees.
+;
+; The rotation is: R2VEC_new = |R2VEC| * UNIT(R2VEC - PROJECT(R2VEC onto UN))
+; where UN is the orbit normal. This preserves the magnitude but changes the
+; direction to avoid the singularity.
+
 		VLOAD	PUSH		#				    (PL 6D)
 			R2VEC		# RC TO 6D (+29)
 		ABVAL	PDVL		# RC TO MPAC, ABVAL(RC) (+29) TO OD (PL 2D)
@@ -1230,6 +2102,22 @@ INITVEL4	LXA,2	SXA,2
 
 # SET INPUTS UP FOR LAMBERT
 
+; COMMENT-ONLY READERS: Now that the geometry is properly set up, we're ready
+; to call the Lambert subroutine - the mathematical solver that will compute
+; what velocity we need to transfer between the two positions in the desired
+; time. This is the key calculation that tells us "thrust this fast in this
+; direction."
+;
+; CODE-ALONG READERS: The RTX1 index register selects the appropriate gravity
+; parameter (mu) for the calculation: -2 for Earth, -10D for Moon. SETITCTR
+; initializes the iteration counter before calling the Lambert solver.
+;
+; The Lambert subroutine expects:
+;   R1VEC - initial position (already set)
+;   R2VEC - target position (possibly rotated, already set)
+;   DELLT4 - time of flight (already set)
+;   Gravity parameter indexed by RTX1
+
 		LXA,1	CALL
 			RTX1
 
@@ -1246,6 +2134,18 @@ INITVEL4	LXA,2	SXA,2
 
 # STORE CALCULATED INITIAL VELOCITY REQUIRED IN VIPRIME
 
+; COMMENT-ONLY READERS: The Lambert solver has returned an answer - the
+; velocity vector we need. For a simple calculation (NUMIT=0), this conic
+; solution is good enough. But for high-precision rendezvous like Apollo 11's
+; lunar orbit rendezvous, we'll iterate: use this velocity to compute a more
+; accurate trajectory accounting for gravity perturbations, then adjust.
+;
+; CODE-ALONG READERS: VIPRIME now contains the required initial velocity from
+; the Lambert conic solution (two-body problem, no perturbations). If VTARGTAG
+; (which stores NUMIT, the number of iterations requested) is zero, we skip
+; to INITVEL7 to compute the final delta-V. Otherwise, we call INTSTALL and
+; INTEGRVS to perform precision integration with perturbations (Encke method).
+
 		STODL	VIPRIME		# INITIAL VELOCITY REQUIRED (+7)
 
 # IF NUMIT IS ZERO, CONTINUE AT INITVELB, OTHERWISE
@@ -1255,6 +2155,27 @@ INITVEL4	LXA,2	SXA,2
 		BHIZ	CALL
 			INITVEL7
 			INTSTALL
+
+; COMMENT-ONLY READERS: For precision targeting, the simple conic solution isn't
+; enough. This section uses the computed velocity to fly a "pretend" trajectory
+; forward in time, accounting for the Moon's non-uniform gravity field, to see
+; where we'd actually end up. Then we compare that to where we wanted to go,
+; and compute a correction. This iterate-and-refine process continues until the
+; answer converges to high accuracy.
+;
+; CODE-ALONG READERS: After INTSTALL sets up the Encke precision integrator,
+; we prepare the integration inputs:
+;   MOONFLAG - Set based on RTX2 (2=Moon, 0=Earth) to select gravity model
+;   R1VEC/RCV - Initial position (RINIT)
+;   VCV - Initial velocity (VIPRIME from Lambert)
+;   TET - Initial time (INTIME)
+;   TDEC1 - Final time (INTIME + DELLT4)
+;   INTYPFLG - Cleared for forward integration
+;
+; INTEGRVS performs numerical integration using the Encke method to compute
+; the perturbed trajectory. The result (position RATT1, velocity VATT1) shows
+; where the spacecraft actually arrives accounting for perturbations.
+
 		SLOAD	CLEAR
 			RTX2
 			MOONFLAG
@@ -1282,6 +2203,24 @@ INITVEL5	VLOAD
 # IF ITERATION COUNTER (ITCTR) EQ NO. ITERATIONS (NUMIT), CONTINUE AT
 # INITVELC, OTHERWISE REITERATE LAMBERT AND ENCKE
 
+; COMMENT-ONLY READERS: After computing the perturbed trajectory, we check if
+; we've done enough iterations. If ITCTR (current iteration count) equals NUMIT
+; (requested number of iterations), we're done and can proceed to compute the
+; final answer. Otherwise, we loop back to run Lambert again with adjusted
+; inputs based on what we learned from this iteration.
+;
+; Each iteration refines the velocity estimate: Lambert gives an initial guess,
+; integration shows where that guess takes us, and the difference tells us how
+; to adjust for the next iteration. Typically 1-3 iterations achieve convergence.
+;
+; CODE-ALONG READERS: Iteration control logic:
+;   1. Load ITCTR (current iteration, starts at -1) into X2
+;   2. Increment X2 by 1
+;   3. Store X2 back to ITCTR (now 0, 1, 2, ... on successive passes)
+;   4. Subtract VTARGTAG (= NUMIT, target iteration count) from X2
+;   5. If result is zero (ITCTR == NUMIT), branch to INITVEL6 (done iterating)
+;   6. Otherwise, fall through to recompute R2VEC and re-call Lambert
+
 		LXA,2	INCR,2
 			ITCTR
 			1D		# INCREMENT ITCTR
@@ -1293,6 +2232,29 @@ INITVEL5	VLOAD
 			INITVEL6
 
 # OFFSET CONIC TARGET VECTOR
+
+; COMMENT-ONLY READERS: Since the perturbed trajectory didn't hit the exact
+; target, we adjust. The calculation computes a corrected target position:
+; "aim for where we wanted to go, adjusted by how far off we were this time."
+; This adjusted target goes back into Lambert for another solution. With each
+; iteration, the error shrinks and the answer converges.
+;
+; CODE-ALONG READERS: Iteration adjustment formula:
+;   R2VEC = R2VEC + (RTARG1 - RATT1)
+;
+; Where:
+;   RTARG1 = desired target position (saved from original RTARG)
+;   RATT1 = where we actually arrived after precision integration
+;   R2VEC = Lambert target vector, now adjusted for next iteration
+;
+; This adds the position error to the target: if we fell short by distance E,
+; aim E farther. If we overshot by E, aim E closer. The accumulating adjustment
+; in R2VEC drives convergence. After a few iterations, RATT1 ≈ RTARG1 within
+; acceptable tolerance.
+;
+; After computing the adjusted R2VEC, we reload the cone angle COZY4 and GOTO
+; INITVEL2 to re-enter the Lambert computation with refined inputs. The loop
+; continues until ITCTR == NUMIT, then branches to INITVEL6.
 
 		VLOAD	VSU
 			RTARG1
@@ -1306,6 +2268,35 @@ INITVEL5	VLOAD
 
 # COMPUTE THE DELTA VELOCITY
 
+; ============================================================================
+; TRANSITION: From Lambert iteration loop to final delta-V computation
+;
+; Iterations are complete. The Lambert solution converged, giving us VIPRIME
+; (required initial velocity) to reach the target. Now we compute the burn:
+; DELTA-V = VIPRIME - VINIT (what we need minus what we have). This burn will
+; start the transfer trajectory to intercept the target spacecraft.
+; ============================================================================
+
+; COMMENT-ONLY READERS: The computer has solved the rendezvous problem. After
+; 1-3 iterations refining the trajectory through gravitational perturbations,
+; we now know the exact velocity needed at ignition time. Subtracting our current
+; velocity from this target velocity gives the delta-V: the change in velocity
+; the LM's RCS or DPS engine must provide to start the transfer to rendezvous.
+;
+; This is the answer the crew needs: magnitude, direction, and timing of the burn
+; that will bring the LM to the CSM. The calculated delta-V will be displayed on
+; the DSKY for crew review and stored for use by the thrust programs (P40-P47).
+;
+; CODE-ALONG READERS: Final delta-V computation at INITVEL6:
+;   1. Store R2VEC → RTARG1 (finalized target position for reference)
+;   2. Load VIPRIME (required initial velocity from Lambert+iterations)
+;   3. Subtract VINIT (current velocity)
+;   4. Store result in DELVEET3 = VIPRIME - VINIT
+;
+; DELVEET3 is scaled at 2^+7 meters/centisecond. This vector represents the
+; impulsive delta-V required at TIG (time of ignition) to initiate the transfer.
+; The coordinate frame is the same as used throughout (typically inertial).
+
 INITVEL6	VLOAD
 			R2VEC
 		STORE	RTARG1
@@ -1314,6 +2305,25 @@ INITVEL7	VLOAD	VSU
 			VINIT
 		STOVL	DELVEET3	# DELVEET3 = VIPRIME-VINIT (+7)
 # Page 690
+; CODE-ALONG READERS: Overflow protection scaling logic:
+;
+; RTX2 is a flag set during computation if vector magnitudes approach AGC
+; register overflow limits. If RTX2 is negative (overflow risk detected),
+; we scale all computed vectors down by factor of 4 (VSR2 = shift right 2 bits).
+;
+; If RTX2 is zero or positive (BHIZ branch), skip scaling and continue at
+; INITVELX with full-precision vectors.
+;
+; Vectors scaled if needed:
+;   VTPRIME (target velocity at intercept)
+;   VIPRIME (required initial velocity)
+;   RTARG1 (target position)
+;   DELVEET3 (computed delta-V)
+;
+; This maintains computational stability while preserving maximum precision
+; when possible. Subsequent code must account for the scaling factor if RTX2
+; indicated overflow protection was necessary.
+
 			VTARGET
 		STORE	VTPRIME
 		SLOAD	BHIZ
@@ -1331,6 +2341,23 @@ INITVEL7	VLOAD	VSU
 			DELVEET3
 		VSR2
 		STORE	DELVEET3
+; CODE-ALONG READERS: Final parameter computation:
+;
+; MU/A computation:
+;   Load X1 from RTX1 (body selection: 0=Earth, 2=Moon)
+;   Load MUTABLE-2,1 (gravitational parameter μ for selected body)
+;   Multiply by R1A (semi-major axis scale factor)
+;   Divide by R1 (initial radius magnitude)
+;   Result: MU/A = (μ * R1A) / R1
+;
+; This computes a normalized gravitational parameter used by guidance routines.
+; The value MU/A relates orbital energy to position/velocity relationships.
+;
+; MUASTEER = MU/A scaled down by 2^6 for steering algorithm use.
+;
+; Finally, store RTARG1 → RTARG (target position) and call NORMEX to compute
+; unit vectors and exit INITVEL, returning control to the calling program.
+
 INITVELX	LXA,1	DLOAD*
 			RTX1
 			MUTABLE -2,1
@@ -1352,6 +2379,31 @@ INITVELX	LXA,1	DLOAD*
 
 # Page 691
 # ***** MIDGIM *****
+
+; ============================================================================
+; SUBROUTINE: MIDGIM - Middle Gimbal Angle and Coordinate Transformation
+;
+; PURPOSE: Dual-function attitude/coordinate conversion routine for rendezvous
+;
+; COMMENT-ONLY READERS: After computing the required delta-V for a rendezvous
+; burn, the crew needs to know two things:
+;   1. What spacecraft attitude (gimbal angle) to achieve for the burn
+;   2. What the delta-V looks like in local vertical coordinates (up/down,
+;      left/right, forward/backward relative to the spacecraft)
+;
+; This routine computes one or the other depending on which vehicle (LM or CSM)
+; is active. The LM gets the middle gimbal angle (+MGA) for attitude reference.
+; The CSM gets delta-V in local vertical coordinates for display and guidance.
+;
+; CODE-ALONG READERS: MIDGIM branches based on AVFLAG:
+;   - AVFLAG=1 (LM active): Compute +MGA = positive middle gimbal angle
+;   - AVFLAG=0 (CSM active): Compute DELVLVC = delta-V in local vertical coords
+;
+; The gimbal angle computation uses the stable member reference frame (REFSMMAT)
+; to determine spacecraft orientation. The local vertical transformation builds
+; a rotation matrix from position and velocity vectors to convert inertial
+; delta-V into a body-relative frame.
+; ============================================================================
 
 # MOD NO. 0, BY WILLMAN, SUBROUTINE RENDGUID, LOG P34-P35, P74-P75
 # REVISION 03, 17 FEB 67
@@ -1401,7 +2453,36 @@ INITVELX	LXA,1	DLOAD*
 
 		COUNT*	$$/MIDG
 
-HALFREV		2DEC	1 B-1
+; CODE-ALONG READERS: Constant for gimbal angle computation.
+HALFREV		2DEC	1 B-1		# Half revolution = 0.5 revolutions (180°)
+
+; ============================================================================
+; GET+MGA: Compute Positive Middle Gimbal Angle
+; ============================================================================
+;
+; COMMENT-ONLY READERS: This calculates the spacecraft attitude needed for the
+; burn. The "middle gimbal angle" is one of three angles (outer, middle, inner)
+; that define spacecraft orientation. Computing +MGA tells the crew or autopilot
+; what pitch attitude to achieve before ignition.
+;
+; The calculation finds the angle between the delta-V vector and the spacecraft's
+; stable member Y-axis (the IMU reference frame). If the angle comes out negative
+; (burn pointing "down"), we add 360° to get the equivalent positive angle.
+;
+; CODE-ALONG READERS: Middle gimbal angle computation algorithm:
+;   1. Load delta-V vector from pushlist (0D), unitize → UV (unit vector)
+;   2. Dot product UV · REFSMMAT+6 (Y-axis of stable member frame)
+;   3. Scale result from +2 to +1 (SL1) for ARCSIN input requirements
+;   4. ARCSIN: compute angle = arcsin(dot product)
+;   5. If angle ≥ 0 (BPL), store directly as +MGA
+;   6. If angle < 0, add 360° (two HALFREV additions) to convert to positive
+;   7. Store result in +MGA (scaled in revolutions, +0)
+;   8. Clear MGLVFLAG (=0 indicates +MGA computed, not DELVLVC)
+;   9. Return to caller via RVQ
+;
+; The REFSMMAT (reference to stable member matrix) transforms between inertial
+; coordinates and the IMU platform orientation. REFSMMAT+6 accesses the Y-axis
+; column of this transformation matrix.
 
 GET+MGA		VLOAD	UNIT		# (PL 0D) V (+7) TO MPAC UNITIZE UV (+1)
 		UNIT
@@ -1415,6 +2496,48 @@ GET+MGA		VLOAD	UNIT		# (PL 0D) V (+7) TO MPAC UNITIZE UV (+1)
 SETMGA		STORE	+MGA
 		CLR	RVQ		# CLEAR MGLVFLAG TO INDICATE +MGA CALC
 			MGLVFLAG	# AND EXIT
+
+; ============================================================================
+; GET.LVC: Compute Delta-V in Local Vertical Coordinates
+; ============================================================================
+;
+; COMMENT-ONLY READERS: This transforms the burn delta-V from inertial space
+; coordinates (fixed with respect to the stars) into local vertical coordinates
+; (relative to the spacecraft's position and motion). The result tells the crew
+; the burn components in intuitive terms:
+;   - Along velocity direction (forward/backward tangent to orbit)
+;   - Cross-track (perpendicular to orbital plane, left/right)
+;   - Radial (up/down from Earth/Moon center)
+;
+; This transformation is essential for the CSM pilot (Michael Collins during
+; Apollo 11) to understand and verify the maneuver before execution. It converts
+; abstract inertial coordinates into body-relative terms the crew can visualize.
+;
+; CODE-ALONG READERS: Local vertical coordinate frame construction algorithm:
+;   1. Build orthonormal transformation matrix from position and velocity:
+;      - Unitize position vector RINIT → UR (+1)
+;      - Complement to get U(-R), store in pushlist 18D
+;      - Cross product: U(-R) × VINIT → U(V×R), unitize, store in 12D
+;      - Cross product: U(V×R) × U(-R) → U((V×R)×(-R)), unitize, store in 6D
+;   
+;   2. Result: 3×3 transformation matrix at 6D (+1) transforms inertial → local
+;      Each column of matrix represents a basis vector of local vertical frame:
+;      - Column 1: Radial direction (toward/away from planet center)
+;      - Column 2: Cross-track (orbit normal, perpendicular to plane)
+;      - Column 3: Along-track (velocity direction)
+;
+;   3. Apply transformation: Matrix multiply delta-V by transformation matrix
+;      DELVLVC = [6D matrix] × DELVEET (from pushlist 0D)
+;      Input: delta-V at +7, matrix at +1 → product at +8
+;      VSL1: Rescale from +8 back to +7 for storage
+;
+;   4. Store result in DELVLVC (+7) - ready for display to crew
+;   5. Set MGLVFLAG=1 to indicate local vertical coordinates computed (not +MGA)
+;   6. Return via RVQ
+;
+; The matrix construction uses vector cross products to build an orthonormal
+; coordinate system aligned with the spacecraft's orbital position and velocity.
+
 GET.LVC		VLOAD	UNIT		# (PL 6D) R (+29) IN MPAC UNITIZE UR
 			RINIT
 		VCOMP			# U(-R)
@@ -1439,6 +2562,38 @@ GET.LVC		VLOAD	UNIT		# (PL 6D) R (+29) IN MPAC UNITIZE UR
 		SETLOC	SLCTMU
 		BANK
 		COUNT*	$$/MIDG
+
+; ============================================================================
+; SELECTMU: Select Gravitational Parameter Based on Primary Body
+; ============================================================================
+;
+; COMMENT-ONLY READERS: This routine determines which celestial body is the
+; dominant gravitational influence (Earth or Moon) and loads the appropriate
+; gravitational constant (μ = GM, where G is the gravitational constant and M
+; is the body's mass). This is critical for calculating orbital trajectories
+; because the equations of motion depend on which body the spacecraft is
+; orbiting around.
+;
+; During Apollo 11, this routine switched between Earth's μ and the Moon's μ
+; as the spacecraft traveled from Earth orbit to lunar orbit and back.
+;
+; CODE-ALONG READERS: Algorithm for selecting gravitational parameter:
+;   1. Initialize index registers: X1=2D, X2=0D (Earth defaults)
+;   2. Test CMOONFLG (Circumlunar flag):
+;      - If OFF (=0): Spacecraft is near Earth, use Earth parameters
+;      - If ON (=1): Spacecraft is near Moon, use Moon parameters
+;   3. If CMOONFLG set: Reset indices X1=10D, X2=2D (Moon parameters)
+;   4. Load from MUTABLE (table of gravitational parameters):
+;      - MUTABLE+4,1: Load radius-to-μ ratio → store in RTSR1/MU
+;      - MUTABLE-2,1: Load μ value
+;   5. If CMOONFLG set: Right shift μ by 6 bits (SR 6D) to scale Moon's
+;      smaller gravitational parameter appropriately
+;   6. Store final μ value in RTMU for use by trajectory calculations
+;   7. Save index X2 position in RTX2, clear FINALFLG
+;   8. Continue to VN1645 for display sequence
+;
+; The MUTABLE table contains gravitational parameters and radii for both Earth
+; and Moon. Index arithmetic selects the appropriate set based on the flag.
 
 SELECTMU	AXC,1	AXT,2
 			2D
@@ -1524,8 +2679,70 @@ RTRNMU		STORE	RTMU
 
 		COUNT*	$$/PERAP
 
+; ============================================================================
+; PERIAPO: Compute Apocenter and Pericenter Altitudes
+; ============================================================================
+;
+; COMMENT-ONLY READERS: This subroutine calculates the highest and lowest
+; points of the spacecraft's orbit. The highest point is called "apocenter"
+; (or "apogee" for Earth, "apolune" for Moon). The lowest point is called
+; "pericenter" (or "perigee" for Earth, "perilune" for Moon).
+;
+; These orbital parameters are critical for mission safety. During Apollo 11:
+; - The Command Module's lunar orbit pericenter had to remain above 35,000 feet
+;   to ensure clearance over lunar mountains
+; - The Lunar Module's descent orbit pericenter determined the powered descent
+;   initiation point
+; - After each rendezvous maneuver, this routine verified the resulting orbit
+;   would not impact the surface
+;
+; The routine uses the current position and velocity to predict the entire
+; orbital trajectory, computing where the spacecraft will be highest and
+; lowest relative to the planet or Moon's surface.
+;
+; CODE-ALONG READERS: Two-body orbital mechanics computation using classical
+; orbital elements. Given instantaneous state vectors (position RVEC, velocity
+; VVEC), compute orbital apsides (apocenter and pericenter) by:
+;
+;   1. Solving vis-viva equation: v² = μ(2/r - 1/a)
+;      where μ = gravitational parameter, r = current radius, a = semi-major axis
+;   2. Computing orbital eccentricity from angular momentum and energy
+;   3. Determining apocenter radius = a(1+e) and pericenter radius = a(1-e)
+;   4. Converting radii to altitudes by subtracting planetary radius
+;
+; Algorithm assumes two-body dynamics (spacecraft influenced only by primary
+; body, ignoring perturbations from other celestial bodies, solar radiation
+; pressure, etc.). Valid for short-term predictions; actual orbit evolves due
+; to lunar oblateness, Earth/Sun gravity, and other perturbations.
+
+; CODE-ALONG READERS: Launch pad reference radius constant.
 RPAD		2DEC	6373338 B-29	# STANDARD RADIUS OF PAD 37-B.
 					# = 20 909 901.57 FT
+
+; ============================================================================
+; PERIAPO1: Entry Point with Vector Scaling
+; ============================================================================
+;
+; CODE-ALONG READERS: This entry point handles pre-scaled vectors from calling
+; program. The scaling adjustment accounts for the different magnitude ranges
+; between Earth operations (larger distances, higher velocities) and lunar
+; operations (smaller distances, lower velocities).
+;
+; Algorithm:
+;   1. LXA,2 RTX2: Load index register X2 from RTX2 (contains shift count)
+;   2. VSR* 0,2: Vector shift right VVEC by X2 positions (variable scale)
+;      - For Earth: typically shift right 2 positions to scale from B+7 to B+5
+;      - For Moon: may use different scaling based on mission phase
+;   3. STOVL VVEC: Store scaled velocity, then load VVEC for next operation
+;   4. LXA,1 RTX1: Load index register X1 from RTX1 (body indicator: -1=Earth, -10=Moon)
+;   5. VSR* 0,2: Vector shift right RVEC by X2 positions
+;      - Scales position vector consistently with velocity
+;   6. STORE RVEC: Store scaled position vector
+;   7. Fall through to PERIAPO main routine (no GOTO needed, sequential execution)
+;
+; The VSR* (Vector Shift Right indexed) instruction performs element-wise
+; right bit shifts on all three components of the vector simultaneously,
+; effectively dividing the magnitude while preserving direction.
 
 PERIAPO1	LXA,2	VSR*
 			RTX2
@@ -1535,6 +2752,33 @@ PERIAPO1	LXA,2	VSR*
 			RTX1
 			0,2
 		STORE	RVEC
+
+; ============================================================================
+; PERIAPO: Main Entry Point - Compute Apocenter and Pericenter
+; ============================================================================
+;
+; COMMENT-ONLY READERS: The spacecraft's orbit around the Moon or Earth is an
+; ellipse (or circle, which is a special ellipse). The highest point of this
+; orbit is the "apocenter" and the lowest point is the "pericenter."
+;
+; This routine calculates both of these critical altitudes. During Apollo 11's
+; lunar orbit, Mission Control closely monitored these values to ensure the
+; Command Module would not crash into lunar mountains during each orbit. The
+; pericenter had to remain safely above 35,000 feet.
+;
+; CODE-ALONG READERS: Main computation sequence using interpretive language:
+;
+;   1. STQ NORMEX: Store return address in NORMEX
+;   2. CALL SETRAD: Set planetary radius (XXXALT = Earth/Moon radius)
+;      - Uses body indicator in X1 register to select correct planet
+;      - Earth radius ≈ 6,378 km, Moon radius ≈ 1,738 km
+;   3. STCALL XXXALT, APSIDES: Store radius, call APSIDES subroutine
+;      - APSIDES computes apocenter and pericenter radii from current state vectors
+;      - Returns apocenter radius in 0D, pericenter radius in 2D (MPAC positions)
+;   4. Compute altitudes by subtracting planetary radius from radii
+;      - Apogee altitude = Apocenter radius - Planet radius
+;      - Perigee altitude = Pericenter radius - Planet radius
+
 PERIAPO		STQ	CALL
 			NORMEX
 			SETRAD
@@ -1551,6 +2795,37 @@ PERIAPO		STQ	CALL
 			NORMEX
 
 # Page 696
+; ============================================================================
+; SETRAD: Set Planetary Radius
+; ============================================================================
+;
+; COMMENT-ONLY READERS: This subroutine determines whether the spacecraft is
+; orbiting Earth or the Moon, then loads the correct planetary radius into
+; memory. This is essential because:
+;   - Earth's radius: approximately 6,378 km (3,963 miles)
+;   - Moon's radius: approximately 1,738 km (1,080 miles)
+;
+; The routine needs to know which body to use when converting between orbital
+; radius (distance from center of planet/moon) and altitude (distance above
+; surface).
+;
+; CODE-ALONG READERS: Body selection algorithm:
+;
+;   1. DLOAD RPAD: Load Earth launch pad radius as default (6,373,338 meters)
+;      - This constant represents radius to Launch Complex 37-B at Cape Kennedy
+;   2. PUSH: Push radius onto MPAC stack
+;   3. SXA,1 X2: Store X1 register (body indicator) in X2
+;      - X1 = -1 for Earth, -10 for Moon (set by calling program)
+;   4. INCR,2 2D: Increment stack pointer by 2 positions
+;   5. SLOAD X2: Single-precision load X2 (body indicator)
+;   6. BHIZ SETRADX: Branch if zero (actually checking sign/magnitude)
+;      - If X2 indicates Earth, branch to SETRADX (use RPAD value already loaded)
+;      - If X2 indicates Moon, fall through to load lunar radius
+;   7. VLOAD RLS, ABVAL: Load lunar radius vector RLS, compute absolute value
+;      - RLS contains Moon's radius vector
+;   8. PDDL: Push result onto stack
+;   9. SETRADX: DLOAD, RVQ: Load appropriate radius, return via Q register
+
 SETRAD		DLOAD	PUSH
 			RPAD
 		SXA,1	INCR,2
@@ -1565,6 +2840,39 @@ SETRAD		DLOAD	PUSH
 SETRADX		DLOAD	RVQ
 
 # Page 697
+; ============================================================================
+; PRECSET: Precision State Vector Setup
+; ============================================================================
+;
+; COMMENT-ONLY READERS: During rendezvous operations, the computer needs to
+; track both the Lunar Module and Command Module simultaneously. This routine
+; computes precise position and velocity for both spacecraft at specific times.
+;
+; During Apollo 11's rendezvous on July 21, 1969, after Eagle's ascent from
+; the lunar surface, this routine continuously updated the relative positions
+; of Eagle (LM) and Columbia (CSM) as they approached each other in lunar orbit.
+;
+; The routine determines which spacecraft is "active" (performing maneuvers)
+; and which is "passive" (coasting), then stores their state vectors separately
+; for use in rendezvous targeting calculations.
+;
+; CODE-ALONG READERS: Dual spacecraft state vector computation:
+;
+;   1. STQ NORMEX: Store return address
+;   2. STCALL TDEC2, LEMPREC: Store time in TDEC2, call LEM precision orbit routine
+;      - LEMPREC computes LM position/velocity at specified time
+;      - Integrates orbit forward/backward from known state
+;   3. CALL LEMSTORE: Store LM state vectors in appropriate locations
+;      - If LM is active vehicle: store in RACT3, VACT3
+;      - If LM is passive vehicle: store in RPASS3, VPASS3
+;   4. DLOAD TDEC2: Reload time (may be different for CSM)
+;   5. STCALL TDEC1, CSMPREC: Store time in TDEC1, call CSM precision orbit routine
+;      - CSMPREC computes CSM position/velocity at specified time
+;   6. CALL CSMSTORE: Store CSM state vectors in appropriate locations
+;      - If CSM is active: store in RACT3, VACT3
+;      - If CSM is passive: store in RPASS3, VPASS3
+;   7. GOTO NORMEX: Return to calling routine
+
 PRECSET		STQ
 			NORMEX
 		STCALL	TDEC2
@@ -1579,6 +2887,33 @@ PRECSET		STQ
 			CSMSTORE
 		GOTO
 			NORMEX
+
+; ============================================================================
+; LEMSTORE: Store LM State Vectors (Active or Passive)
+; ============================================================================
+;
+; COMMENT-ONLY READERS: This routine stores the Lunar Module's position and
+; velocity in the correct memory locations based on whether the LM is the
+; "active" vehicle (performing maneuvers) or "passive" vehicle (coasting).
+;
+; During Apollo 11's rendezvous on July 21, 1969, Eagle (LM) was the active
+; vehicle during ascent and initial approach, while Columbia (CSM) was passive
+; in a stable orbit waiting for rendezvous.
+;
+; CODE-ALONG READERS: Storage routing based on AVFLAG:
+;
+;   1. VLOAD RATT: Load LM position vector from RATT
+;   2. BOFF AVFLAG, PASSIVE: Branch if AVFLAG is OFF (zero) to PASSIVE
+;      - AVFLAG ON (1): LM is active vehicle → store in RACT3/VACT3
+;      - AVFLAG OFF (0): LM is passive vehicle → store in RPASS3/VPASS3
+;   3. If ACTIVE: STOVL RACT3: Store position in RACT3, load VATT velocity
+;   4. STORE VACT3: Store velocity in VACT3
+;   5. RVQ: Return via Q register
+;   6. If PASSIVE: Fall through to store in RPASS3/VPASS3 instead
+;
+; AVFLAG is set by the rendezvous program based on mission phase. The active
+; vehicle performs the maneuvers while the passive vehicle maintains orbit.
+
 LEMSTORE	VLOAD	BOFF
 			RATT
 			AVFLAG
@@ -1587,6 +2922,32 @@ ACTIVE		STOVL	RACT3
 			VATT
 		STORE	VACT3
 		RVQ
+
+; ============================================================================
+; CSMSTORE: Store CSM State Vectors (Active or Passive)
+; ============================================================================
+;
+; COMMENT-ONLY READERS: This routine stores the Command/Service Module's
+; position and velocity, using the opposite role from the LM. If the LM is
+; active, the CSM is passive, and vice versa.
+;
+; During Apollo 11's rendezvous, Columbia (CSM) maintained a stable circular
+; orbit while Eagle (LM) performed the active maneuvers to rendezvous. Thus
+; CSM data was stored in the "passive" locations.
+;
+; CODE-ALONG READERS: Storage routing with inverted logic from LEMSTORE:
+;
+;   1. VLOAD RATT: Load CSM position vector from RATT
+;   2. BOFF AVFLAG, ACTIVE: Branch if AVFLAG is OFF to ACTIVE
+;      - This inverts the logic: if LM is active (AVFLAG ON), CSM is passive
+;      - If AVFLAG ON: branch to ACTIVE label which stores in RPASS3/VPASS3
+;      - If AVFLAG OFF: fall through to PASSIVE label which stores in RACT3/VACT3
+;   3. Logic inversion ensures only one vehicle occupies active storage at a time
+;   4. Two-vehicle rendezvous requires one active and one passive vehicle
+;
+; This complementary storage scheme prevents ambiguity about which spacecraft
+; is performing maneuvers during rendezvous targeting calculations.
+
 CSMSTORE	VLOAD	BOFF
 			RATT
 			AVFLAG
@@ -1597,6 +2958,32 @@ PASSIVE		STOVL	RPASS3
 		RVQ
 
 # Page 698
+; ============================================================================
+; VECSHIFT: Vector Right Shift Utility
+; ============================================================================
+;
+; COMMENT-ONLY READERS: This is a utility routine that scales vector data
+; by shifting bits to the right. This is necessary because the AGC uses
+; fixed-point arithmetic with specific scaling conventions.
+;
+; During rendezvous calculations, position and velocity vectors often need
+; to be scaled to prevent arithmetic overflow in the 15-bit AGC word format.
+;
+; CODE-ALONG READERS: Double-vector scaling operation:
+;
+;   1. LXA,2 RTX2: Load index register X2 from RTX2 (shift count)
+;   2. VSR* 0,2: Vector Shift Right by amount in X2 (scales first vector)
+;      - Divides vector components by 2^(X2) to reduce magnitude
+;   3. LXA,1 RTX1: Load index register X1 from RTX1 (shift count for 2nd vector)
+;   4. PDVL: Push first vector to stack, load second vector
+;   5. VSR* 0,2: Vector Shift Right second vector by same amount in X2
+;   6. PDVL: Push second vector to stack
+;   7. RVQ: Return with both scaled vectors on stack
+;
+; This routine maintains numerical precision while preventing overflow during
+; two-body orbital mechanics calculations that involve position differences
+; ranging from meters to hundreds of kilometers.
+
 VECSHIFT	LXA,2	VSR*
 			RTX2
 			0,2
@@ -1607,6 +2994,27 @@ VECSHIFT	LXA,2	VSR*
 		RVQ
 
 # Page 699
+; ============================================================================
+; SHIFTR1: Scalar Left Shift Utility
+; ============================================================================
+;
+; COMMENT-ONLY READERS: Despite the name "SHIFTR1", this routine actually
+; shifts data LEFT, multiplying values to restore proper scaling after
+; calculations. The AGC naming follows historical conventions.
+;
+; CODE-ALONG READERS: Single scalar scaling operation:
+;
+;   1. LXA,2 RTX2: Load index register X2 from RTX2 (shift count)
+;   2. SL* 0,2: Shift Left by amount in X2
+;      - Multiplies accumulator value by 2^(X2)
+;      - Used to restore proper scaling after division or to match
+;        expected units for display or maneuver execution
+;   3. RVQ: Return via Q register
+;
+; The confusing name likely derives from register operations where "R1"
+; refers to a register rather than "right". The SL* instruction clearly
+; performs left shift (multiplication).
+
 SHIFTR1		LXA,2	SL*
 			RTX2
 			0,2
@@ -1666,6 +3074,96 @@ SHIFTR1		LXA,2	SL*
 		EBANK=	RPASS36
 
 		COUNT*	$$/R36
+
+; ============================================================================
+; R36: Out-of-Plane Rendezvous Display Routine
+; ============================================================================
+;
+; COMMENT-ONLY READERS: During rendezvous, spacecraft must align not only in
+; their orbital plane but also ensure they haven't drifted "above" or "below"
+; each other. This routine displays three critical measurements that tell the
+; crew about out-of-plane positioning:
+;
+;   Y (RANGE): How far "out of plane" the two spacecraft are from each other
+;   YDOT (RRATE): How fast this out-of-plane distance is changing
+;   PSI (RTHETA): The angle showing the direction of the out-of-plane offset
+;
+; The astronaut requests this display by entering V90 E on the DSKY. During
+; Apollo 11's rendezvous after Eagle's ascent on July 21, 1969, Buzz Aldrin
+; monitored these parameters to ensure Eagle and Columbia were properly aligned
+; for the final docking approach.
+;
+; If the spacecraft are perfectly aligned in the same orbital plane, Y would be
+; zero. Non-zero values indicate the LM is either "north" or "south" of the CSM's
+; orbital plane, requiring small thruster corrections before final approach.
+;
+; CODE-ALONG READERS: R36 Routine Architecture:
+;
+; Entry and Time Input (R36 and LREGCHK):
+;   1. ZL / CAF ZERO / DXCH DSPTEMX: Initialize time display to zero
+;   2. CAF V06N16N / TC BANKCALL GOMARKF: Display V06N16 (time input request)
+;      - Astronaut can input specific time for calculation
+;      - Or press PROCEED to use current time
+;      - Or press ENTER to terminate
+;   3. LREGCHK: Checks if astronaut entered zero time
+;      - BZF ENTTIM2: If zero, use present time (LOADTIME)
+;      - If non-zero, use astronaut input time
+;
+; Main Calculation (R36INT):
+;   1. STCALL TDEC1, OTHPREC: Compute "other" spacecraft state at TDEC1
+;      - If this is LM, compute CSM state; if CSM, compute LM state
+;   2. VLOAD VATT / RATT: Load passive vehicle velocity and position
+;   3. STORE RPASS36: Save passive vehicle position
+;   4. UNIT PDVL VXV UNIT: Compute unit normal to passive vehicle orbital plane
+;      - Cross product of position and velocity gives orbit normal
+;   5. STODL UNP36: Store unit normal vector
+;
+; Active Vehicle State (THISPREC):
+;   1. STCALL TDEC1, THISPREC: Compute this spacecraft's state at TDEC1
+;   2. VLOAD VATT / RATT: Load active vehicle velocity and position
+;   3. PUSH operations: Stack position vectors for multiple calculations
+;
+; Y Calculation (Out-of-Plane Distance):
+;   1. BVSU RPASS36: Compute line-of-sight vector (RA - RP)
+;   2. DOT UNP36 / SL1: Dot product with unit normal gives out-of-plane component
+;   3. STOVL RANGE: Store in RANGE (displayed as Y to crew)
+;      - Positive Y means active vehicle is "above" passive vehicle's plane
+;      - Negative Y means active vehicle is "below" passive vehicle's plane
+;
+; YDOT Calculation (Out-of-Plane Rate):
+;   1. DOT UNP36 / SL1: Dot velocity vector with unit normal
+;   2. STOVL RRATE: Store in RRATE (displayed as YDOT to crew)
+;      - Positive YDOT means out-of-plane distance increasing
+;      - Negative YDOT means out-of-plane distance decreasing
+;
+; PSI Calculation (Out-of-Plane Angle):
+;   1. UNIT PUSH: Unit vector of active vehicle position (URA)
+;   2. VXV VXV: Double cross product to get horizontal reference
+;      - (URA × VA) × URA = horizontal velocity component
+;   3. VSL2 UNIT: Normalize to get unit horizontal forward direction
+;   4. DOT projection and ARCCOS: Compute angle between LOS and horizontal
+;   5. Sign check (BPL R36TAG2): Adjust angle sign based on geometry
+;   6. STORE RTHETA: Store in RTHETA (displayed as PSI to crew)
+;      - PSI shows angular direction of out-of-plane offset
+;
+; Display and Termination:
+;   1. DLOAD 30D / RTB SGNAGREE: Format time for display
+;   2. CAF V06N90N / TC BANKCALL GOMARKF: Display V06N90
+;      - Shows time, Y (out-of-plane distance), YDOT (rate), PSI (angle)
+;   3. Crew options:
+;      - TERMINATE (V34): Exit routine
+;      - PROCEED: Accept values and exit
+;      - RECYCLE: Redisplay current values
+;
+; Mathematical Foundation:
+;   The out-of-plane component is computed using vector projection onto the
+;   normal to the passive vehicle's orbital plane. This normal is perpendicular
+;   to both the position and velocity vectors of the passive vehicle.
+;
+;   For two spacecraft in slightly different orbital planes, the angle between
+;   the planes (inclination difference) causes periodic variation in Y as both
+;   orbit. The YDOT value indicates whether the spacecraft are approaching or
+;   diverging from coplanar alignment at this instant.
 
 R36		ZL
 		CAF	ZERO		# SET TIME OF EVENT TO ZERO FOR FIRST

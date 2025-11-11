@@ -28,6 +28,24 @@
 #    This AGC program shall also be referred to as
 #            Colossus 2A
 
+# ============================================================================
+# FILE: IMU_MODE_SWITCHING_ROUTINES.agc
+# MODULE: Command Module Core Operating System
+# MISSION PHASE: all-phases (continuous IMU operation throughout mission)
+#
+# TL;DR: Implements Inertial Measurement Unit (IMU) mode transitions including
+#        coarse align, fine align, and gyrocompass modes. Controls IMU platform
+#        switching between operational modes, manages calibration state during
+#        mode changes, and coordinates torquing angles during IMU realignment.
+#        Critical for maintaining spacecraft attitude reference throughout all
+#        mission phases from launch through splashdown.
+#
+# COMMENT-ONLY READERS: These routines keep the IMU properly configured as the
+#        spacecraft's inertial reference platform throughout the mission.
+# CODE-ALONG READERS: Study mode switching logic, CDU zeroing, and IMU state
+#        management that maintains attitude knowledge across all mission phases.
+# ============================================================================
+
 # Page 1420
 		BLOCK	02
 		SETLOC	FFTAG3

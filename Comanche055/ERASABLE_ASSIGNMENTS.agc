@@ -38,6 +38,24 @@
 #			Colossus 2A
 
 
+; ============================================================================
+; FILE: ERASABLE_ASSIGNMENTS.agc
+; MODULE: COMERASE Subsystem
+; MISSION PHASE: all-phases
+;
+; TL;DR: Complete 2K RAM (erasable memory) allocation map organizing all read-write
+;        variables by functional area. Groups navigation state vectors, guidance
+;        parameters, control system state, display buffers, interrupt state,
+;        EXECUTIVE/WAITLIST queues. Documents data types, scaling factors, update
+;        frequency. Foundational memory architecture reference for all Apollo 11
+;        code understanding.
+;
+; COMMENT-ONLY READERS: The master directory showing where every piece of mission
+;        data was stored in the computer's memory.
+; CODE-ALONG READERS: Study complete 2K RAM memory map, bank organization, variable
+;        groupings by function, data types, scaling factors (e.g., position scaled 2^29 m).
+; ============================================================================
+
 # Page 37
 # CONVENTIONS AND NOTATIONS UTILIZED FOR ERASABLE ASSIGNMENTS.
 
@@ -95,6 +113,33 @@
 #				TEMPORARY FOR A HIGHER-LEVEL ROUTINE/PROGRAM.
 
 # Page 39
+
+; ============================================================================
+; MEMORY ARCHITECTURE OVERVIEW
+;
+; The Apollo Guidance Computer has 2048 words (2K) of erasable memory (RAM)
+; organized into banks. This file defines the complete allocation of this
+; precious resource. Every variable, buffer, queue, and temporary storage
+; location used throughout the mission is assigned here.
+;
+; MEMORY ORGANIZATION:
+; - Erasable memory is organized into E-banks (erasable banks)
+; - Bank-sensitive variables (marked 'B') require specific E-bank context
+; - Bank-insensitive variables (marked 'I') can appear in any E-bank
+; - Extensive use of OVERLAYS to share memory between non-concurrent programs
+;
+; SCALING CONVENTIONS:
+; - Positions: typically scaled by 2^29 meters (1 unit = ~1.86 nanometers)
+; - Velocities: typically scaled by 2^7 meters/centisecond
+; - Times: typically scaled in centiseconds (2^28 cs for double precision)
+; - Angles: typically scaled as fractional revolutions (±0.5 = ±180 degrees)
+;
+; This memory map was carefully crafted by MIT Instrumentation Laboratory
+; programmers to fit all necessary mission functions within the AGC's
+; limited 2K erasable memory. The overlay system allows different mission
+; programs (navigation, landing, rendezvous, entry) to share the same
+; physical memory locations when they are not executing simultaneously.
+; ============================================================================
 
 # SPECIAL REGISTERS.
 
@@ -1445,8 +1490,42 @@ S3229T3B	=	BIT12		#      = FIRST NEWTON ITERATION BEING DONE
 # Page 68
 # GENERAL ERASABLE ASSIGNMENTS
 
+; ============================================================================
+; SECTION 1: INTERRUPT AND EXECUTIVE STORAGE
+;
+; This section begins the main memory allocation starting at erasable
+; location 61. The first critical area is interrupt temporary storage,
+; used to save register state during hardware interrupts and executive
+; task switches.
+;
+; COMMENT-ONLY READERS: Think of this as the computer's workspace for
+; handling multiple tasks simultaneously, like a conductor's score showing
+; which instruments play when.
+;
+; CODE-ALONG READERS: Interrupt service routines save A, L, Q registers
+; here. EXECUTIVE and WAITLIST use ITEMP series for task management.
+; RUPTREGS preserve state during priority interrupt handling.
+; ============================================================================
+
 		SETLOC	61
 # INTERRUPT TEMPORARY STORAGE POOL.	(11D)
+
+; ----------------------------------------------------------------------------
+; INTERRUPT TEMPORARY STORAGE (11 words)
+;
+; Critical storage pool shared between interrupt handlers and the EXECUTIVE
+; scheduler. During Apollo 11, these locations were accessed thousands of
+; times per second as the computer juggled guidance computations, display
+; updates, and sensor readings.
+;
+; ITEMP1-ITEMP6: Used by EXECUTIVE and WAITLIST during job scheduling
+; RUPTREG1-RUPTREG4: Used by interrupt handlers to preserve register state
+; NEWJOB (location 67): Hardwired location for new job queue pointer
+;
+; DATA TYPE: Temporary storage, contents change every millisecond
+; USAGE: Highest-frequency access in entire AGC (critical path code)
+; SHARING: NEVER shared - these must be dedicated for system reliability
+; ----------------------------------------------------------------------------
 
 # (ITEMP1 THROUGH RUPTREG4)
 
@@ -1488,13 +1567,64 @@ DSRUPTEM	EQUALS	RUPTREG4
 
 # FLAGWORD RESERVATIONS.		(12D)
 
+; ----------------------------------------------------------------------------
+; FLAGWORD STORAGE (12 words)
+;
+; STATE through STATE+11D: Bit flags controlling program modes and system state.
+; Each bit represents a Boolean condition (engine on/off, mode selected, etc.).
+; With 15 usable bits per word, these 12 words provide 180 individual flags
+; governing mission program behavior throughout Apollo 11's flight.
+;
+; Examples of flags stored here:
+; - VHFAIFLG: VHF ranging enabled
+; - LETABORT: LET abort armed
+; - CULTFLAG: Uplink data received
+; - NODOFLAG: Suppress display updates
+; - MUNFLAG: Minimum altitude reached
+;
+; DATA TYPE: Bit flags (Boolean state variables)
+; SCALING: N/A (binary flags)
+; UPDATE FREQUENCY: As needed by programs, typically 1-10 times per second
+; ----------------------------------------------------------------------------
+
 STATE		ERASE	+11D
 
+; ----------------------------------------------------------------------------
+; PAD LOAD FOR DIGITAL AUTOPILOTS (2 words)
+;
+; Pre-loaded parameters for Digital Autopilot (DAP) initialization. These values
+; are loaded from ground before flight and remain constant during mission.
+; Used by RCS DAP, TVC DAP, and entry DAP for mass properties calculations.
+;
+; COMMENT-ONLY READERS: Before flight, Mission Control loaded critical spacecraft
+; parameters into the computer's memory - like how much fuel the Service Propulsion
+; System engine consumed per second. These numbers were essential for the autopilot
+; to maintain proper attitude control as fuel depleted and spacecraft mass changed.
+;
+; CODE-ALONG READERS: Pad loads are ground-supplied constants uploaded during
+; pre-launch checkout. DAP routines read these to compute real-time mass properties
+; (center-of-gravity, moments of inertia) as propellant is consumed. EMDOT scaled
+; as 2^3 kg/cs (centiseconds) represents SPS mass flow rate for TVC calculations.
+; ----------------------------------------------------------------------------
 # PAD LOAD FOR DAPS
 EMDOT		ERASE			# I(1)PL (SPS FLOW RATE, SC AT B+3 KG/CS)
 
 # Page 69
 
+; ----------------------------------------------------------------------------
+; VERB 83 EXIT STORAGE (1 word)
+;
+; Return address storage for Extended Verb 83 (Rendezvous Out-of-Plane Display).
+; Stores return location for state vector routine exit handling.
+;
+; COMMENT-ONLY READERS: When the crew requested rendezvous information via the
+; DSKY keyboard, the computer needed to remember where to return after displaying
+; the data. This memory location saved that "return address" information.
+;
+; CODE-ALONG READERS: STATEXIT holds STQ (Store Q register) return address for
+; V83 exit path. When V83 completes rendezvous display calculations, control
+; returns via address stored here. Used by state vector display routines.
+; ----------------------------------------------------------------------------
 # EXIT FOR V83
 STATEXIT	ERASE			# I(1) STQ ADDRESS FOR STATEXIT
 
@@ -1503,6 +1633,27 @@ ERASFILL	ERASE	+1
 
 # EXEC TEMPORARIES WHICH MAY BE USED BETWEEN CCS NEWJOBS
 # (INTB15+ THROUGH RUPTMXTM)		(32D)
+
+; ----------------------------------------------------------------------------
+; EXECUTIVE TEMPORARY STORAGE (32 words)
+;
+; Shared temporary storage for EXECUTIVE scheduler and display system routines.
+; These variables have short lifetimes (microseconds to milliseconds) and are
+; reused between different operations. During Apollo 11, this pool handled
+; everything from DSKY display formatting to interpretive instruction decoding.
+;
+; Key areas:
+; - INTB15+/INTBIT15: Index bit handling for interpretive operations
+; - ADDRWD/POLISH: Interpretive instruction address decoding
+; - VBUF series: Vector/display temporary storage (6 words)
+; - BUF series: Scalar temporary storage (3 words)
+;
+; SHARING STRATEGY: Heavy sharing - multiple routines alias same locations
+; with different names (DSEXIT=EXITEM=BLANKRET=INTB15+). This multiplexing
+; saves precious erasable memory by ensuring non-concurrent routines share
+; temporary storage.
+; ----------------------------------------------------------------------------
+
 INTB15+		ERASE			# REFLECTS 15TH BIT OF INDEXABLE ADDRESSES
 DSEXIT		EQUALS	INTB15+		# RETURN FOR DSPIN
 EXITEM		EQUALS	INTB15+		# RETURN FOR SCALE FACTOR ROUTINE SELECT
@@ -1617,6 +1768,37 @@ DEXI		=	DEX1
 # Page 72
 # DYNAMICALLY ALLOCATED CORE SETS FOR JOBS	(84D)
 
+; ----------------------------------------------------------------------------
+; MULTI-PURPOSE ACCUMULATOR AND JOB STORAGE (84 words)
+;
+; MPAC (Multi-Purpose Accumulator): The interpretive language's primary working
+; register, similar to the accumulator in basic AGC instructions but operating
+; at a higher level. MPAC holds intermediate results during vector and matrix
+; operations executed by the INTERPRETER virtual machine.
+;
+; During Apollo 11's descent, MPAC was continuously used for:
+; - Position vector computations (lunar landing site targeting)
+; - Velocity vector transformations (descent trajectory calculations)
+; - Attitude quaternion operations (spacecraft orientation control)
+;
+; STRUCTURE:
+; MPAC (7 words): Multi-purpose accumulator for interpretive operations
+; MODE: Operating mode (+1 = triple precision, 0 = double, -1 = vector)
+; LOC: Current interpretive code location being executed
+; BANKSET: Bank switching state (usually contains BBANK setting)
+; PUSHLOC: Packed interpretive parameters for nested operations
+; PRIORITY: Job priority level and work area identifier
+; +71D: SEVEN SETS of 12 registers each for concurrent job contexts
+;
+; SHARING: Each of 7 core sets can hold a different job's execution context,
+; allowing the EXECUTIVE to switch between guidance, navigation, and display
+; tasks without losing computational state.
+;
+; DATA TYPE: Interpretive virtual machine registers
+; SCALING: Variable (depends on operation type - vectors, scalars, matrices)
+; ACCESS: Continuous during interpretive code execution
+; ----------------------------------------------------------------------------
+
 MPAC		ERASE	+6		# MULTI-PURPOSE ACCUMULATOR.
 MODE		ERASE			# +1 FOR TP, +0 FOR DP, OR -1 FOR VECTOR.
 LOC		ERASE			# LOCATION ASSOCIATED WITH JOB.
@@ -1629,6 +1811,29 @@ PRIORITY	ERASE			# PRIORITY OF PRESENT JOB AND WORK AREA.
 # SPECIAL DOWNLINK BUFFER. -- OVERLAYED BY P27 STORAGE --
 
 # P27 (UPDATE PROGRAM) STORAGE. -- OVERLAYS SPEC DNLNK BUFF -- (24D)
+
+; ----------------------------------------------------------------------------
+; P27 UPDATE PROGRAM STORAGE (24 words)
+;
+; Mission Control could send state vector corrections, target parameters, and
+; other critical data to the AGC through radio uplink. Program P27 received
+; these updates and loaded them into appropriate memory locations. During
+; Apollo 11, ground controllers uplinked navigation state corrections multiple
+; times per day to compensate for small trajectory errors.
+;
+; COMPNUMB: Count of data items being uplinked (1 to 20)
+; UPOLDMOD: Stores interrupted program number so P27 can return control
+; UPVERB: Verb number for uplink operation
+; UPCOUNT: Current position in uplink buffer during reception
+; UPBUFF (20 words): Temporary buffer holding uplinked data before processing
+;
+; MEMORY SHARING: This area overlays the special downlink buffer because
+; uplink and downlink operations never occur simultaneously (half-duplex
+; communication protocol with ground stations).
+;
+; DATA TYPE: Temporary storage during uplink operations
+; ACCESS: Only during P27 execution when receiving data from Mission Control
+; ----------------------------------------------------------------------------
 
 COMPNUMB	ERASE	+23D		# B(1)TMP NUMBER OF ITEMS TO BE UPLINKED.
 UPOLDMOD	EQUALS	COMPNUMB +1	# B(1)TMP HOLDS INTERRUPTED PROGRAM NUMBER
@@ -1656,6 +1861,30 @@ A0		=	V1 +2		# I(2) REENTRY, P64-P65
 # ALIGNMENT STORAGE.			(5D)
 # (CANNOT SHARE WITH PRECISION INTEGRATION OR KEPLER STORAGE.)
 
+; ----------------------------------------------------------------------------
+; IMU ALIGNMENT STORAGE (5 words)
+;
+; The Inertial Measurement Unit (IMU) platform needed periodic realignment
+; using star sightings through the Command Module's sextant. Programs P51-P53
+; managed this alignment process. These variables tracked which stars were
+; marked, evaluated alignment quality, and determined the best star pair for
+; optimal geometric dilution of precision.
+;
+; During Apollo 11's translunar coast, the crew performed several IMU
+; alignments to ensure navigation accuracy for the critical lunar orbit
+; insertion burn. Armstrong and Aldrin sighted stars through the sextant,
+; and these routines processed the optical measurements.
+;
+; QMAJ: Major axis quaternion component for alignment computation
+; MARKINDX: Index tracking which star mark is being processed
+; BESTI: Best star index (first of optimal pair)
+; BESTJ: Best star index (second of optimal pair)
+; STARIND: Current star catalog index being evaluated
+;
+; CANNOT SHARE: Must remain allocated during precision orbit integration
+; because alignment might be performed during coast phase computation.
+; ----------------------------------------------------------------------------
+
 QMAJ		EQUALS	COMPNUMB	# B(1)TMP
 MARKINDX	EQUALS	QMAJ	+1	# B(1)TMP
 BESTI		EQUALS	MARKINDX +1	# I(1)TMP
@@ -1681,6 +1910,30 @@ STARM		=	32D
 
 # DOWNLINK STORAGE			(18D)
 
+; ----------------------------------------------------------------------------
+; DOWNLINK TELEMETRY STORAGE (18 words)
+;
+; The AGC continuously transmitted navigation state, spacecraft status, and
+; program information to Mission Control through telemetry downlink. This
+; storage managed the downlink data formatting and transmission sequencing.
+;
+; During Apollo 11's mission, ground controllers monitored telemetry streams
+; showing position, velocity, fuel remaining, computer load, and alarm status.
+; When the 1202 alarms occurred during descent, flight controller Steve Bales
+; saw the alarm codes in telemetry before making his critical "GO" decision.
+;
+; DNLSTCOD: ID code identifying which downlink list is currently active
+; DUMPCNT: Counter tracking snapshot dump progress
+; DNTMGOTO: Next telemetry routine address for sequencing
+; TMINDEX/DUMPLOC: Current position in data being downlinked
+; DNQ: Return address for downlink routines
+; DNTMBUFF (12 words): Snapshot buffer holding telemetry frame before transmission
+;
+; DATA TYPE: Permanent during mission (downlink always active)
+; UPDATE FREQUENCY: Continuous, typically every 2 seconds per telemetry frame
+; ACCESS: Shared between downlink program and WAITLIST-scheduled updates
+; ----------------------------------------------------------------------------
+
 DNLSTADR	EQUALS	DNLSTCOD	# CONTENTS NO LONGER AN ADDR BUT A CODE
 
 DNLSTCOD	ERASE			# B(1)PRM ID CODE OF DOWNLIST
@@ -1696,6 +1949,29 @@ DNTMBUFF	ERASE	+11D		# B(12)PRM DOWNLINK SNAPSHOT BUFFER
 
 # OPTICS MARKING, UNSHARED.		(8D)
 
+; ----------------------------------------------------------------------------
+; OPTICS MARKING STORAGE (8 words)
+;
+; The Command Module crew used the scanning telescope and sextant to sight
+; stars for IMU alignment and to mark lunar or Earth landmarks for navigation
+; updates. When the astronaut pressed the "MARK" button, these registers
+; captured the exact spacecraft attitude (CDU angles) at mark time.
+;
+; During Apollo 11, Michael Collins used the sextant for IMU alignments while
+; in lunar orbit, sighting stars against the lunar horizon. These precise
+; optical measurements helped maintain navigation accuracy throughout the mission.
+;
+; MKNDX: Mark index (which mark in sequence: 1st, 2nd, etc.)
+; MKT2T1: Time difference between marks for velocity computations
+; MKCDUY/MKCDUS/MKCDUZ/MKCDUT/MKCDUX: CDU (gimbal angle) readings at mark time
+;     (CDUY=outer, CDUS=shaft, CDUZ=inner, CDUT=trunnion, CDUX=middle gimbal)
+;
+; UNSHARED: Cannot be overlaid because marks might occur during other operations
+; DATA TYPE: Gimbal angles in binary CDU units (360° = 2^14 CDU units)
+; SCALING: 1 CDU unit = 0.0220° (360°/2^14)
+; ACCESS: Instantaneous capture at MARK button press, then processed by R5x
+; ----------------------------------------------------------------------------
+
 MKNDX		ERASE
 MKT2T1		ERASE	+1
 MKCDUY		ERASE
@@ -1705,10 +1981,56 @@ MKCDUT		ERASE
 MKCDUX		ERASE
 
 # FOR EXCLUSIVE USE OF SYS TEST STANDARD LEAD INS	(2)
+
+; ----------------------------------------------------------------------------
+; SYSTEM TEST STANDARD LEAD-INS (2 words)
+;
+; Self-test diagnostic routines verified AGC hardware integrity before critical
+; mission phases. These lead-in registers provided entry parameters and result
+; storage for system test sequences.
+;
+; During Apollo 11 pre-launch preparations, extended system tests validated
+; computer health. In-flight tests ran periodically during coast phases to
+; verify continued hardware reliability.
+;
+; EBUF2 +1 (EBUF1 and EBUF2): Buffer registers for test data and results
+; DATA TYPE: General-purpose test parameters and outputs
+; ACCESS: Used by AGC Block II Self-Check routines
+; UNSHARED: Cannot be overlaid with other operations during diagnostic tests
+; ----------------------------------------------------------------------------
+
 EBUF2		ERASE	+1		# B(2) UNSHARED
 
 # Page 74
 # UNSWITCHED FOR DISPLAY INTERFACE ROUTINES.	(10D)
+
+; ----------------------------------------------------------------------------
+; DISPLAY INTERFACE ROUTINES STORAGE (10 words)
+;
+; The DSKY (Display and Keyboard) was the crew's primary interface to the AGC.
+; This storage managed verb/noun display state, flashing alerts, and program
+; alarm codes visible to the astronauts.
+;
+; During Apollo 11's descent, the crew watched the DSKY intently. When the 1202
+; alarm occurred at 102:38:26 mission time, the PROG light flashed and "1202"
+; appeared in the display. Armstrong and Aldrin had seconds to decide whether
+; to abort based on this DSKY indication. These registers held that alarm code.
+;
+; RESTREG: Display restart protection register
+; NVWORD: Current verb/noun word being displayed (e.g., V16N36 for LM position)
+; MARKNV: Marked verb/noun for comparison or recall
+; NVSAVE: Saved verb/noun during display interruptions
+; CADRFLSH: Address of data to be flashed on display
+; CADRMARK: Address marked for special display handling
+; TEMPFLSH: Temporary storage for flash display data
+; FAILREG +2: Three alarm code registers (displayed as PROG alarm on DSKY)
+;     First alarm shown immediately, additional alarms queued
+;
+; UNSWITCHED: Must be in fixed erasable location, not bank-switched
+; DOWNLINK: Order CADRFLSH through FAILREG+2 preserved for telemetry format
+; DATA TYPE: Addresses, noun codes, verb codes, alarm codes
+; ACCESS: Display interface routines, alarm handlers, downlink formatting
+; ----------------------------------------------------------------------------
 
 RESTREG		ERASE			# B(1)PRM FOR DISPLAY RESTARTS.
 NVWORD		ERASE
@@ -1724,6 +2046,42 @@ FAILREG		ERASE	+2		# B(3)PRM 3 ALARM CODE REGISTERS
 
 # VAC AREAS. -- BE CAREFUL OF PLACEMENT --	(220D)
 
+; ----------------------------------------------------------------------------
+; VAC AREAS - VECTOR ACCUMULATOR STORAGE (220 words total: 5 areas × 44 words)
+;
+; The interpreter language (accessed via TC INTPRET) used these Vector
+; ACcumulator areas for all vector/matrix computations. Each VAC area held
+; intermediate results during complex navigation and guidance calculations.
+;
+; During Apollo 11's lunar descent, guidance equations computing landing
+; trajectory operated entirely in interpretive mode, using these VAC areas
+; for position vectors, velocity vectors, and rotation matrices. The famous
+; 1202 alarm resulted partly from high computational load requiring frequent
+; VAC allocation and release.
+;
+; STRUCTURE: 5 identical VAC areas, each containing:
+;   - 1 word: VACnUSE flag (0=available, non-zero=in use by specific routine)
+;   - 43 words: VACn storage (vector/matrix computation workspace)
+;
+; INTERPRETER USAGE:
+;   - VLOAD: Load vector into VAC from memory
+;   - STORE: Store VAC vector result to memory
+;   - VAD/VSU: Vector add/subtract operations between VACs
+;   - UNIT: Normalize vector in VAC
+;   - VXV: Vector cross product
+;   - MXV: Matrix times vector
+;
+; CRITICAL PLACEMENT WARNING: VAC areas must remain at specific addresses
+; because interpreter opcode execution depends on fixed VAC base locations.
+; Moving these assignments would break all interpretive code.
+;
+; ALLOCATION: Managed by interpreter executive through VFINDVAC routine
+; ACCESS: Interpretive mode only (basic instructions cannot access efficiently)
+; PERMANENCE: PRM (permanent allocation throughout mission)
+; SCALING: Vector components typically scaled by 2^29 meters for position,
+;          2^7 meters/centisecond for velocity
+; ----------------------------------------------------------------------------
+
 VAC1USE		ERASE			# B(1)PRM
 VAC1		ERASE	+42D		# B(43)PRM
 VAC2USE		ERASE			# B(1)PRM
@@ -1736,10 +2094,56 @@ VAC5USE		ERASE			# B(1)PRM
 VAC5		ERASE	+42D		# B(43)PRM
 
 # WAITLIST REPEAT FLAG.			(1D)
+
+; ----------------------------------------------------------------------------
+; WAITLIST REPEAT FLAG (1 word)
+;
+; Controls automatic task repetition in the WAITLIST timer scheduler. When a
+; task needs to execute periodically (e.g., every 2 seconds), RUPTAGN signals
+; the WAITLIST to automatically reschedule the task after completion.
+;
+; Also shared as KEYTEMP2 for keyboard processing temporary storage during
+; DSKY input handling.
+;
+; RUPTAGN: Repeat-again flag (non-zero indicates task should be rescheduled)
+; ACCESS: WAITLIST task scheduler, keyboard interrupt handler
+; PERMANENCE: PRM (state must persist across task executions)
+; ----------------------------------------------------------------------------
+
 RUPTAGN		ERASE			# B(1)PRM
 KEYTEMP2	=	RUPTAGN
 
 # STARALIGN ERASABLES.				(13D)
+
+; ----------------------------------------------------------------------------
+; STAR ALIGNMENT ERASABLES (13 words)
+;
+; Star sightings were critical for IMU (Inertial Measurement Unit) alignment.
+; The crew sighted known stars through the sextant or scanning telescope,
+; and the computer calculated spacecraft attitude from star line-of-sight
+; directions.
+;
+; During Apollo 11, Michael Collins performed star alignments in the Command
+; Module while orbiting the Moon. These alignments corrected IMU drift and
+; maintained navigation accuracy for the rendezvous with Eagle after lunar
+; ascent.
+;
+; STARCODE: Star catalog identifier (displayed as Noun 70)
+;   Used by P22 (orbital nav), P51 (IMU alignment), R52/R53 (align routines)
+; STARALGN +11: Complete star alignment computation workspace
+;
+; SINCDU/COSCDU: Sine and cosine of CDU gimbal angles
+;   SINCDUX/COSCDUX: Inner gimbal (X-axis rotation)
+;   SINCDUY/COSCDUY: Middle gimbal (Y-axis rotation)
+;   SINCDUZ/COSCDUZ: Outer gimbal (Z-axis rotation)
+;
+; These trig functions convert IMU gimbal angles to direction cosine matrix
+; for transforming star unit vectors from inertial to spacecraft coordinates.
+;
+; DATA TYPE: Star codes (integers 1-50), double-precision sines/cosines
+; SCALING: Trig values scaled as fractional (-1 to +1 maps to -1 to +0.99999...)
+; ACCESS: P51-P53 alignment programs, R52-R53 marking routines, P22 orbital nav
+; ----------------------------------------------------------------------------
 
 STARCODE	ERASE			# B(1)DSP NOUN 70 FOR P22,51 AND R52,53
 STARALGN	ERASE	+11D
@@ -1756,6 +2160,43 @@ COSCDUZ		=	COSCDU +2
 # PHASE TABLE AND RESTART COUNTERS		(12D)
 # Page 75
 
+; ----------------------------------------------------------------------------
+; PHASE TABLE AND RESTART COUNTERS (12 words)
+;
+; The AGC's restart protection system used phase tables to recover from power
+; transients or computational overloads. Each major program (guidance, control,
+; displays) tracked its execution phase so the computer could resume gracefully
+; after interruption.
+;
+; During the 1202 alarm on Apollo 11's descent, the restart protection system
+; kept the landing program running despite executive overflow. These PHASE
+; registers held the exact state of the guidance computation, allowing seamless
+; recovery without losing critical trajectory data.
+;
+; STRUCTURE: 6 phase register pairs, each containing:
+;   -PHASEn: Negative of phase code (complement used for restart logic)
+;   PHASEn: Current phase code for program group n
+;
+; PHASE CODES encode program state:
+;   - Which major program is running (P63 landing, P12 ascent, P20 rendezvous)
+;   - Subroutine call depth and return points
+;   - Computational iteration count
+;
+; RESTART SEQUENCE:
+;   1. Power transient or alarm detected
+;   2. Computer reads -PHASEn and PHASEn registers
+;   3. Validates phase consistency (PHASEn = complement of -PHASEn)
+;   4. Restores program execution at phase-specific restart point
+;   5. Program continues with minimal data loss
+;
+; CRITICAL MISSION ROLE: Without restart protection, the 1202 alarm would
+; have forced an abort. Phase tables allowed continuous guidance through
+; computational overload.
+;
+; PERMANENCE: PRM (phase state must survive restarts)
+; ACCESS: Restart routines, phase table maintenance, major program entry/exit
+; ----------------------------------------------------------------------------
+
 -PHASE1		ERASE			# B(1)PRM
 PHASE1		ERASE			# B(1)PRM
 -PHASE2		ERASE			# B(1)PRM
@@ -1771,6 +2212,28 @@ PHASE6		ERASE			# B(1)PRM
 
 # A**SR*T STORAGE			(6D)
 
+; ----------------------------------------------------------------------------
+; ASSERT STORAGE - IMU CDU SPOT CHECK (6 words)
+;
+; Self-test verification storage for IMU (Inertial Measurement Unit) gimbal
+; angle readouts. The CDU (Coupling Data Unit) provided digital readouts of
+; the three gimbal angles. These "spot check" values verified CDU hardware
+; integrity during system tests.
+;
+; CDUSPOT +5: Complete 6-word storage for three gimbal angles
+;   CDUSPOTY: Y-axis (middle gimbal) angle storage (double-precision)
+;   CDUSPOTZ: Z-axis (outer gimbal) angle storage (double-precision)
+;   CDUSPOTX: X-axis (inner gimbal) angle storage (double-precision)
+;
+; GIMBAL ANGLE SCALING: Fractional revolutions (-0.5 to +0.5 = -180° to +180°)
+;   Each angle stored as double-precision (2 words) for high accuracy
+;
+; TEST PROCEDURE: System test reads CDU angles, stores in CDUSPOT, compares
+; against expected values to detect CDU hardware failures.
+;
+; ACCESS: System test routines, IMU self-check programs
+; ----------------------------------------------------------------------------
+
 CDUSPOT		ERASE	+5		# B(6)
 
 CDUSPOTY	=	CDUSPOT
@@ -1779,14 +2242,110 @@ CDUSPOTX	=	CDUSPOT +4
 
 # VERB 37 STORAGE			(2D)
 
+; ----------------------------------------------------------------------------
+; VERB 37 STORAGE - MAJOR MODE CHANGE REQUEST (2 words)
+;
+; Verb 37 allowed the crew to request a major mode (program) change via DSKY.
+; The astronaut would key: VERB 37 ENTR, then enter desired program number.
+;
+; CREW USAGE EXAMPLE during Apollo 11:
+;   V37E01E = Request Program 01 (Pre-launch initialization)
+;   V37E63E = Request Program 63 (Lunar landing guidance)
+;   V37E12E = Request Program 12 (Powered ascent from Moon)
+;
+; MINDEX: Temporary index for accessing major mode table
+; MMNUMBER: Requested major mode number (program number 00-99)
+;
+; PROCESSING: Verb 37 validates requested program, checks mission phase
+; compatibility, then transfers control to new major mode.
+;
+; ACCESS: Extended verb routines, major mode control logic
+; PERMANENCE: TMP (temporary during mode change request)
+; ----------------------------------------------------------------------------
+
 MINDEX		ERASE			# B(1)TMP INDEX FOR MAJOR MODE
 MMNUMBER	ERASE			# B(1)TMP MAJOR MODE REQUESTED BY V37
 
 # PINBALL INTERRUPT ACTION		(1D)
 
+; ----------------------------------------------------------------------------
+; PINBALL INTERRUPT ACTION - DISPLAY UPDATE COUNTER (1 word)
+;
+; "Pinball" was the nickname for the DSKY (Display and Keyboard) interface
+; routines. DSPCNT counted pending display updates, managing the queue of
+; information to show the crew.
+;
+; During high-workload periods like lunar descent, multiple programs competed
+; to update the DSKY display. DSPCNT prioritized and sequenced these updates,
+; preventing display conflicts.
+;
+; DSPCNT: Display output counter tracking pending DSKY updates
+;   Non-zero value indicates display updates waiting in queue
+;   Decremented as each display update completes
+;
+; CRITICAL DURING 1202 ALARM: Display system continued updating altitude and
+; velocity despite computational overload, keeping crew informed.
+;
+; ACCESS: Display interface routines (DSPOUT), interrupt handlers
+; PERMANENCE: PRM (display state must persist)
+; ----------------------------------------------------------------------------
+
 DSPCNT		ERASE			# B(1)PRM COUNTER FOR DSPOUT
 
 # PINBALL EXECUTIVE ACTION		(44D)
+
+; ----------------------------------------------------------------------------
+; PINBALL EXECUTIVE ACTION - DSKY STATE MACHINE (44 words)
+;
+; The "Pinball" executive managed all DSKY (Display and Keyboard) interactions,
+; implementing the verb/noun state machine that Armstrong, Aldrin, and Collins
+; used to control the computer throughout the mission.
+;
+; CREW OPERATION SEQUENCE:
+;   1. Press VERB → computer enters verb input mode
+;   2. Enter two digits (e.g., 1 6) → VERBREG holds 16
+;   3. Press ENTR → verb accepted
+;   4. Press NOUN → computer enters noun input mode
+;   5. Enter two digits (e.g., 3 6) → NOUNREG holds 36
+;   6. Press ENTR → noun accepted, verb executes with noun data
+;
+; DURING LUNAR DESCENT: Armstrong monitored altitude and velocity via V16N36
+; (Monitor Decimal, displaying landing radar data). These registers held that
+; verb/noun combination while guidance computed landing trajectory.
+;
+; KEY REGISTERS:
+;   DSPCOUNT: Display position indicator (which digit being entered)
+;   DECBRNCH: Numeric format indicator (+DEC, -DEC, OCT)
+;   VERBREG: Current verb code (01-99)
+;   NOUNREG: Current noun code (01-99)
+;   XREG/YREG/ZREG: Three display register input buffers (R1, R2, R3)
+;     Used for three-line DSKY display (5-digit numeric on each line)
+;   XREGLP/YREGLP/ZREGLP: Low-order parts for decimal conversion
+;     (Double-precision display requires high and low word pairs)
+;   HITEMOUT/LOTEMOUT: Time display formatting (hours, minutes, seconds)
+;   MODREG: Display mode code (normal, flash, blank)
+;   DSPLOCK: Keyboard/subroutine interlock preventing conflicts
+;   REQRET: Return address register for display load operations
+;   LOADSTAT: Status indicator for load testing
+;   CLPASS: Pass indicator for display clear operations
+;   NOUT: Activity counter for DSPTAB (display table)
+;   NOUNCADR: Machine address (CADR) for noun data location
+;   MONSAVE/MONSAVE1/MONSAVE2: Monitor mode storage (saves N/V codes)
+;   DSPTAB +11D: Display panel buffer (12 words: 11 display, 1 lights)
+;   NVQTEM/NVBNKTEM: Noun/verb subroutine calling address and bank
+;   VERBSAVE: Verb code saved during recycle operations
+;   CADRSTOR: ENDIDLE return address storage
+;   DSPLIST: Display system internal waiting register
+;   EXTVBACT: Extended verb activity interlock (prevents multiple extended verbs)
+;   DSPTEM1/DSPTEM2: Buffer storage (DSPTEM1 for time, DSPTEM2 for angles)
+;
+; HISTORICAL CONTEXT: This state machine handled the famous "1202" alarm
+; display while simultaneously updating descent data. The crew's ability to
+; monitor guidance during the alarm was critical to mission success.
+;
+; ACCESS: Display interface routines, extended verb processors, keyboard handlers
+; PERMANENCE: PRM (display state must persist across operations)
+; ----------------------------------------------------------------------------
 
 DSPCOUNT	ERASE			# DISPLAY POSITION INDICATOR
 DECBRNCH	ERASE			# +DEC, -DEC, OCT INDICATOR
@@ -1830,9 +2389,75 @@ NORMTEM1	EQUALS	DSPTEM1		# B(3)DSP NORMAL DISPLAY REGISTERS.
 
 # DISPLAY FOR EXTENDED VERBS		(2D)
 
+; ----------------------------------------------------------------------------
+; DISPLAY FOR EXTENDED VERBS (2 words - shared with DSPTEMX)
+;
+; Extended verbs (V40 and above) required additional display buffer space for
+; complex operations like IMU alignment displays, system tests, and navigation
+; state displays. OPTIONX shared storage with DSPTEMX for option code storage.
+;
+; OPTIONX: Extended verb option code storage
+;   Example: V82 (Request Orbit Parameters) uses N12 option codes to select
+;   specific orbital elements for display (apogee, perigee, inclination, etc.)
+;
+; EXTENDED VERB EXAMPLES:
+;   V40: Zero CDUs (IMU gimbal angle zeroing)
+;   V41: Coarse align IMU (rough platform alignment)
+;   V42: Fine align IMU (precise platform alignment)
+;   V50: Please perform... (crew action request)
+;   V82: Request orbit parameter display (uses OPTIONX with N12)
+;   V83: Request rendezvous parameter display
+;
+; STORAGE: Shares memory with DSPTEMX (2 words)
+; ACCESS: Extended verb processors (V40-V99 handlers)
+; PERMANENCE: TMP (temporary during extended verb execution)
+; ----------------------------------------------------------------------------
+
 OPTIONX		EQUALS	DSPTEMX		# B(2) EXTENDED VERB OPTION CODE  N12(V82)
 
 # TBASE'S AND PHSPRDT'S.		(12D)
+
+; ----------------------------------------------------------------------------
+; TBASE AND PHSPRDT - PHASE TABLE TIME BASES AND PRODUCTS (12 words: 6 pairs)
+;
+; The AGC phase table system tracked mission program phases for restart
+; protection. Each major activity (orbital navigation, burn monitoring, entry)
+; had a TBASE (time base) and PHSPRDT (phase product) pair.
+;
+; TBASE: Absolute time when phase started (scaled in centiseconds)
+;   Used to compute elapsed time within phase
+; PHSPRDT: Phase product code identifying which phase is active
+;   Enables restart logic to resume correct phase after power transient
+;
+; DURING APOLLO 11 DESCENT: When the 1202 alarm occurred at 102:38:26 MET,
+; the restart protection system used these phase tables to preserve guidance
+; computation state. The AGC restarted multiple times during descent, but
+; phase tables ensured the landing program resumed correctly each time.
+;
+; SIX PHASE TABLE PAIRS:
+;   TBASE1/PHSPRDT1: Primary mission program phase (P00-P99)
+;   TBASE2/PHSPRDT2: Secondary program phase (extended verbs, R-routines)
+;   TBASE3/PHSPRDT3: Navigation phase tracking
+;   TBASE4/PHSPRDT4: Guidance computation phase
+;   TBASE5/PHSPRDT5: Control system phase
+;   TBASE6/PHSPRDT6: Display and keyboard phase
+;
+; RESTART SEQUENCE:
+;   1. Power transient occurs (voltage drop, alarm condition)
+;   2. Computer resets, executes FRESH START or RESTART
+;   3. Restart logic reads PHSPRDT codes
+;   4. Each active phase reloaded at point determined by TBASE elapsed time
+;   5. Mission program resumes without crew intervention
+;
+; HISTORICAL SIGNIFICANCE: This restart protection was MIT's critical design
+; contribution. Without it, the 1202 alarms would have forced mission abort.
+; Flight controller Steve Bales' "Go" decision relied on confidence in this
+; restart capability.
+;
+; ACCESS: PHASE TABLE MAINTENANCE routines, RESTART logic
+; SCALING: TBASE in centiseconds (÷100 for seconds)
+; PERMANENCE: PRM (must survive restart to enable recovery)
+; ----------------------------------------------------------------------------
 
 TBASE1		ERASE			# B(1)PRM
 PHSPRDT1	ERASE			# B(1)PRM

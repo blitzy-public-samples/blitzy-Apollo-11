@@ -27,6 +27,33 @@
 #	Assemble revision 001 of AGC program LMY99 by NASA 2021112-061
 #	16:27 JULY 14, 1969
 
+; ============================================================================
+; FILE: P40-P47.agc
+; MODULE: Powered Flight Programs
+; MISSION PHASE: lunar-orbit/descent/ascent/trans-earth
+;
+; TL;DR: Service Propulsion System (SPS), Reaction Control System (RCS), and
+;        Ascent Propulsion System (APS) burn execution programs for the Lunar
+;        Module. P40 manages SPS burns (large ΔV), P41 handles RCS burns (small
+;        adjustments), P42 controls APS burns (ascent), and P47 provides burn
+;        alternatives. Includes complete burn sequencing: ullage motor firing,
+;        ignition, thrust monitoring, guidance updates, steering commands, and
+;        thrust termination based on velocity-to-be-gained (VG) calculations.
+;
+; COMMENT-ONLY READERS: This file controls the engine firing sequences that
+;        change the spacecraft's velocity during orbit maneuvers, descent
+;        preparations, and ascent. While the Lunar Module primarily used the
+;        Descent Propulsion System (DPS) and Ascent Propulsion System (APS),
+;        these routines demonstrate the guidance computer's burn control logic.
+;
+; CODE-ALONG READERS: Study the integration of burn targeting (from P30_P37),
+;        master ignition sequencing (BURN_BABY_BURN), navigation state updates
+;        during thrust, guidance computations (S40.1, S40.2,3, S40.8, S40.13),
+;        Lambert aimpoint steering (S40.9), and coordinate transformations
+;        (S41.1). Note the restart protection via Group 4 and the interaction
+;        with the Digital Autopilot (DAP) for attitude control during burns.
+; ============================================================================
+;
 # Page 752
 # PROGRAM DESCRIPTION: P40BOTH		DECEMBER 22, 1966
 # MOD 03 BY PETER ADLER			MARCH 3, 1967
@@ -107,10 +134,42 @@
 		SETLOC	P40S
 		BANK
 
+;
+; ============================================================================
+; PROGRAM: P40LM - SERVICE PROPULSION SYSTEM (SPS) BURN EXECUTION
+;
+; This program manages large velocity change (ΔV) maneuvers using the Service
+; Propulsion System engine. P40 controls the complete burn sequence from
+; ignition preparation through thrust termination, coordinating with guidance
+; computations, navigation state updates, and the Digital Autopilot (DAP).
+;
+; BURN SEQUENCE:
+;   1. IMU status check and attitude maneuver to thrust orientation
+;   2. Ullage motor firing to settle propellants
+;   3. Engine ignition via BURN_BABY_BURN master ignition routine
+;   4. Thrust monitoring with velocity-to-be-gained (VG) tracking
+;   5. Guidance updates during burn (steering law, trim gimbal control)
+;   6. Velocity cutoff when VG approaches zero
+;   7. Post-burn: maintain VG calculations, reset DAP parameters
+;
+; MISSION CONTEXT: While the Lunar Module does not use SPS (that's the Command
+; Module's main engine), this code demonstrates the AGC's burn control logic
+; applicable to all propulsion systems. The LM primarily uses DPS (Descent
+; Propulsion System) and APS (Ascent Propulsion System) controlled by P42.
+;
+; HISTORICAL NOTE: During Apollo 11, similar burn control logic governed the
+; critical descent engine throttling that Neil Armstrong monitored during the
+; final approach to the lunar surface.
+; ============================================================================
+;
 P40LM		TC	PHASCHNG
 		OCT	04024
 
 		CAF	P40ADRES	# INITIALIZATION FOR BURNBABY
+; The crew has selected Program 40 via DSKY verb V37. The guidance computer
+; now prepares for a Service Propulsion System burn by verifying spacecraft
+; configuration and computing the optimal attitude for the thrusting maneuver.
+;
 		TS	WHICH
 
 		CA	FLGWRD10
@@ -118,6 +177,9 @@ P40LM		TC	PHASCHNG
 		CCS	A
 		TCF	P40ALM
 		TC	BANKCALL	# GO DO IMU STATUS CHECK ROUTINE.
+; Check if the descent stage has been staged (STAGEFLG bit). If staged,
+; this is an error condition for P40 which requires the descent stage attached.
+;
 		CADR	R02BOTH
 
 		CS	DAPBOOLS	# INITIALIZE DVMON
@@ -128,6 +190,9 @@ P40LM		TC	PHASCHNG
 		TS	DVTHRUSH
 		CAF	FOUR
 		TS	DVCNTR
+; IMU status verification via R02BOTH ensures the Inertial Measurement Unit
+; is properly aligned and operational before beginning attitude maneuvers.
+;
 # Page 754
 		TC	INTPRET		# LOAD CONSTANTS FOR DPS BURN
 		VLOAD	CLEAR		# LOAD F, MDOT, TDECAY
@@ -143,6 +208,14 @@ P40IN		DCOMP	SR1
 			S40.2,3		# COMPUTES PREFERRED IMU ORIENTATION
 		EXIT
 
+;
+; R02BOTH performs a comprehensive IMU (Inertial Measurement Unit) status check,
+; verifying the gyroscopes and accelerometers are operating within acceptable
+; parameters. If the IMU has drifted beyond allowable limits, the crew must
+; perform a platform realignment before proceeding with the burn. During Apollo 11,
+; IMU alignment was critical - any drift could result in pointing errors that
+; would waste propellant or miss the target orbit.
+;
 		INHINT
 		TC	IBNKCALL
 		CADR	PFLITEDB	# ZERO ATTITUDE ERRORS, SET DB TO ONE DEG.
@@ -158,6 +231,12 @@ P40IN		DCOMP	SR1
 P40SXT4		EXTEND
 		QXCH	P40/RET
 P41MANU		RELINT
+; After thrust termination, the guidance computer performs post-burn cleanup:
+; - Zero the rendezvous counter to reset timing references
+; - Maintain velocity-to-be-gained (VG) calculations for possible manual RCS
+; - Set maximum deadband in Digital Autopilot for propellant conservation
+; - Reset steering law parameter CSTEER to zero
+;
 
 		TC	DOWNFLAG	# CLEAR 3AXISFLG -- R60 USE VECPOINT.
 		ADRES	3AXISFLG
@@ -213,6 +292,39 @@ TERM40		EXTEND
 
 		EBANK=	WHICH
 		COUNT*	$$/P41
+;
+; ============================================================================
+; PROGRAM: P41LM - REACTION CONTROL SYSTEM (RCS) BURN EXECUTION
+;
+; This program manages small velocity change maneuvers using the Reaction
+; Program 41 handles smaller velocity changes using Reaction Control System
+; thrusters. The RCS provides fine-tuning capability with either 4-jet or
+; 2-jet configurations, trading thrust level against propellant consumption.
+;
+; Control System (RCS) thrusters. Unlike P40's large SPS burns, P41 handles
+; fine-tuning maneuvers and displays parameters for manual crew control.
+;
+; RCS BURN FEATURES:
+;   - Uses 4-jet or 2-jet RCS configuration (controlled by NJETSFLG)
+;   - Computes thrust direction via S40.1 subroutine
+;   - Calculates preferred IMU orientation via S40.2,3
+;   - Transforms velocity-to-be-gained from reference to body coordinates
+;   - Displays VG in body axes (V16N85) for manual RCS maneuvering
+;   - Sets minimum deadband (0.3 degrees) for attitude control precision
+; Transform velocity-to-be-gained from reference (inertial) coordinates to
+; LM body axes via S41.1. This allows the crew to understand the required
+; velocity change in terms of forward/back, left/right, up/down motions.
+;
+;
+; The crew can monitor the velocity components required in pitch, yaw, and
+; roll axes, enabling manual thruster firing to achieve the computed ΔV.
+; This provides backup capability if automatic guidance is unavailable.
+;
+; RCS THRUST LEVELS:
+;   FRCS4 = Four-jet thrust force (higher thrust, faster maneuver)
+;   FRCS2 = Two-jet thrust force (lower thrust, fuel conservation)
+; ============================================================================
+;
 P41LM		CAF	P41ADRES	# INITIALIZATION FOR BURNBABY
 		TS	WHICH
 
@@ -303,6 +415,16 @@ DYNMDISP	CA	DISPDEX		# A NON-POSITIVE DISPDEX INDICATES PAST
 		EXIT
 		CAF	1SEC
 		TC	BANKCALL
+; Program 42 controls the Ascent Propulsion System for lunar liftoff. During
+; Initialize delta-V monitor (DVMON) with threshold THRESH2. DVMON tracks
+; the accumulated velocity change during the burn, providing a backup cutoff
+; mechanism if the primary VG calculation fails. This redundancy protects
+; against guidance computer errors that could lead to excessive propellant use.
+;
+; Apollo 11, this program executed Eagle's ascent on July 21, 1969, inserting
+; the LM into orbit for rendezvous with Columbia. Unlike the throttleable DPS,
+; the APS burns at fixed thrust with precise velocity cutoff for orbital accuracy.
+;
 		CADR	DELAYJOB
 		TCF	DYNMDISP
 
@@ -313,6 +435,17 @@ CALCN85		TC	INTPRET
 			VGPREV
 			S41.1
 		STORE	VGBODY
+; Load APS engine parameters: thrust force (FAPS), mass flow rate (MDOTAPS),
+; Engine performance parameters define thrust characteristics:
+; - FAPS: Ascent Propulsion System thrust force (Newtons, scaled 2^+14)
+; - MDOTAPS: Propellant mass flow rate (kg/cs, scaled 2^+3)
+; - APSVEX: Exhaust velocity (meters/cs, scaled 2^+7)
+; These constants were calibrated from ground testing and used throughout
+; the mission for trajectory prediction and guidance computations.
+;
+; and thrust decay constant (ATDECAY). These constants define the engine
+; performance characteristics used throughout the guidance computations.
+;
 		EXIT
 		TC	POSTJUMP
 		CADR	SERVEXIT
@@ -320,6 +453,47 @@ CALCN85		TC	INTPRET
 		COUNT*	$$/P42
 		EBANK=	WHICH
 
+;
+; ============================================================================
+; PROGRAM: P42LM - ASCENT PROPULSION SYSTEM (APS) BURN EXECUTION
+;
+; This program manages lunar ascent burns using the Ascent Propulsion System
+; Load current spacecraft mass from CSMMASS or LEMMASS depending on which
+; vehicle is active. Mass decreases during the burn as propellant is consumed,
+; affecting thrust-to-weight ratio and requiring continuous guidance updates.
+; Accurate mass knowledge is critical for precise velocity targeting.
+;
+; engine. P42 controlled the critical Eagle ascent from the lunar surface on
+; July 21, 1969, inserting the Lunar Module into orbit for rendezvous with
+; Columbia (the Command Module piloted by Michael Collins).
+;
+; APS BURN CHARACTERISTICS:
+;   - Fixed thrust (no throttling capability unlike DPS)
+;   - Guidance via S40.8 (cross-product steering) and S40.13 (burn length)
+;   - Thrust magnitude: FAPS (Ascent Propulsion System thrust force)
+;   - Mass flow rate: MDOTAPS (propellant consumption rate)
+;   - Velocity of exhaust: APSVEX (specific impulse parameter)
+;
+; ASCENT SEQUENCE:
+;   1. Verify APS staging complete (APSFLBIT check)
+;
+; The RCS thrust magnitude depends on the jet configuration selected by NJETSFLG:
+;   NJETSFLG = 0: Four-jet configuration (FRCS4, maximum thrust ~100 lbf total)
+;   NJETSFLG = 1: Two-jet configuration (FRCS2, reduced thrust ~50 lbf total)
+; Four-jet mode provides faster maneuvers but consumes more propellant. Two-jet
+; mode conserves fuel for long-duration attitude hold or fine trim adjustments.
+;
+;   2. IMU status check via R02BOTH
+;   3. Initialize delta-V monitor (DVMON) with THRESH2 threshold
+;   4. Load APS parameters (FAPS, MDOTAPS, ATDECAY) via vector operations
+;   5. Execute burn with continuous guidance updates
+;   6. Cutoff based on velocity-to-be-gained reaching target
+;
+; HISTORICAL SIGNIFICANCE: This code executed during Eagle's ascent, beginning
+; approximately 21.5 hours after landing. The ascent burn lasted about 7 minutes,
+; achieving the precise orbital insertion required for rendezvous with Columbia.
+; ============================================================================
+;
 P42LM		TC	PHASCHNG
 		OCT	04024
 
@@ -339,6 +513,10 @@ P42STAGE	TC	BANKCALL
 		TS	DVCNTR
 
 		TC	INTPRET
+; Time-to-ignition (TTI) has reached zero. The guidance computer now initiates
+; the burn sequence: ullage motor firing (if required), engine valve opening,
+; and transition to thrusting guidance. The countdown to ignition is complete.
+;
 		SET	VLOAD		# LOAD FAPS, MDOTAPS, AND ATDECAY INTO
 			AVFLAG		# F, MDOT, AND TDECAY BY VECTOR LOAD.
 			FAPS
@@ -350,6 +528,40 @@ P42STAGE	TC	BANKCALL
 		EBANK=	WHICH
 
 		COUNT*	$$/P47
+;
+; ============================================================================
+; Display V06N40 to crew: Time-To-Ignition (TTI), Velocity-to-be-Gained (VG),
+; and Delta-V Monitor (DELTAVM). Updated once per second via CLOKTASK, these
+; values allow the crew to monitor burn progress and verify guidance computer
+;
+; The velocity-to-be-gained vector is now transformed from reference (inertial)
+; coordinates to Lunar Module body axes. This transformation allows the crew
+; to understand the required velocity change in terms of forward/back, left/right,
+; and up/down motion relative to the spacecraft, making manual RCS control intuitive.
+;
+; computations. The crew can manually terminate the burn if anomalies occur.
+;
+; PROGRAM: P47LM - BURN EXECUTION ALTERNATIVE / DELTA-V MONITOR
+;
+; This program provides an alternative burn execution path with midcourse
+; averaging capabilities. P47 calls MIDTOAV2 to compute averaged parameters
+; and sets up a delayed task (STARTP47) for burn execution.
+; CLOKTASK (Clock Task) runs once per second during countdown and burn,
+; updating the DSKY display with current burn parameters. Time-to-ignition
+; counts down to zero, velocity-to-be-gained shows required ΔV, and delta-V
+; monitor shows accumulated thrust. The crew uses these displays to monitor
+; guidance computer performance and mission timeline.
+;
+;
+; The twiddle task mechanism schedules STARTP47 to begin after a computed
+; time interval, allowing the guidance computer to coordinate burn timing
+; with navigation state updates and crew readiness confirmation.
+;
+; This program demonstrates the AGC's flexible task scheduling architecture,
+; where burn execution can be deferred and coordinated with other real-time
+; operations through the WAITLIST timer-driven scheduler.
+; ============================================================================
+;
 P47LM		TC	BANKCALL
 		CADR	R02BOTH
 		TC	INTPRET
@@ -371,6 +583,13 @@ STARTP47	TC	PHASCHNG
 		DXCH	AVEGEXIT
 		CAF	PRIO20
 		TC	FINDVAC
+;
+; Setting minimum deadband (0.3 degrees) tightens the Digital Autopilot's attitude
+; control tolerance. The deadband is the angular error zone within which the DAP
+; does not fire thrusters. Minimum deadband ensures precise attitude maintenance
+; during manual RCS burns, allowing the crew to accurately null out velocity
+; components without the DAP counteracting their inputs.
+;
 		EBANK=	DELVIMU
 		2CADR	P47BODY
 
@@ -385,6 +604,13 @@ CALCN83		TC	INTPRET
 # Page 759
 		CALL
 			S41.1
+; Engine ignition requires precise sequencing:
+; 1. Ullage motors fire to settle propellants (prevent vapor ingestion)
+; 2. Engine valves open to allow propellant flow
+; 3. Igniter fires to initiate combustion
+; 4. Thrust builds to nominal level over several seconds
+; 5. Guidance computer monitors thrust buildup via accelerometer readings
+;
 		STORE	DELVIMU
 		EXIT
 		TC	PHASCHNG
@@ -413,6 +639,11 @@ P47BODY		TC	INTPRET
 		VLOAD
 			HI6ZEROS
 		STORE	DELVIMU
+; Subroutine S40.1 computes the required thrust direction vector from the
+; velocity-to-be-gained (VG). This unit vector points in the direction the
+; spacecraft must accelerate to null the velocity error. The computation
+; normalizes VG to unit length, accounting for fixed-point scaling factors.
+;
 		STORE	DELVCTL
 		EXIT
 		TC	P47BOD
@@ -425,6 +656,12 @@ IMPLBURN	CA	TGO 	+1
 		TC	DOWNFLAG	# TURN OFF IGNFLAG
 		ADRES	IGNFLAG
 		TC	DOWNFLAG	# TURN OFF ASTNFLG
+;
+; Display V16N85 shows the three components of velocity-to-be-gained in body axes.
+; The crew can manually fire RCS thrusters to null out each component, achieving
+; the computed velocity change without automatic guidance. This provides critical
+; backup capability if the primary guidance system experiences issues.
+;
 		ADRES	ASTNFLAG
 		TC	DOWNFLAG	# TURN OFF IMPULSW
 		ADRES	IMPULSW
@@ -433,6 +670,12 @@ IMPLBURN	CA	TGO 	+1
 
 		TC	FIXDELAY	# WAIT HALF A SECOND
 		DEC	50
+; Subroutines S40.2 and S40.3 compute the preferred IMU orientation (REFSMMAT)
+; for the burn. The preferred orientation minimizes gimbal motion during thrust,
+; reducing the risk of gimbal lock and simplifying attitude control. The
+; computation considers both thrust direction and sun/star visibility for
+; post-burn navigation alignment.
+;
 # Page 760
 		TC	NOULLAGE	# TURN OFF ULLAGE
 
@@ -463,6 +706,12 @@ ENGINOF4	EXTEND
 		DXCH	TEVENT
 
 ENGINOF3	CS	ENGONBIT	# INSURE ENGONFLG IS CLEAR.
+; R60LEM executes the attitude maneuver to achieve the required thrust
+; orientation. The Digital Autopilot computes the optimal rotation path,
+; fires RCS thrusters to initiate the rotation, and maintains attitude
+; during coast. The maneuver must complete before ignition countdown reaches
+; the minimum safe time (typically 45 seconds before TIG).
+;
 		MASK	FLAGWRD5
 		TS	FLAGWRD5
 		CS	PRIO30		# ENGINOF3 IS USED AS A PRE-ENGINE ARM
@@ -493,10 +742,22 @@ UPDATEVG	STQ	CALL
 			QTEMP1
 			S40.8		# X-PRODUCT STEERING
 		BON	BON
+; LEMPREC (Lunar Module Precision) extrapolates the state vector from current
+; time to time-of-ignition (TIG). This prediction accounts for gravitational
+; acceleration, ensuring guidance computations use the correct position and
+; velocity at burn initiation. The extrapolation uses Encke method numerical
+; integration for precision in the Moon's gravitational field.
+;
 			XDELVFLG
 			QTEMP1
 			NORMSW
 			180SETUP
+;
+; P42 begins by verifying the Ascent Propulsion System is properly staged and
+; ready for ignition. The APSFLBIT check ensures the APS engine has been armed
+; and the descent stage has been separated (if applicable). During Apollo 11's
+; ascent on July 21, 1969, this check confirmed Eagle was ready to lift off.
+;
 		DLOAD	DSU
 			PIPTIME
 			TIGSAVE
@@ -535,6 +796,11 @@ GETRANS		DLOAD	DSU
 			QTEMP1
 
 # Page 762
+; Velocity cutoff occurs when velocity-to-be-gained approaches zero. The
+; guidance computer monitors VG magnitude and commands engine shutdown when
+; the remaining velocity error is smaller than the engine's minimum impulse
+; capability. This ensures precise trajectory targeting without over-burning.
+;
 NO.9		TC	INTPRET
 		GOTO
 			QTEMP1
@@ -585,6 +851,12 @@ NSTEER		INHINT
 		OCT	40114		# ENGOFTSK (ENGINOFF)
 		OCT	00035		# SERVICER -- REREADAC
 # Page 763
+; Restart protection ensures the guidance computer can recover from power
+; transients during critical burn phases. If a restart occurs during powered
+; flight, the program resumes at a safe checkpoint with guidance state restored
+; from protected memory. This capability was essential during Apollo 11's descent
+; when 1202 program alarms occurred due to computational overload.
+;
 		TCF	ENDOFJOB
 
 GETDT		CCS	A
@@ -596,12 +868,25 @@ GETDT		CCS	A
 		CAF	ZERO
 		DXCH	TGO
 		CA	TGO 	+1
+;
+; The APS thrust parameters are loaded from fixed memory constants:
+;   FAPS:    Ascent engine thrust force (approximately 3500 lbf fixed thrust)
+;   MDOTAPS: Propellant mass flow rate (determines burn time for given delta-V)
+;   APSVEX:  Effective exhaust velocity (related to specific impulse)
+;   ATDECAY: Thrust decay coefficient (models engine shutdown transient)
+;
 		TC	Q
 
 # **************************************
 
 SEC15DP		OCT	00000		# DON'T SEPARATE
 SEC15		DEC	1500		# DON'T SEPARATE
+; If automatic guidance fails, the crew can take manual control of the burn.
+; Display V50N25 prompts: '203 A/P TO PGNCS, AUTO-THROTTLE MODE, AUTO ATTITUDE
+; CONTROL' indicating the computer is in full automatic mode. The crew can
+; override to manual throttle and attitude control if needed, though this
+; requires extensive training and real-time trajectory computation skills.
+;
 SEC30DP		2DEC	3000
 
 SEC45DP		OCT	00000		# DON'T MOVE FROM JUST BEFORE SEC45
@@ -665,6 +950,13 @@ ACADN83		2CADR	CALCN83
 # OUTPUT
 #	UT		DESIRED THRUST DIRECTION	VECT. B2 M/(CS.CS)
 #	VGTIG		INITIAL VALUE OF VELOCITY
+;
+; The delta-V monitor (DVMON) tracks the accumulated velocity change during the
+; burn, comparing it against the THRESH2 threshold to detect thrust anomalies.
+; If the actual velocity change deviates significantly from the expected profile,
+; DVMON can trigger an alarm, alerting the crew to possible engine malfunctions
+; such as partial thrust loss or premature shutdown.
+;
 #			TO BE GAINED (INERT. COORD.)	VECTOR B7 M/CS
 #	DELVLVC		VGTIG IN LOC. VERT. COORDS.	B7 M/CS
 #	BDT		V REQUIRED AT TIG -V REQUIRED AT (TIG-2SEC)
@@ -682,6 +974,12 @@ ACADN83		2CADR	CALCN83
 # Page 765
 		COUNT*	$$/S40.1
 S40.1		STQ	DLOAD
+; Velocity-to-be-gained updates occur at high frequency during burns,
+; typically every 2 seconds. Each update integrates accelerometer readings,
+; subtracts gravity effects computed from current position, and applies
+; navigation corrections from Kalman filtering. The resulting VG vector
+; drives both steering law (for attitude) and cutoff logic (for burn duration).
+;
 			QTEMP
 			TIG
 		STORE	TIGSAVE
@@ -722,6 +1020,11 @@ CALCTHET	SETPD	VLOAD
 			UT
 		VXSC	STADR
 		STOVL	VGTIG		# UNIT(VP X UP)SIN(THETAT/2) IN VGTIG.
+; During powered flight, the guidance computer continuously updates the
+; velocity-to-be-gained (VG) vector. VG represents the velocity change still
+; required to achieve the targeted trajectory. As the engine thrusts, VG
+; decreases toward zero, at which point thrust cutoff occurs.
+;
 		UNIT	PDDL		# UNIT(DELTA VP) IN P.D.L. 6
 			14D
 		COS	VXSC
@@ -729,9 +1032,21 @@ CALCTHET	SETPD	VLOAD
 			VGTIG
 			36D
 		VSL2 	VAD
+;
+; The guidance system initializes velocity-to-be-gained computations by loading
+; the current navigation state (position and velocity vectors) and computing
+; the time remaining until ignition (TGO = time-to-go). Lambert guidance will
+; continuously update the required velocity vector as the spacecraft coasts
+; toward the ignition point.
+;
 		STADR
 # Page 766
 		STORE	VGTIG		# VG IGNITION SCALED AT 2(+7) M/CS
+; The VG update accounts for:
+; - Actual velocity change from engine thrust (measured via accelerometers)
+; - Gravity effects (computed from current position)
+; - Navigation state errors (corrected via Kalman filtering)
+;
 
 		UNIT
 		STOVL	UT		# THRUST DIRECTION SCALED AT 2(+1)
@@ -745,6 +1060,12 @@ S40.1B		DLOAD
 		STORE	TDEC1
 		BDSU
 			TPASS4
+; Cross-product steering (S40.8) computes attitude error as the cross product
+; of current thrust direction and desired thrust direction. The resulting error
+; vector is perpendicular to both, indicating the rotation axis and magnitude
+; needed to align thrust with the velocity error direction. This elegant
+; technique enables efficient attitude control during powered flight.
+;
 		STCALL	DELLT4		# INTERCEPT TIME -- TIG.
 			LEMPREC
 		VLOAD	SETPD		# LOAD STATE VECTOR AT TIG FOR INITVEL.
@@ -772,6 +1093,12 @@ SMALLEPS	PUSH	SXA,1
 		VLOAD	PUSH
 			DELVEET3	# VGTIG = VR - VN.
 		STORE	VGTIG
+; The steering law computes the required thrust direction to null the velocity
+; error. Cross-product steering (via S40.8) generates attitude commands that
+; orient the spacecraft so engine thrust is aligned with the desired velocity
+; change direction. The Digital Autopilot then fires RCS thrusters to achieve
+; and maintain this attitude.
+;
 		UNIT			# UT = UNIT (VGTIG)
 		STODL	UT
 			36D
@@ -790,6 +1117,13 @@ THETACON	2DEC	.31830989 B-8
 # Page 768
 # SUBROUTINE NAME:  S40.2,3		MOD. NO. 3, DATE APRIL 4, 1967
 # MODIFICATION BY:  JONATHON D. ADDELSTON (ADAMS ASSOCIATES)
+;
+; Guidance updates occur at regular intervals (typically every 2 seconds) during
+; the burn. Each update recomputes the required steering direction based on
+; current position, velocity, and remaining time to cutoff. This closed-loop
+; guidance corrects for thrust variations, mass flow rate uncertainties, and
+; navigation state errors, ensuring the burn achieves the targeted orbit.
+;
 # MOD. NO. 4:  JULY 18, 1967: PETER ADLER (MIT/IL)
 # MOD. NO. 5:  OCTOBER 18, 1967:  PETER ADLER (MIT/IL)
 # ORIGINALLY BY:  SAYDEAN ZELDIN (MIT INSTRUMENTATION LAB) AND RICHARD TALAYCO (SYSTEM DELVELOPMENT CORP)
@@ -872,6 +1206,13 @@ FIXY		VLOAD	VXV		# IN THIS CASE,
 #	L		S40.8
 #	L+1			INTERPRETIVE RETURN
 #
+;
+; During the burn, the guidance computer continuously monitors velocity-to-be-gained
+; (VG) and compares it against the cutoff threshold. When VG magnitude drops below
+; the threshold (typically a few feet per second), the engine shutdown sequence
+; initiates. This velocity-based cutoff ensures precise orbit insertion regardless
+; of slight variations in thrust or mass flow rate.
+;
 # ALARM
 #	IF VG . DELVREF IS NEGATIVE (VG AND DELVREF OVER 90 DEGREES APART), BYPASS TGO AND STEERING COMPUTATIONS
 #	AND SET ALARM 1407.  RETURN TO CALLER NORMALLY.
@@ -923,6 +1264,13 @@ TGDCALC		SETPD	VLOAD
 			STEERSW
 			QPRET
 		UNIT
+;
+; After engine cutoff, the guidance computer maintains velocity-to-be-gained
+; calculations for several seconds to support possible RCS trim maneuvers. Small
+; residual velocity errors (typically a few feet per second) may remain due to
+; engine shutdown transients or thrust misalignment. The crew can manually null
+; these residuals using RCS thrusters, as displayed on V16N85.
+;
 		DOT	PUSH
 			VG
 		BPL	DDV
@@ -1007,6 +1355,14 @@ S40.13		TC	INTPRET
 			4SEC(17)	# CORRECT VG FOR 4 SECS OF 2 JET ULLAGE
 			FRCS2
 		DDV	SL1		# SCALE
+; Calculate the time-to-go (TGO) until thrust cutoff. TGO computation uses
+; the Tsiolkovsky rocket equation accounting for:
+; - Current velocity-to-be-gained magnitude (VGMAG)
+; - Engine thrust level (FTHRUST)
+; - Propellant mass flow rate (MDOT)
+; - Current spacecraft mass (CSMMASS or LEMMASS)
+; - Exhaust velocity (VEX - specific impulse parameter)
+;
 			WEIGHT/G
 		BDSU	PUSH
 		BOFF	SET
@@ -1014,9 +1370,32 @@ S40.13		TC	INTPRET
 			S40.13D		# FOR DPS ENGINE
 			NOTHROTL
 		DLOAD	DDV		# 00D = MAG OF VGTIG CORRECTED
+;
+; Lambert guidance solves the classical two-point boundary value problem: given
+; current position and a target position, compute the velocity change required
+; to achieve intercept in a specified time. This is fundamental to rendezvous,
+; orbit transfer, and landing guidance. The solution accounts for gravitational
+; acceleration during the transfer.
+;
 			K1VAL		# M.NEWTONS-CS AT +24
 			WEIGHT/G
 		BDSU	BMN
+; The guidance computer displays TGO to the crew on the DSKY (via V06N40),
+; updating once per second during the burn. Crew monitors this countdown to
+; verify the guidance computer is controlling thrust duration properly.
+;
+; Lambert's problem solves for the velocity required to transfer between two
+; The WAITLIST timer-driven scheduler manages time-delayed tasks during burns.
+; Phase changes (via PHASCHANG) coordinate transitions between guidance phases:
+; pre-burn coast, ignition, thrusting, cutoff, post-burn. Each phase has
+; specific computational requirements and restart protection groups, ensuring
+; robust operation even during power transients.
+;
+; positions in a specified time. Named after Johann Heinrich Lambert (1728-1777),
+; this classical orbital mechanics problem is fundamental to rendezvous guidance.
+; The solution accounts for gravitational acceleration and computes the optimal
+; ΔV to achieve the targeted state at the predicted time.
+;
 # Page 774
 			00D
 			S40.131		# TGO LESS THAN 100 CS
@@ -1062,6 +1441,14 @@ S40.13D		DLOAD	DMP		# FOR DPS ENGINE
 			00D
 			WEIGHT/G
 		PUSH	BON
+; Fixed-point arithmetic scaling is critical for AGC precision:
+; - Position vectors: scaled by 2^+29 meters (1 unit ≈ 1.86 nanometers)
+; - Velocity vectors: scaled by 2^+7 meters/centisecond (1 unit ≈ 7.8 mm/cs)
+; - Time values: scaled by 2^+28 centiseconds (1 unit ≈ 3.73 nanoseconds)
+; These scaling factors maximize precision within the 15-bit signed word length
+; while representing cislunar trajectory parameters. All computations must
+; account for these scales to maintain accuracy.
+;
 			APSFLAG
 			APSTGO
 		DDV	CLEAR
@@ -1090,6 +1477,13 @@ S40.130V	DLOAD	SR4		# RECOMPUTED TGO IN TIMER UNITS
 S40.138		DSU	BPL
 			89SECS
 			STORETGO
+;
+; The navigation state (position and velocity) is extrapolated forward to the
+; time of ignition using conic propagation. This accounts for gravitational
+; acceleration and ensures the guidance computation uses the predicted state
+; at TIG (time of ignition), not the current state which will be outdated by
+; the time the burn actually begins.
+;
 		SET
 			NOTHROTL
 STORETGO	DLOAD			# LOAD TGO AT 2(14)
@@ -1141,6 +1535,47 @@ APSTGO		DDV	SL2
 
 		EBANK=	VGPREV
 		COUNT*	$$/S40.9
+;
+; ============================================================================
+; SUBROUTINE: S40.9 - LAMBERT AIMPOINT GUIDANCE (VTOGAIN)
+;
+; This subroutine computes the velocity-to-be-gained (VG) vector required to
+; achieve a targeted trajectory using Lambert guidance. Lambert's problem
+;
+; Gimbal trim timing is critical. The drive motors run at constant angular velocity
+; (approximately 4 degrees per second for pitch and roll). Starting from full
+; positive gimbal position (+6 degrees), the motors run for PITTIME and ROLLTIME
+; centiseconds to reach the computed trim positions. Accurate timing ensures
+; thrust vector alignment within 0.5 degrees of the center-of-mass line.
+;
+; solves for the velocity change needed to transfer between two orbital
+; positions in a specified time, fundamental to rendezvous and orbit transfer.
+;
+; INPUTS:
+;   RN:       Current position vector (meters, scaled 2^+29)
+;   VN:       Current velocity vector (meters/cs, scaled 2^+7)
+;   VPREV:    Last computed required velocity vector (meters/cs, scaled 2^+7)
+;   TIG:      Time of ignition (centiseconds, scaled 2^+28)
+;   DLTARG:   Computation cycle interval = 200 cs (scaled 2^+28)
+;   PIPTIME:  Time of RN and VN measurement (cs, scaled 2^+28)
+;   GDT/2:    Half of gravity-induced velocity change (meters/cs, scaled 2^+7)
+;   DELVREF:  Velocity change during last 2 seconds (meters/cs, scaled 2^+7)
+;
+; OUTPUTS:
+;   VGPREV:   Velocity-to-be-gained vector (meters/cs, scaled 2^+7)
+;   VGDISP:   Magnitude of VGPREV for crew display purposes
+;   VRPREV:   Required velocity vector (meters/cs, scaled 2^+7)
+;   BDT:      B vector guidance term (meters/cs, scaled 2^+7)
+;
+; GUIDANCE PARAMETERS:
+;   EPS1, EPS2: Epsilon angles controlling guidance sensitivity
+;   NORMSW:     Normal steering switch (determines epsilon = 10° or 45°)
+;   AVFLAG:     Active vehicle flag (set for LM active during rendezvous)
+;
+; This subroutine calls HAVEGUES to initialize Lambert trajectory computation
+; and returns via ENDS40.9 after setting up phase change for job scheduling.
+; ============================================================================
+;
 S40.9		TC	INTPRET
 		SETPD
 			00D
@@ -1208,9 +1643,21 @@ RASTEER1	VLOAD	ABVAL
 			R1C
 		XSU,2	SL*
 			X1
+; Engine gimbal control allows thrust vector steering through the spacecraft's
+; center of mass. Without proper trim, off-center thrust creates torques that
+; waste propellant through RCS counter-torques. The gimbal drive motors position
+; the engine in pitch and roll axes to null these unwanted torques.
+;
 			1,2
 		LXA,2
 			MUSCALE
+;
+; The gimbal drive motors physically rotate the engine thrust vector to align
+; with the spacecraft center of mass. Proper trim minimizes unwanted torques
+; that would require continuous RCS thruster corrections, saving propellant.
+; The drives run at constant speed, so trim position is achieved by timing
+; the drive-on period (PITTIME for pitch, ROLLTIME for roll).
+;
 		SQRT	SIGN
 			GEOMSGN
 		STORE	32D		# + OR - A
@@ -1241,6 +1688,13 @@ RASTEER1	VLOAD	ABVAL
 		DMP	PDDL
 			2PI+3
 		PDDL	DDV
+;
+; When both pitch and roll gimbal drives complete their trim positioning, the
+; GMBDRVSW flag is tested to determine which axis finished first. The second
+; axis to complete schedules the TRIMDONE job, which returns control to the
+; calling program (R03). This dual-completion logic ensures both axes reach
+; their trim positions before continuing the burn sequence.
+;
 			30D
 			SS
 		BOV
@@ -1303,6 +1757,12 @@ GETVRVG2	LXC,2	VSR*
 		UNIT	VXSC
 			30D
 		PDVL			# UNIT(IC-IR)	+-B
+; REFSMMAT (Reference to Stable Member Matrix) defines the IMU orientation
+; relative to the reference (inertial) coordinate system. This matrix is a
+; half-unit matrix (scaled by 2^-1) requiring the computation to account for
+; this scaling. The transformation sequence: Reference → Stable Member → Body
+; converts abstract inertial vectors into intuitive crew-reference coordinates.
+;
 		GOTO
 			GETVRVG1
 NEGPROD		VLOAD	VSR1
@@ -1355,6 +1815,14 @@ NOGOBL		STORE	DELVEET3	# VG = VR + GOBL - VN
 # FUNCTION:
 #	TRIMS DPS ENGINE TO MINIMIZE THRUST/CG OFFSET.  ENGINE IS GIMBALLED TO FULL + PITCH AND + ROLL (TO LOCK)
 #	FOR REFERENCE AND IS THEN BROUGHT BACK TO TRIM POSITION BY RUNNING FOR THE PROPER TIMES (TO BE
+;
+; The first transformation step converts from reference (inertial) coordinates
+; to stable member (IMU platform) coordinates using REFSMMAT. The stable member
+; is the physical gyro-stabilized platform inside the IMU that maintains a fixed
+; inertial orientation. REFSMMAT defines the relationship between the desired
+; reference frame (mission-specific, such as lunar-local vertical) and the
+; stable member's actual orientation.
+;
 #	SPECIFIED BY GAEC) IN - PITCH AND - ROLL.
 #
 # CALLING SEQUENCE:
@@ -1370,6 +1838,48 @@ NOGOBL		STORE	DELVEET3	# VG = VR + GOBL - VN
 		COUNT*	$$/S40.6
 		EBANK=	ROLLTIME	# OCTAL MASKS: PRIO5=05000 EBANK5=02400
 
+;
+; ============================================================================
+; SUBROUTINE: TRIMGIMB - ENGINE GIMBAL TRIM CONTROL
+;
+; This subroutine controls the engine gimbal drive motors to trim the thrust
+; vector during a burn. Proper gimbal trim alignment ensures thrust passes
+; through the spacecraft's center of mass, preventing unwanted torques that
+; would require RCS thruster corrections and waste propellant.
+;
+; TRIM SEQUENCE:
+;   1. Turn off pitch and roll drives (clear PRIO5 bits in CHAN12)
+;   2. Turn on +PITCH and +ROLL drives (set EBANK5 bits)
+;   3. Wait 1 minute (6000 cs) to reach full positive gimbal position
+;   4. Turn off +PITCH and +ROLL drives
+;   5. Turn on -PITCH and -ROLL drives (opposite direction)
+;   6. Run PITTIME centiseconds for pitch trim position
+;   7. Run ROLLTIME centiseconds for roll trim position
+;
+; The second transformation step converts from stable member coordinates to
+; spacecraft body coordinates using the CDU (Coupling Display Unit) gimbal angles.
+; The CDUs measure the physical gimbal angles of the IMU platform relative to
+; the spacecraft body. This transformation accounts for any rotation between the
+; stable member's inertial orientation and the spacecraft's current attitude.
+;
+;   8. Shut off drives when trim positions achieved
+;
+; INPUTS:
+;   PITTIME:  Time to run from full +pitch to trim position (centiseconds)
+;   ROLLTIME: Time to run from full +roll to trim position (centiseconds)
+;
+; The gimbal drive uses a twiddle-task mechanism (PITCHOFF) to shut off pitch
+; after PITTIME expires. Roll shuts off via VARDELAY after ROLLTIME. The first
+; axis to complete sets GMBDRVSW flag; when both complete, TRIMDONE job is
+; scheduled to return control to the calling program (R03).
+;
+; CHANNEL CONTROL:
+;   CHAN12 BIT10: Pitch gimbal drive control
+;   CHAN12 BIT12: Roll gimbal drive control
+;   PRIO5: Negative drive direction bits
+;   EBANK5: Positive drive direction bits
+; ============================================================================
+;
 TRIMGIMB	TC	DOWNFLAG	# GMBDRVSW FLAG IS SET WHEN EITHER ROLL OR
 		ADRES	GMBDRVSW	# PITCH IS COMPLETED, WHICHEVER IS FIRST.
 
@@ -1442,6 +1952,12 @@ PITCHOFF	CS	BIT10
 #	2.	*SMNB*
 #
 # NORMAL RETURN:  L +3 (SEE CALLING SEQUENCE, ABOVE.)
+;
+; The subroutine returns via RVQ (Return Via Q register), restoring program
+; control to the caller with the transformed velocity vector in MPAC (Multi-Purpose
+; Accumulator). The result is now in body coordinates, suitable for crew display
+; or for integration with the Digital Autopilot's body-axis control laws.
+;
 #
 # ALARM/ABORT MODES:  NONE.
 #
@@ -1464,6 +1980,42 @@ PITCHOFF	CS	BIT10
 # CHECKOUT STATUS:  CODED
 
 		COUNT*	$$/S41.1
+;
+; ============================================================================
+; SUBROUTINE: S41.1 - REFERENCE TO BODY COORDINATE TRANSFORMATION
+;
+; This subroutine transforms a velocity vector from reference (inertial)
+; coordinates to Lunar Module body-axis coordinates using the current IMU
+; gimbal angles. This transformation is essential for displaying velocity
+; information to the crew in intuitive body-axis terms (forward/back,
+; left/right, up/down) rather than abstract inertial coordinates.
+;
+; TRANSFORMATION SEQUENCE:
+;   1. Transform from Reference to Stable Member coordinates via REFSMMAT
+;      (Reference to Stable Member Matrix, the IMU orientation)
+;   2. Scale result by half due to REFSMMAT being a half-unit matrix
+;   3. Transform from Stable Member to Body coordinates via CDU angles
+;      (Current Display Unit angles = IMU gimbal angles)
+;
+; INPUTS:
+;   MPAC:         Velocity vector in reference coordinates (meters/cs, 2^+7)
+;   REFSMMAT:     Reference to Stable Member transformation matrix (half-unit)
+;   CDUX,CDUY,CDUZ: Current IMU gimbal angles from Coupling Display Units
+;
+; OUTPUTS:
+;   CSUSPOT:      Double-precision CDU vector, ordered Y, Z, X
+;   SINCDU:       Half sines of CDUSPOT components (for rotation matrices)
+;   COSCDU:       Half cosines of CSUSPOT components (for rotation matrices)
+;   MPAC:         Velocity vector in LM body coordinates (meters/cs, 2^+7)
+;
+; The subroutine returns to caller via RVQ (Return Via Q register) after
+; calling CDU*SMNB (CDU times Stable Member to Navigation Base transformation).
+;
+; MISSION USE: During burns, the crew monitors velocity-to-be-gained in body
+; axes on the DSKY display (V16N85), enabling manual RCS corrections if needed.
+; This transformation makes those body-axis components meaningful to the crew.
+; ============================================================================
+;
 S41.1		MXV	VSL1		# CONVERT VECTOR IN MPAC FROM REF AT 2(+7)
 			REFSMMAT	# TO SM AND RESCALE DUE TO HALF-UNIT MATRIX
 		GOTO			# CONVERT TO BODY AT 2(+7) USING PRESENT

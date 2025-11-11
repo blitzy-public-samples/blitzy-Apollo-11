@@ -28,40 +28,132 @@
 #			Colossus 2A
 
 # Page 1207
+
+; ============================================================================
+; FILE: SINGLE_PRECISION_SUBROUTINES.agc
+; MODULE: CHIEFTAN Subsystem (Core OS)
+; MISSION PHASE: all-phases
+;
+; TL;DR: Single-precision trigonometric subroutines (sine and cosine) using
+;        polynomial approximation. Provides computationally efficient trig
+;        functions for navigation, guidance, and attitude calculations
+;        throughout all Apollo 11 mission phases.
+;
+; COMMENT-ONLY READERS: This file provides basic trigonometric functions
+;        (sine and cosine) used throughout the mission for spacecraft
+;        navigation and orientation calculations.
+; CODE-ALONG READERS: Study polynomial approximation algorithms, argument
+;        range reduction techniques, and single-precision fixed-point
+;        trigonometric computation optimized for AGC constraints.
+; ============================================================================
+
 		BLOCK	02
 # SINGLE PRECISION SINE AND COSINE
 
 		COUNT	02/INTER
+
+; ============================================================================
+; SINGLE PRECISION TRIGONOMETRIC FUNCTIONS
+;
+; These subroutines compute sine and cosine values using polynomial
+; approximation optimized for the AGC's single-precision arithmetic.
+; Used extensively in navigation state updates, attitude computations,
+; and coordinate frame transformations throughout the mission.
+;
+; For comment-only readers: The spacecraft computer needs to calculate
+; angles for determining orientation in space and computing orbital paths.
+; These mathematical functions provide those angle calculations.
+;
+; For code-along readers: Implementation uses Chebyshev polynomial
+; approximation with argument range reduction to [-PI/4, +PI/4] for
+; optimal accuracy within 15-bit single-precision constraints.
+; ============================================================================
+
+; SPCOS - Single Precision Cosine
+; Entry: Accumulator (A) contains argument scaled at PI (1.0 = 180 degrees)
+; Exit: A contains cosine result scaled at 1.0 (range -1.0 to +1.0)
+; Method: Converts cos(x) to sin(x + PI/2) then calls SPSIN algorithm
+
 SPCOS		AD	HALF		# ARGUMENTS SCALED AT PI
-SPSIN		TS	TEMK
-		TCF	SPT
-		CS	TEMK
-SPT		DOUBLE
-		TS	TEMK
-		TCF	POLLEY
-		XCH	TEMK
-		INDEX	TEMK
-		AD 	LIMITS
-		COM
-		AD	TEMK
-		TS	TEMK
-		TCF	POLLEY
-		TCF	ARG90
-POLLEY		EXTEND
-		MP	TEMK
-		TS	SQ
-		EXTEND
-		MP	C5/2
-		AD	C3/2
-		EXTEND
-		MP	SQ
-		AD	C1/2
-		EXTEND
-		MP	TEMK
-		DDOUBL
-		TS	TEMK
-		TC	Q
-ARG90		INDEX	A
-		CS	LIMITS
+					# Add PI/2 (HALF = 0.5 at PI scaling)
+					# Implements cos(x) = sin(x + PI/2)
+
+; SPSIN - Single Precision Sine  
+; Entry: Accumulator (A) contains argument scaled at PI
+; Exit: A contains sine result scaled at 1.0
+; Method: Range reduction followed by polynomial evaluation
+
+SPSIN		TS	TEMK		# Store argument in temporary location
+		TCF	SPT		# Transfer to range reduction logic
+		CS	TEMK		# Complement for negative argument handling
+; SPT - Sine/Cosine Argument Range Reduction
+; Reduces arbitrary angle arguments to range [-PI/4, +PI/4] for accurate
+; polynomial approximation. The AGC's fixed-point arithmetic requires
+; keeping intermediate values within representable bounds.
+
+SPT		DOUBLE			# Scale argument by 2
+		TS	TEMK		# Store doubled argument
+		TCF	POLLEY		# Branch if in primary range
+		XCH	TEMK		# Exchange for range mapping
+		INDEX	TEMK		# Indexed addressing for quadrant
+		AD 	LIMITS		# Add quadrant-specific limit
+		COM			# Complement for reflection
+		AD	TEMK		# Add back argument
+		TS	TEMK		# Store reduced argument
+		TCF	POLLEY		# Proceed to polynomial evaluation
+		TCF	ARG90		# Handle special 90-degree case
+; POLLEY - Polynomial Evaluation for Sine/Cosine
+; Computes sine using Chebyshev polynomial approximation:
+; sin(x) ≈ x * (C1/2 + x² * (C3/2 + x² * C5/2))
+; This nested form (Horner's method) minimizes multiplications.
+;
+; For comment-only readers: This routine performs the mathematical
+; calculation of the sine function using a formula that approximates
+; the true sine value with high accuracy.
+;
+; For code-along readers: Coefficients C1/2, C3/2, C5/2 are scaled
+; Chebyshev polynomial coefficients stored in fixed memory. The
+; algorithm computes x², then evaluates the nested polynomial form
+; from innermost to outermost terms for numerical stability.
+
+POLLEY		EXTEND			# Enable multiply mode
+		MP	TEMK		# Multiply A by argument (x)
+		TS	SQ		# Store x² (argument squared)
+		EXTEND			# Enable multiply mode
+		MP	C5/2		# Multiply by 5th-order coefficient
+		AD	C3/2		# Add 3rd-order coefficient
+		EXTEND			# Enable multiply mode
+		MP	SQ		# Multiply by x²
+		AD	C1/2		# Add 1st-order coefficient
+		EXTEND			# Enable multiply mode
+		MP	TEMK		# Multiply by x (final scaling)
+		DDOUBL			# Double for proper scaling
+		TS	TEMK		# Store final result
+		TC	Q		# Return to caller (Q = return address)
+; ARG90 - Special Case Handler for 90-Degree Arguments
+; When argument equals exactly ±90 degrees (±PI/2), polynomial approximation
+; becomes unstable. This routine returns exact values: sin(90°) = +1,
+; sin(-90°) = -1, avoiding numerical precision issues.
+
+ARG90		INDEX	A		# Use A as index for sign determination
+		CS	LIMITS		# Complement of limit gives ±1
 		TC	Q		# RESULT SCALED AT 1
-# SPROOT WAS DELETED IN REV 51 OF MASTER. ASS. CONT. HAS CARDS.
+					# Return exact ±1.0 for 90-degree args
+
+; ============================================================================
+; HISTORICAL NOTE: Single Precision Square Root (SPROOT)
+;
+; A single-precision square root subroutine originally existed in this file
+; but was removed in Revision 51 of the master AGC program. The Assembly
+; Contractor retained the implementation on punched cards for reference.
+;
+; For comment-only readers: An earlier version included a square root
+; function, but it was removed before the Apollo 11 mission, likely because
+; the interpretive language provided sufficient square root capability.
+;
+; For code-along readers: The deletion suggests that double-precision square
+; root operations via the interpreter (SQRT opcode) provided adequate
+; accuracy for mission requirements, making single-precision implementation
+; redundant. This reflects the AGC development team's ongoing optimization
+; to fit functionality within the 36K ROM constraint.
+; ============================================================================

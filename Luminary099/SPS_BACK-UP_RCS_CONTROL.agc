@@ -26,6 +26,24 @@
 #	Assemble revision 001 of AGC program LMY99 by NASA 2021112-061
 #	16:27 JULY 14, 1969
 
+; ============================================================================
+; FILE: SPS_BACK-UP_RCS_CONTROL.agc
+; MODULE: Digital Autopilot (DAPS)
+; MISSION PHASE: Not used in LM operations (CM functionality for code commonality)
+;
+; TL;DR: Implements backup RCS (Reaction Control System) jet control during 
+;        SPS (Service Propulsion System) engine burns to maintain spacecraft 
+;        attitude. This is Command Module functionality included in Lunar Module
+;        code for software commonality but not operationally used during lunar
+;        missions since the LM does not have an SPS engine.
+;
+; COMMENT-ONLY READERS: This code would control small attitude-control thrusters
+;        during main engine burns on the Command Module. Skip this file as it
+;        wasn't used during Eagle's lunar landing mission.
+; CODE-ALONG READERS: Study phase plane control logic with rate deadbands,
+;        coast zones, and inhibition counters. Note CM/LM code-sharing strategy.
+; ============================================================================
+
 # Page 1507
 # PROGRAM NAME:		SPSRCS
 # AUTHOR:		EDGAR M. OSHIKA (AC ELECTRONICS)
@@ -92,6 +110,17 @@
 #
 # OUTPUT:		TJP, TJV, TJU
 
+; ============================================================================
+; TRANSITION: SPS Backup RCS Control Logic Implementation
+;
+; This section implements a sophisticated phase plane controller for RCS jets
+; during SPS burns. Although this code resides in the Lunar Module software,
+; it controls Command Module behavior and would not execute during lunar 
+; operations. The controller prevents attitude disturbances during main engine
+; burns by firing RCS jets with carefully designed deadbands and inhibition
+; logic to avoid excessive jet cycling.
+; ============================================================================
+
 		BANK	21
 		SETLOC	DAPS4
 		BANK
@@ -99,96 +128,169 @@
 		COUNT*	$$/DAPBU
 
 		EBANK=	TJU
+
+; Rate limit constant for coast zone boundary test (1.125 degrees per second).
+; Used to define the inner boundary of the control deadband.
 RATELIM2	OCT	00632		# 1.125 DEG/SEC
+
+; Positive thrust command entry point. Sets jet firing time to +0.5 (HALF)
+; to command RCS jets to fire in the positive direction for attitude correction.
 POSTHRST	CA	HALF
 
 		NDX	AXISCTR
 		TS	TJU
+
+; Inhibition logic prevents rapid jet reversals that could destabilize the
+; spacecraft. OLDSENSE tracks the previous jet firing direction (positive,
+; negative, or zero). This logic checks if the new command reverses direction.
 		CCS	OLDSENSE
 		TCF	POSCHECK	# JETS FIRING POSITIVELY
 		TCF	CTRCHECK	# JETS OFF.  CHECK INHIBITION CTR
+
+; Check if jets firing negatively should continue or be inhibited.
+; If commanded jet time has opposite sign from current firing, set inhibition
+; counter to prevent immediate reversal.
 NEGCHECK	INDEX	AXISCTR		# JETS FIRING NEGATIVELY
 		CS	TJU
 		CCS	A
 		TC	Q		# RETURN
 		TCF	+2
 		TCF	+1		# JETS COMMANDED OFF.  SET CTR AND RETURN
+
+; Set inhibition counter when jet firing reversal is commanded.
+; Counter prevents jets from reversing direction immediately, which would
+; waste propellant and potentially excite structural bending modes.
 SETCTR		INDEX	AXISCTR		# JET FIRING REVERSAL COMMANDED.  SET CTR,
 		CA	UTIME		# SET JET TIME TO ZERO, AND RETURN
 # Page 1509
 		INDEX	AXISCTR
 		TS	UJETCTR
+		
+; Zero the jet time command. Used when inhibition logic prevents firing
+; or when jets need to be turned off during deadband transitions.
 ZAPTJ		CA	ZERO
 		INDEX	AXISCTR
 		TS	TJU
 		TC	Q
+
+; Check jets firing positively for potential reversal or inhibition.
 POSCHECK	INDEX	AXISCTR
 		CA	TJU
 		TCF	NEGCHECK +2
+
+; Check the jet inhibition counter to see if firings should be prevented.
+; Counter is decremented each DAP pass and prevents jet commands when positive.
 CTRCHECK	INDEX	AXISCTR		# CHECK JET INHIBITION COUNTER
 		CCS	UJETCTR
 		TCF	+2
 		TC	Q		# CTR IS NOT POSITIVE.  RETURN
 		TCF	ZAPTJ		# CTR IS POSITIVE.  INHIBIT FIRINGS
 		TC	Q		# CTR IS NOT POSITIVE.  RETURN
-		OCT	00004
-UTIME		OCT	00012
-		OCT	00012
-OLDSENSE	EQUALS	DAPTREG1
+
+; Inhibition counter time constants (octal values).
+; These define how many DAP cycles jets remain inhibited after reversal.
+		OCT	00004		; P-axis inhibition time
+UTIME		OCT	00012		; U-axis inhibition time (10 decimal)
+		OCT	00012		; V-axis inhibition time (10 decimal)
+
+OLDSENSE	EQUALS	DAPTREG1	; Previous jet firing sense storage
+
+; ============================================================================
+; Jets firing negatively: Set OLDSENSE negative and perform rate deadband test.
+; The rate deadband prevents jets from firing when angular rate is close to
+; the target rate, reducing propellant consumption and jet cycling.
+; ============================================================================
 NEGFIRE		CS	ONE		# JETS FIRING NEGATIVELY
 		TS	OLDSENSE
 		CA	EDOT
 		TCF	+4
+
+; Jets firing positively: Set OLDSENSE positive and perform rate deadband test.
 PLUSFIRE	CA	ONE
 		TS	OLDSENSE
 		CS	EDOT		# RATE DEAD BAND TEST
-		LXCH	A
+
+; Rate deadband test checks if current angular rate is within acceptable
+; tolerance of target rate. Target rate depends on flight mode (drifting or not).
+		LXCH	A		; Save rate in L register
 		CS	DAPBOOLS	# IF DRIFTBIT = 1, USE ZERO TARGET RATE
 		MASK	DRIFTBIT	# IF DRIFTBIT = 0, USE 0.10 RATE TARGET
-		CCS	A
-		CA	RATEDB1
-		AD	L
+		CCS	A		; Check drift mode
+		CA	RATEDB1		; Load 0.101 deg/sec target rate for powered flight
+		AD	L		; Add to rate
 		EXTEND
-		BZMF	SPSSTART
-		TCF	POSTHRST +3
+		BZMF	SPSSTART	; If within deadband, go to outer rate limit test
+		TCF	POSTHRST +3	; Outside deadband, keep jets firing
 
-SPSRCS		INDEX	AXISCTR		# JET SENSE TEST
-		CCS	TJU
-		TCF	PLUSFIRE	# JETS FIRING POSITIVELY
-		TCF	+2
-		TCF	NEGFIRE		# JETS FIRING NEGATIVELY
-		TS	OLDSENSE	# JETS OFF
-SPSSTART	CA	EDOT		# OUTER RATE LIMIT TEST
+; ============================================================================
+; SPSRCS: Main entry point - Jet Sense Test (Phase Plane Logic Phase 1)
+; Determines current jet firing direction by examining jet time command (TJU).
+; Branches to appropriate control logic based on firing state.
+; ============================================================================
+SPSRCS		INDEX	AXISCTR		# JET SENSE TEST (axis P, U, or V)
+		CCS	TJU		; Check current jet time: + / +0 / -0 / -
+		TCF	PLUSFIRE	# JETS FIRING POSITIVELY (TJU > 0)
+		TCF	+2		; TJU = +0, jets not firing
+		TCF	NEGFIRE		# JETS FIRING NEGATIVELY (TJU < 0)
+		TS	OLDSENSE	# JETS OFF (TJU = 0), store zero in OLDSENSE
+
+; ============================================================================
+; SPSSTART: Outer Rate Limit Test and Coast Zone Test
+; Phase plane logic phases 3-4: Checks if angular rate exceeds safe limits
+; (1.73 deg/sec) and determines coast zone boundaries for fuel-efficient control.
+; ============================================================================
+SPSSTART	CA	EDOT		# OUTER RATE LIMIT TEST (Phase 3)
 		EXTEND
-		MP	RATELIM1
-		CCS	A
-		TCF	NEGTHRST	# OUTER RATE LIMIT EXCEEDED
-		TCF	+2
-		TCF	POSTHRST	# OUTER RATE LIMIT EXCEEDED
+		MP	RATELIM1	; Multiply rate by 1.73 deg/sec limit constant
+		CCS	A		; Check if |EDOT| > 1.73 deg/sec
+		TCF	NEGTHRST	# OUTER RATE LIMIT EXCEEDED (rate too negative)
+		TCF	+2		; Within limits, continue to coast test
+		TCF	POSTHRST	# OUTER RATE LIMIT EXCEEDED (rate too positive)
+
+; Coast Zone Test (Phase 4): Determines if spacecraft state (attitude error E
+; and rate EDOT) lies within acceptable coast zone boundaries. The phase plane
+; is divided by lines E + 4*EDOT = ±DKDB (typically ±1.4 degrees).
 		CA	EDOT		# COAST ZONE TEST
 # Page 1510
-		AD	E
+		AD	E		; Form E + EDOT
 		EXTEND
 		MP	DKDB		# PAD LOADED DEADBAND.  FRESHSTART: 1.4 DEG
-		EXTEND
-		BZF	TJZERO
+		EXTEND			; Compute (E + EDOT) * DKDB
+		BZF	TJZERO		; If exactly on boundary, zero jet time
 
+; Test which side of phase plane boundaries the state lies on, and whether
+; rate is within inner boundary (±1.125 deg/sec from RATELIM2).
 		EXTEND
-		BZMF	+7
-		CA	EDOT
-		AD	RATELIM2
+		BZMF	+7		; Branch if state below upper boundary
+		CA	EDOT		; State above upper boundary line
+		AD	RATELIM2	; Check if EDOT < -1.125 deg/sec
 		EXTEND
-		BZMF	TJZERO
-NEGTHRST	CS	HALF
-		TCF	POSTHRST +1
- +7		CS	RATELIM2
-		AD	EDOT
+		BZMF	TJZERO		; Rate too fast negative, don't fire
+		
+; State above line, rate OK: Command negative jet thrust to reduce error.
+NEGTHRST	CS	HALF		; Load -0.5 for negative jet time
+		TCF	POSTHRST +1	; Skip to storage
+
+; State below lower boundary line: Check rate limits for positive thrust.
+ +7		CS	RATELIM2	; Load -1.125 deg/sec limit
+		AD	EDOT		; Check if EDOT > +1.125 deg/sec
 		EXTEND
-		BZMF	POSTHRST
+		BZMF	POSTHRST	; Rate OK, command positive thrust
+
+; Jet time set to zero when state is in coast zone or rate limit violated.
 TJZERO		CA	ZERO
-		TCF	POSTHRST +1
+		TCF	POSTHRST +1	; Skip to storage
 
+; ============================================================================
+; Phase plane controller constants assigned from other memory locations.
+; These define outer rate limits and deadband parameters for the control law.
+; ============================================================================
+; RATELIM1: Outer rate limit (1.73 deg/sec) for emergency rate damping.
+; Assigned to CALLCODE location (octal 00032) for memory efficiency.
 RATELIM1	=	CALLCODE	# = 00032, CORRESPONDING TO 1.73 DEG/SEC
+
+; RATEDB1: Target rate deadband (0.101 deg/sec) used during powered flight
+; when DRIFTBIT = 0. Assigned to TBUILDFX location (octal 00045).
 RATEDB1		=	TBUILDFX	# = 00045, CORRESPONDS TO 0.101 DEG/SEC
 
 # *** END OF LMDAP  .015 ***

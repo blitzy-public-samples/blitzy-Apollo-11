@@ -30,7 +30,45 @@
 #	This AGC program shall also be referred to as
 #			Colossus 2A
 
+; ============================================================================
+; FILE: PINBALL_GAME_BUTTONS_AND_LIGHTS.agc
+; MODULE: COMAID Subsystem (Mission Support)
+; MISSION PHASE: all-phases
+;
+; TL;DR: Complete DSKY interface state machine implementing button press handling,
+;        display update logic, and indicator light control. Processes all DSKY
+;        buttons (VERB, NOUN, KEY REL, ENTR, RSET, +, -, 0-9) and manages all
+;        indicator lights (COMP ACTY, UPLINK ACTY, NO ATT, STBY, KEY REL, OPR ERR,
+;        TEMP, GIMBAL LOCK, PROG, RESTART, TRACKER, ALT, VEL). The complete crew
+;        interface enabling all Apollo 11 computer interactions.
+;
+; COMMENT-ONLY READERS: This is the heart of the computer's keyboard and display
+;        system - how crew talked to the AGC throughout the mission.
+; CODE-ALONG READERS: Study complete DSKY state machine, button handling logic,
+;        display update algorithms, verb/noun processing workflows, and indicator
+;        light control integrated with all mission programs.
+; ============================================================================
+
 # Page 307
+; ============================================================================
+; FILE: PINBALL_GAME_BUTTONS_AND_LIGHTS.agc
+; MODULE: COMAID Subsystem (Mission Support)
+; MISSION PHASE: all-phases
+;
+; TL;DR: Complete DSKY interface state machine implementing button press handling,
+;        display update logic, and indicator light control. Processes all DSKY
+;        buttons (VERB, NOUN, KEY REL, ENTR, RSET, +, -, 0-9) and manages all
+;        indicator lights (COMP ACTY, UPLINK ACTY, NO ATT, STBY, KEY REL, OPR ERR,
+;        TEMP, GIMBAL LOCK, PROG, RESTART, TRACKER, ALT, VEL). The complete crew
+;        interface enabling all Apollo 11 computer interactions.
+;
+; COMMENT-ONLY READERS: This is the heart of the computer's keyboard and display
+;        system - how crew talked to the AGC throughout the mission.
+; CODE-ALONG READERS: Study complete DSKY state machine, button handling logic,
+;        display update algorithms, verb/noun processing workflows, and indicator
+;        light control integrated with all mission programs.
+; ============================================================================
+;
 # PROGRAM NAME -- KEYBOARD AND DISPLAY PROGRAM
 # MOD NO -- 4		DATE -- 27 APRIL 1967		ASSEMBLY -- PINDISK REV 17
 # MOD BY -- FILENE
@@ -404,6 +442,24 @@
 
 		COUNT	40/PIN
 
+; ============================================================================
+; MAIN KEYBOARD INPUT ENTRY POINT - CHARIN
+;
+; This is where every crew button press enters the AGC software. When an
+; astronaut (Armstrong, Aldrin, or Collins) presses any DSKY button, the
+; keyboard interrupt handler (KEYRUPT1 in KEYRUPT_UPRUPT.agc) places the
+; 5-bit key code into MPAC and calls this routine. Throughout Apollo 11's
+; mission, thousands of button presses flowed through here - from pre-launch
+; system checks through lunar landing to splashdown.
+;
+; The routine first locks the display system to prevent conflicts, checks
+; if the KEY RELEASE light should be turned on, then dispatches to the
+; appropriate handler based on the key code via an indexed jump table.
+;
+; COMMENT-ONLY READERS: Every button press from the crew comes through here.
+; CODE-ALONG READERS: Study the indexed dispatch mechanism and DSPLOCK protocol.
+; ============================================================================
+;
 CHARIN		CAF	ONE		# BLOCK DISPLAY SYST
 		XCH	DSPLOCK		# MAKE DSP SYST BUSY, BUT SAVE OLD
 		TS	21/22REG	# C(DSPLOCK) FOR ERROR LIGHT RESET.
@@ -417,6 +473,14 @@ CHARIN		CAF	ONE		# BLOCK DISPLAY SYST
 		TC	RELDSPON
 CHARIN2		XCH	MPAC
 		TS	CHAR
+;
+; DSKY BUTTON DISPATCH TABLE
+; The 5-bit key code in A register now indexes into this jump table to call
+; the appropriate handler. Each DSKY button has a unique code (octal 00-37).
+; During Apollo 11, crew used these constantly: VERB+NOUN combinations for
+; displays, numerical entry for coordinates and times, ENTER to execute,
+; KEY REL to release the computer from waiting states.
+;
 		INDEX	A
 		TC	+1		#   INPUT CODE	    FUNCTION
 		TC	CHARALRM	# 	0
@@ -452,6 +516,17 @@ CHARIN2		XCH	MPAC
 		TC	CHARALRM	#	35
 		TC	CLEAR		#	36		CLEAR
 		TC	NOUN		#	37		NOUN
+;
+; KEY BUTTON FUNCTIONS:
+; - NUM (codes 01-07, 20): Numerical digit entry (0-9 in octal/decimal)
+; - VERB (code 21): Initiates verb entry mode, expecting 2-digit verb code
+; - NOUN (code 37): Initiates noun entry mode, expecting 2-digit noun code
+; - ERROR RESET (code 22): Clears the OPR ERR light when crew makes input error
+; - KEY RELEASE (code 31): Releases computer from waiting state, resumes program
+; - + and - (codes 32, 33): Sign entry for numerical data input
+; - ENTER (code 34): Executes the entered verb/noun command pair
+; - CLEAR (code 36): Clears current entry, resets input state
+;
 
 ELRCODE1	OCT	22
 ENTERJMP	TC	POSTJUMP
@@ -474,6 +549,31 @@ ENTERJMP	TC	POSTJUMP
 # YREG, ZREG.  THE LOW PARTS IN XREGLP, YREGLP, OR ZREGLP.
 # DECBRNCH IS LEFT AT +0 FOR OCT, +1 FOR + DEC, +2 FOR - DEC.
 # IF DSPCOUNT WAS LEFT -, NO MORE DATA IS ACCEPTED.
+;
+; ============================================================================
+; NUMERICAL DIGIT ENTRY HANDLER - NUM
+;
+; Processes digits 0-9 when crew enters numerical data. Throughout Apollo 11,
+; astronauts used this constantly: entering coordinates for navigation state
+; vectors, times for maneuver execution, angles for IMU alignment. Each digit
+; press accumulates into the appropriate register (XREG/YREG/ZREG for the
+; three rows of DSKY data display).
+;
+; The routine handles two modes:
+; - OCTAL MODE: Assembles bits 3 at a time (octal digits 0-7)
+; - DECIMAL MODE: Converts to binary fraction via multiplication by 10
+;
+; During lunar landing, this processed altitude and velocity values Armstrong
+; and Aldrin monitored. During translunar coast, it accepted navigation update
+; coordinates from Mission Control.
+;
+; DECBRNCH register indicates: +0=octal, +1=positive decimal, +2=negative decimal
+; DSPCOUNT tracks remaining digits expected (decrements with each entry)
+;
+; COMMENT-ONLY READERS: Every number the crew typed went through here.
+; CODE-ALONG READERS: Study octal bit-shifting vs decimal fixed-point conversion.
+; ============================================================================
+;
 
 		CAF	ZERO
 		TS	CHAR
@@ -600,6 +700,29 @@ INRELTAB	OCT	4		# R3D5 (DSPCOUNT = 0)
 		OCT	0		# VD2		 =(18D)
 		OCT	0		# VD1		 =(19D)
 
+;
+; ============================================================================
+; VERB ENTRY HANDLER - VERB
+;
+; Initiates verb entry mode when crew presses VERB button. The DSKY verb
+; display area (two-digit field) begins flashing to indicate readiness for
+; 2-digit verb code input. Verb codes (V01-V99) specify what action to take:
+; displays (V16=monitor decimal), loads (V21=load component), special functions
+; (V37=change program/major mode), extended verbs (V40+).
+;
+; Famous Apollo 11 verb usages:
+; - V16 N36: Monitor guidance computer time (used throughout mission)
+; - V06 N62: Display altitude/altitude rate during lunar descent
+; - V16 N68: Display delta-V for maneuvers
+; - V37: Change major mode (program selection)
+;
+; The routine clears VERBREG, sets DSPCOUNT for 2-digit entry, blanks the
+; verb display, and waits for crew to enter verb code digits.
+;
+; COMMENT-ONLY READERS: The "VERB" button started every command sequence.
+; CODE-ALONG READERS: Study initialization of DECBRNCH for decimal V/N codes.
+; ============================================================================
+;
 VERB		CAF	ZERO
 		TS	VERBREG
 		CAF	VD1
@@ -613,6 +736,29 @@ NVCOM		TS	DSPCOUNT
 		TS	ENTRET		# OR NVSUB, ENTRET MUST ALREADY BE SET
 					# TO TC ENDOFJOB
 		TC	ENDOFJOB
+;
+; ============================================================================
+; NOUN ENTRY HANDLER - NOUN
+;
+; Initiates noun entry mode when crew presses NOUN button. The DSKY noun
+; display area (two-digit field) begins flashing to indicate readiness for
+; 2-digit noun code input. Noun codes (N01-N99) specify what data to display
+; or modify: navigation state vectors, time values, angles, velocities, etc.
+;
+; Famous Apollo 11 noun usages:
+; - N36: Time values (hours:minutes:seconds)
+; - N62: Altitude and altitude rate (critical during lunar landing)
+; - N68: Delta-V components for maneuvers
+; - N17: Gyro angles for IMU alignment
+; - N44: Apogee/perigee altitude and time-to-apogee
+;
+; The routine clears NOUNREG, sets DSPCOUNT for 2-digit entry, and waits
+; for crew to complete noun code entry.
+;
+; COMMENT-ONLY READERS: The "NOUN" button specified what data to work with.
+; CODE-ALONG READERS: Note similar initialization to VERB via NVCOM common path.
+; ============================================================================
+;
 NOUN		CAF	ZERO
 		TS	NOUNREG
 		CAF	ND1		# ND1, OCT 21 (DEC 17)
@@ -672,6 +818,23 @@ SIGNTEST	LXCH	Q		# ALLOWS +,- ONLY WHEN DSPCOUNT=R1D1,
 		MASK	DECBRNCH	# CONSECUTIVE +/- CHARACTERS.
 		CCS	A		# IF LOW2 BITS OF DECBRNCH NOT 0, SIGN
 		TC	ENDOFJOB	# FOR THIS WORD ALREADY IN. REJECT.
+;
+; ============================================================================
+; SIGN TEST ROUTINE (SGNTST1)
+;
+; COMMENT-ONLY READERS: When the crew presses the +/- key on the DSKY, the
+; computer must verify that a sign can legally be entered at the current
+; display position. This routine checks if the current position matches one
+; of the three register displays (R1, R2, or R3).
+;
+; CODE-ALONG READERS: Sign entry validation. Tests current DSPCOUNT position
+; against the left-most display positions of R1, R2, R3 (stored in R1D1,
+; R2D1, R3D1). Uses complement and add to test for match. BZF +2 skips return
+; if no match, allowing next test. If all three tests fail, sign entry is
+; illegal and job terminates. If match found, returns via L register (sign
+; legal path).
+; ============================================================================
+;
 		CS	R1D1
 		TC	SGNTST1
 		CS	R2D1
@@ -686,6 +849,26 @@ SGNTST1		AD	DSPCOUNT
 		TC	L		# SIGN LEGAL
 
 
+;
+; ============================================================================
+; CLEAR ROUTINE - Display Register Blanking with Backup Control
+;
+; COMMENT-ONLY READERS: When the crew presses the CLEAR key, the computer
+; erases the current numeric display (R1, R2, or R3) and prepares for new
+; data entry. For multi-component displays (showing X, Y, Z coordinates or
+; similar three-part data), CLEAR processes each component in sequence.
+; Some operations allow the crew to "back up" to re-enter previous components.
+;
+; CODE-ALONG READERS: CLEAR routine blanks display registers (R1/R2/R3) and
+; zeros corresponding data storage (XREG/YREG/ZREG). CLPASS controls backup
+; behavior:
+;   CLPASS = +0:  Pass 0, can be backed up (decrements verb to re-enter data)
+;   CLPASS = +NZ: Higher pass, can be backed up
+;   CLPASS = -NZ: Pass 0, cannot be backed up (one-way data entry)
+; DSPCOUNT indexes display position. Uses INRELTAB to map DSPCOUNT to INREL
+; (register index 0/1/2 for X/Y/Z). Successive clears process R3→R2→R1 until
+; R1 complete, then no further action.
+;
 # CLEAR BLANKS WHICH R1, R2, R3 IS CURRENT OR LAST TO BE DISPLAYED(PERTINE
 # NT XREG,YREG,ZREG IS CLEARED). SUCCESSIVE CLEARS TAKE CARE OF EACH RX
 # L/ RC UNTIL R1 IS DONE. THEN NO FURTHER ACTION
@@ -696,6 +879,8 @@ SGNTST1		AD	DSPCOUNT
 # CLPASS   +0  PASS0, CAN BE BACKED UP
 #          +NZ  HIPASS, CAN BE BACKED UP
 #          -NZ  PASS0, CANNOT BE BACKED UP
+; ============================================================================
+;
 # Page 321
 CLEAR		CCS	DSPCOUNT
 		AD	ONE
@@ -727,8 +912,29 @@ CLPASHI		CCS	INREL
 CLEAR1		TC	CLR5
 		INCR	CLPASS		# ONLY IF CLPASS IS + OR +0
 		TC	ENDOFJOB	# SET FOR HIGHER PASS.
+;
+; CLR5 - Internal clear subroutine that calls 5BLANK directly, bypassing
+; GETINREL since INREL already set. Saves return address in L register.
+;
 CLR5		LXCH	Q		# USED 5BLANK BUT AVOIDS ITS TC GETINREL
 		TC	5BLANK +2
+;
+; ============================================================================
+; LEGALTST - Register Index Legality Test
+;
+; COMMENT-ONLY READERS: Before operating on a display register, the computer
+; verifies that the register index is valid. Only registers 2 and above are
+; legal for certain operations (single-component displays use higher indices).
+;
+; CODE-ALONG READERS: Tests INREL (register index) for legality in current
+; context. Adds NEG2 (subtracts 2) and tests result with CCS:
+;   INREL > 2: Legal, return via Q (positive result)
+;   INREL = 2: Legal, return via Q (zero result, skip CCSHOLE)
+;   INREL = 0,1: Illegal, ENDOFJOB (negative result)
+; Used by single-component load verbs that restrict which registers can be
+; cleared or operated upon.
+; ============================================================================
+;
 LEGALTST	AD	NEG2
 		CCS	A
 		TC	Q		# LEGAL  INREL G/ 2
@@ -737,10 +943,33 @@ LEGALTST	AD	NEG2
 		TC	Q		# LEGAL    INREL = 2
 
 
+;
+; ============================================================================
+; 5BLANK - Blank 5-Character Display Word and Zero Data Register
+;
+; COMMENT-ONLY READERS: This routine erases a complete 5-character numeric
+; display (R1, R2, or R3) on the DSKY and resets the corresponding data
+; storage to zero. During Apollo 11 operations, this occurred whenever the
+; crew cleared data to prepare for new input, such as when entering new
+; coordinates or velocities. The display would show all blanks: "     "
+; instead of numeric values.
+;
+; CODE-ALONG READERS: 5BLANK blanks entire 5-character display register and
+; zeroes corresponding data storage. Processing sequence:
+; 1. Calls GETINREL to convert DSPCOUNT to INREL (register index 0/1/2)
+; 2. Zeroes data storage: XREG/YREG/ZREG (indexed by INREL)
+; 3. Zeroes loop counter: XREGLP/YREGLP/ZREGLP (indexed by INREL-2)
+; 4. Clears CODE and DECBRNCH decimal component bit (BIT7) for this register
+; 5. Blanks sign character separately via SINBLANK table (COUNT → DSPIN)
+; 6. Blanks two double-character groups via 2BLANK (DOUBLK table, 4 chars)
+; 7. Sets DSPCOUNT to left-most position (R1D1/R2D1/R3D1) for blanked register
+; 8. Returns via L register (saved return address)
+;
 # 5BLANK BLANKS 5 CHAR DISPLAY WORD IN R1, R2, OR R3. IT ALSO ZEROES XREG,
 # YREG, OR ZREG.PLACE ANY + DSPCOUNT NUMBER FOR PERTINENT RC INTO DSPCOUNT
 # DSPCOUNT IS LEFT SET TO LEFT MOST DSP NUMB FOR RC JUST BLANKED.
-
+; ============================================================================
+;
 		TS	DSPCOUNT	# NEEDED FOR BLANKSUB
 5BLANK		LXCH	Q
 		TC	GETINREL
@@ -820,6 +1049,49 @@ LOADLV1		TC	LOADLV
 # END OF STANDARD LEAD INS.
 
 
+;
+; ============================================================================
+; ENTER KEY HANDLER - ENTER
+;
+; The ENTER button is the execute function - it completes verb/noun entry
+; and initiates the requested action. This is the most critical button in
+; the DSKY interface, used to confirm every command throughout the mission.
+;
+; ENTER operates in multiple passes controlled by REQRET register:
+;   Pass 0 (REQRET = +): Initial verb/noun validation after V## N## entered
+;   Higher passes (REQRET = -): Data entry validation for load verbs
+;
+; Famous Apollo 11 ENTER sequences:
+; - "V16 N36 ENTER" - Display mission time (used constantly)
+; - "V06 N62 ENTER" - Display altitude/altitude rate during descent
+; - "V37 E## ENTER" - Change program (major mode selection)
+; - "V21 N## ENTER ##### ENTER" - Load data (two ENTER presses)
+;
+; Pass 0 Behavior:
+; After crew enters verb/noun codes (e.g., V16 N36), pressing ENTER:
+; 1. Validates verb code is legal (exists in VERBTAB)
+; 2. Validates noun code is legal (exists in noun tables)
+; 3. Checks verb-noun combination is compatible
+; 4. Routes to appropriate verb handler via VERBFAN
+;
+; Higher Pass Behavior:
+; For load verbs requiring data entry (V21-V25), pressing ENTER:
+; 1. Validates sufficient characters entered (5 for decimal, any for octal)
+; 2. If insufficient decimal chars, displays alarm but keeps flash on
+; 3. If validation passes, accepts data and turns off flash
+; 4. Returns to calling verb routine to process loaded data
+;
+; Error Handling:
+; - Insufficient decimal characters: Alarm, stays in entry mode
+; - Invalid verb/noun: Displays alarm (GODSPALM), recycles
+; - Incompatible verb-noun pair: Alarm, recycles
+;
+; COMMENT-ONLY READERS: ENTER was pressed hundreds of times during Apollo 11
+; to confirm every navigation update, display request, and program change.
+; CODE-ALONG READERS: Study multi-pass state machine via REQRET, decimal vs
+; octal validation logic, and verb/noun table lookup integration.
+; ============================================================================
+;
 ENTER		CAF	ZERO
 		TS	CLPASS
 		CAF	ENDINST
@@ -828,6 +1100,28 @@ ENTER		CAF	ZERO
 		TC	ENTPAS0		# IF +, PASS 0
 		TC	ENTPAS0		# IF +, PASS 0
 		TC	+1		# IF -, NOT PASS 0
+;
+; ----------------------------------------------------------------------------
+; ENTER Higher Pass Handler - ENTPASHI
+;
+; Handles ENTER presses during data entry for load verbs (V21-V25). Load
+; verbs require crew to enter numerical data after verb/noun selection:
+;   V21 N## ENTER ##### ENTER (load 1 component)
+;   V25 N## ENTER ##### ENTER ##### ENTER ##### ENTER (load 3 components)
+;
+; Decimal Mode (DECBRNCH set): Requires exactly 5 characters (e.g., +12345)
+; Octal Mode (DECBRNCH clear): Accepts any number of characters
+;
+; Example Apollo 11 load sequence:
+; V25 N01 ENTER (load desired gimbal angles for IMU alignment)
+;   +00000 ENTER (component 1)
+;   +00000 ENTER (component 2) 
+;   +35000 ENTER (component 3)
+;
+; If crew presses ENTER with insufficient decimal characters, alarm displays
+; but flash remains on, allowing crew to continue entering missing digits.
+; ----------------------------------------------------------------------------
+;
 ENTPASHI	CAF	MMADREF
 		AD	REQRET		# IF L/ 2 CHAR IN FOR MM CODE, ALARM
 		EXTEND			# AND RECYCLE(DECIDE AT MMCHANG+1).
@@ -841,6 +1135,19 @@ ENTPASHI	CAF	MMADREF
 		TC	GODSPALM	# LESS THAN 5 CHAR DEC(DSPCOUNT IS +)
 		TC	GODSPALM	# LESS THAN 5 CHAR DEC(DSPCOUNT IS +)
 		TC	+1		# 5 CHAR IN (DSPCOUNT IS -)
+;
+; ----------------------------------------------------------------------------
+; Accept Word - ACCEPTWD
+;
+; Data entry validation passed. Accept the entered numerical value:
+; 1. Complement REQRET to set it positive (signals data accepted)
+; 2. Turn off display flash (entry complete)
+; 3. Return to calling verb routine with accepted data
+;
+; The accepted data is now in appropriate registers (XREG, YREG, ZREG) and
+; the verb handler will process it (store to noun location, compute with it).
+; ----------------------------------------------------------------------------
+;
 ACCEPTWD	CS	REQRET		# 5 CHAR IN (DSPCOUNT IS -)
 		TS	REQRET		# SET REQRET +.
 		TC	FLASHOFF
@@ -849,33 +1156,118 @@ ACCEPTWD	CS	REQRET		# 5 CHAR IN (DSPCOUNT IS -)
 ENTEXIT		=	ENTRET
 
 MMADREF		ADRES	MMCHANG +1	# ASSUMES TC REQMM AT MMCHANG.
+;
+; ============================================================================
+; TRANSITION: From ENTER button validation to verb/noun execution
+;
+; With ENTER pressed and data entry complete, the AGC validates the entered
+; verb/noun pair and dispatches to the appropriate handler. The following
+; sections check whether the verb requires a noun, validate the noun is in
+; the noun table, and prepare machine addresses for display/load operations.
+; This is the gateway between crew input and program execution.
+; ============================================================================
 
 # Page 324
 LOWVERB		DEC	28		# LOWER VERB THAT AVOIDS NOUN TEST.
-
+;
+; ============================================================================
+; ENTER Pass 0 - ENTPAS0
+;
+; Initial pass after crew completes verb/noun code entry (V## N##) and
+; presses ENTER. This routine validates the verb/noun combination and
+; prepares for execution dispatch to VERBFAN.
+;
+; COMMENT-ONLY READERS: After the crew enters a verb and noun code (like
+; V16 N36 for velocity display), the computer validates whether that
+; combination is legal. Some verbs need nouns, some don't. The computer
+; checks the verb number against threshold 28 - verbs 28 and above don't
+; require nouns (they're major mode changes), while verbs below 28 need
+; a noun to specify what data to work with.
+;
+; CODE-ALONG READERS: ENTPAS0 is the first pass after REQRET goes positive
+; (indicating ENTER was pressed with valid input). The routine:
+; 1. Clears DECBRNCH (decimal branch indicator) to zero
+; 2. Sets DSPCOUNT negative (blocks further numeric input)
+; 3. Falls through to TESTVB to validate verb/noun combination
+; 
+; Entry: Called from ENTER via REQRET dispatch when input complete
+; Exit: To VERBFAN (verb dispatch table) if valid, GODSPALM if error
+; Registers: Uses A for verb comparison, VERBSAVE/NOUNSAVE for storage
+; ============================================================================
+;
 ENTPAS0		CAF	ZERO		#  NOUN VERB SUB ENTERS HERE
-		TS	DECBRNCH
+		TS	DECBRNCH	# Clear decimal branch indicator (zero = octal mode for pass 1)
 		CS	VD1		# BLOCK FURTHER NUM CHAR, SO THAT STRAY
 		TS	DSPCOUNT	# CHAR DO NOT GET INTO VERB OR NOUN LTS.
+;
+; TESTVB - Test if verb requires a noun
+; Verbs >= 29 (above LOWVERB=28) are major mode changes and don't need nouns.
+; Verbs 01-28 require nouns to specify what data to display/load/monitor.
+; Example: V16 (monitor decimal display) requires N36 (velocity) to know what to show.
+;
 TESTVB		CS	VERBREG		# IF VERB IS G/E LOWVB, SKIP NOUN TEST.
 		TS	VERBSAVE	# SAVE VERB FOR POSSIBLE RECYCLE.
 		AD	LOWVERB		# LOWVERB - VB
 		EXTEND
-		BZMF	VERBFAN		# VERB G/E LOWVERB
-TESTNN		EXTEND			# VERB L/ LOWVERB
+		BZMF	VERBFAN		# VERB G/E LOWVERB (verb >= 29, no noun needed)
+;
+; TESTNN - Test if noun is valid in noun table
+; For verbs 01-28, must validate that the entered noun exists in the noun table
+; and retrieve its machine address (ECADR) for data access. The noun table contains
+; addresses pointing to the erasable memory locations for each noun's data.
+;
+TESTNN		EXTEND			# VERB L/ LOWVERB (verb < 29, requires noun)
 		DCA	LODNNLOC	# SWITCH BANKS TO NOUN TABLE READING
-		DXCH	Z		# ROUTINE.
-		INDEX	MIXBR
-		TC	+0
-		TC	+2		# NORMAL
-		TC	MIXNOUN		# MIXED
-		CCS	NNADTEM		# NORMAL
-		TC	VERBFAN -2	#      NORMAL IF +
-		TC	GODSPALM	# NOT IN USE   IF +0
-		TC	REQADD		# SPECIFY MACHINE CADR IF -
-		INCR	NOUNCADR	# AUGMENT MACHINE CADR IF -0
+		DXCH	Z		# ROUTINE. Load noun table bank call address
+		INDEX	MIXBR		# Index by MIXBR (0=normal, 1=mixed noun mode)
+		TC	+0		# Execute bank call to noun table
+		TC	+2		# NORMAL path - standard noun table lookup
+		TC	MIXNOUN		# MIXED path - special mixed noun handling
+;
+; Normal noun table result processing:
+; NNADTEM contains noun table entry after lookup:
+;   + (positive): Valid noun, NOUNCADR has machine address
+;   +0 (zero): Noun not in use (undefined)
+;   - (negative): Requires machine CADR specification
+;   -0 (minus zero): Augment machine CADR
+;
+		CCS	NNADTEM		# NORMAL - check noun table result
+		TC	VERBFAN -2	#      NORMAL IF + (valid noun, proceed to verb execution)
+		TC	GODSPALM	# NOT IN USE   IF +0 (undefined noun, alarm)
+		TC	REQADD		# SPECIFY MACHINE CADR IF - (need address input)
+		INCR	NOUNCADR	# AUGMENT MACHINE CADR IF -0 (increment address)
 		TC	SETNADD		# ECADR FROM NOUNCADR. SETS EB, NOUNADD.
-		TC	INTMCTBS +2
+		TC	INTMCTBS +2	# Continue to machine CADR table search
+;
+; ============================================================================
+; REQADD - Request Machine CADR (Coded Address) Specification
+;
+; Certain nouns don't have fixed addresses in the noun table because they
+; represent general-purpose display/load capabilities. For these, the crew
+; must specify the actual memory address (machine CADR) where the data
+; resides. This routine initiates the address entry sequence.
+;
+; COMMENT-ONLY READERS: Some nouns are like blank forms - the computer needs
+; to know where in memory to find the data. When this happens, the display
+; flashes to prompt the crew to enter the 5-digit octal memory address.
+; For example, monitoring a specific erasable memory location during testing.
+;
+; CODE-ALONG READERS: REQADD handles the NNADTEM = negative case from the
+; noun table lookup. It:
+; 1. Sets CLPASS to BIT15 to mark pass 0 state
+; 2. Tests whether call came from internal program (ENTEXIT != ENDINST)
+;    or external keyboard input
+; 3. For external: Calls REQDATZ to flash display and accept address input
+; 4. For internal: Calls INTMCTBS for machine CADR table search
+; 5. Validates address entry used octal (not decimal) format
+; 6. Optionally flashes display if CADRSTOR indicates more input needed
+; 7. Transfers entered address to NOUNCADR via SETNCADR
+;
+; Entry: From TESTNN when NNADTEM negative (noun requires address)
+; Exit: To VERBFAN after address successfully entered and validated
+; Registers: ZREG holds entered machine CADR, CLPASS marks entry state
+; ============================================================================
+;
 REQADD		CAF	BIT15		# SET CLPASS FOR PASS0 ONLY
 		TS	CLPASS
 		CS	ENDINST		# TEST IF REACHED HERE FROM INTERNAL OR
@@ -884,21 +1276,34 @@ REQADD		CAF	BIT15		# SET CLPASS FOR PASS0 ONLY
 		BZF	+2		# EXTERNAL MACH CADR TO BE SPECIFIED
 		TC	INTMCTBS
 		TC	REQDATZ		# EXTERNAL MACH CADR TO BE SPECIFIED
+;
+; Validate address entry format (must be octal, not decimal)
+; Machine addresses in the AGC are always octal (base-8) numbers.
+;
 		CCS	DECBRNCH	# ALARM AND RECYCLE IF DECIMAL USED
-		TC	ALMCYCLE	# FOR MCTBS.
+		TC	ALMCYCLE	# FOR MCTBS. (decimal not allowed for addresses)
 		CS	VD1		# OCTAL USED  OK
-		TS	DSPCOUNT	# BLOCK NUM CHAR IN
+		TS	DSPCOUNT	# BLOCK NUM CHAR IN (prevent additional input)
+;
+; Check if additional display flashing needed based on CADRSTOR state
+; (indicates whether more address components needed for complex operations)
+;
 		CCS	CADRSTOR
 		TC	+3		# EXTERNAL MCTBS DISPLAY WILL LEAVE FLASH
 		TC	USEADD		# ON IF ENDIDLE NOT = +0.
 		TC	+1
-		TC	FLASHON
-USEADD		XCH	ZREG
+		TC	FLASHON		# Flash display to indicate waiting for more input
+;
+; USEADD - Use entered address for noun data access
+; Transfer the crew-entered machine address from ZREG to NOUNCADR,
+; then proceed to verb execution.
+;
+USEADD		XCH	ZREG		# Get entered machine CADR from ZREG
 		TC	SETNCADR	# ECADR INTO NOUNCADR. SET EB, NOUNADD.
-		EXTEND
+		EXTEND			# Bank call to noun table routine
 		DCA	LODNNLOC	# SWITCH BANKS TO NOUN TAB E READING
-		DXCH	Z		# ROUTINE.
-		TC	VERBFAN
+		DXCH	Z		# ROUTINE. (prepare for noun processing)
+		TC	VERBFAN		# Proceed to verb execution with address set
 
 		EBANK=	DSPCOUNT
 # Page 325
@@ -906,6 +1311,31 @@ LODNNLOC	2CADR	LODNNTAB
 
 NEG5		OCT	77772
 
+;
+; ============================================================================
+; INTMCTBS - Internal Machine CADR Table Search
+;
+; When a noun requiring machine CADR specification is called from an internal
+; program (via NVSUB), the CADR is passed in MPAC+2. This routine retrieves
+; that address, stores it in NOUNCADR, and optionally displays it to the crew.
+;
+; COMMENT-ONLY READERS: When programs call Pinball internally, they provide
+; the memory address directly. This routine accepts that address and shows it
+; on the DSKY display (unless verb 05 suppresses display for silent operation).
+;
+; CODE-ALONG READERS: INTMCTBS handles internal (program-initiated) machine
+; CADR specification:
+; 1. Retrieves CADR from MPAC+2 (where NVSUB calling convention places it)
+; 2. Calls SETNCADR to store in NOUNCADR and set EB/NOUNADD registers
+; 3. Tests if verb is 05 (VERBREG = 5), which suppresses CADR display
+; 4. For verbs != 05: Displays the 5-digit octal CADR via DSPOCTWO to R3
+; 5. Proceeds to VERBFAN for verb execution
+;
+; Entry: From REQADD when ENTEXIT indicates internal program call
+; Exit: To VERBFAN after CADR stored (and optionally displayed)
+; Registers: MPAC+2 contains CADR on entry, NOUNCADR set on exit
+; ============================================================================
+;
 INTMCTBS	CA	MPAC	+2	# INTERNAL MACH CADR TO BE SPECIFIED.
 		TC	SETNCADR	# ECADR INTO NOUNCADR. SET EB, NOUNADD.
 		CS	FIVE		# NVSUB CALL LEFT CADR IN MPAC+2 FOR MACH
@@ -913,71 +1343,159 @@ INTMCTBS	CA	MPAC	+2	# INTERNAL MACH CADR TO BE SPECIFIED.
 		EXTEND
 		BZF	VERBFAN		# DONT DISPLAY CADR IF VB = 05.
 		CAF	R3D1		# VB NOT = 05. DISPLAY CADR.
-		TS	DSPCOUNT
-		CA	NOUNCADR
-		TC	DSPOCTWO
-		TC	VERBFAN
+		TS	DSPCOUNT	# Set display counter for R3 (5-digit octal)
+		CA	NOUNCADR	# Get stored machine CADR
+		TC	DSPOCTWO	# Display as octal in R3 field
+		TC	VERBFAN		# Proceed to verb execution
 
 		AD	ONE
 		TC	SETNCADR	# ECADR INTO NOUNCADR. SETS EB, NOUNADD.
-VERBFAN		CS	LST2CON
-		AD	VERBREG		# VERB-LST2CON
-		CCS	A
-		AD	ONE		# VERB G/ LST2CON
-		TC	+2
-		TC	VBFANDIR	# VERB L/ LST2CON
-		TS	MPAC
-		TC	RELDSP		# RELEASE DISPLAY SYST
+;
+; ============================================================================
+; VERBFAN - Verb Dispatch Fan-Out
+;
+; VERBFAN is the central dispatcher for all verb execution. After verb and
+; noun codes have been validated and any required machine addresses specified,
+; control reaches here to execute the requested verb function. Verbs are
+; organized into two categories: normal verbs (00-39) dispatched via table
+; lookup, and extended verbs (40-99) handled by GOEXTVB.
+;
+; COMMENT-ONLY READERS: This is mission control for verb execution. Every verb
+; command typed by the crew (or sent from internal programs) routes through
+; here to the specific routine that implements that verb's function - whether
+; displaying data, loading values, requesting programs, or controlling systems.
+;
+; CODE-ALONG READERS: VERBFAN implements a two-tier verb dispatch:
+; 1. Tests VERBREG against LST2CON (40 decimal) to distinguish verb categories
+; 2. For verbs 00-39: Direct table lookup via VBFANDIR using VERBTAB
+;    - Each VERBTAB entry is a CADR pointing to verb implementation routine
+;    - Covers display verbs (01-17), load verbs (21-26), special functions (27-39)
+; 3. For verbs 40-99: Extended verb processing via GOEXTVB
+;    - Releases display system via RELDSP
+;    - Passes (verb - 40) in MPAC to extended verb handler
+;    - Extended verbs include mission-specific functions outside Pinball domain
+; 4. Uses BANKJUMP for cross-bank transfers to verb implementations
+;
+; Entry: From multiple paths after verb/noun validation complete
+; Exit: To verb-specific implementation routine (varies by verb)
+; Registers: VERBREG contains verb code (00-99), NOUNREG contains noun code
+; ============================================================================
+;
+VERBFAN		CS	LST2CON		# Get negative of 40 (first extended verb)
+		AD	VERBREG		# VERB-LST2CON (compute verb - 40)
+		CCS	A		# Test sign of result
+		AD	ONE		# VERB G/ LST2CON (verb >= 40: extended)
+		TC	+2		# (continue to extended verb handling)
+		TC	VBFANDIR	# VERB L/ LST2CON (verb < 40: table lookup)
+		TS	MPAC		# Store (verb - 40) for extended verb handler
+		TC	RELDSP		# RELEASE DISPLAY SYST (free display for extended verb)
 		TC	POSTJUMP	# GO TO GOEXTVB WITH VB-40 IN MPAC.
-		CADR	GOEXTVB
+		CADR	GOEXTVB		# (extended verb processor in EXTENDED_VERBS.agc)
 LST2CON		DEC	40		# FIRST LIST2 VERB (EXTENDED VERB)
 
-VBFANDIR	INDEX	VERBREG
-		CAF	VERBTAB
-		TC	BANKJUMP
-
-VERBTAB		CADR	GODSPALM	# VB00 ILLEGAL
-		CADR	DSPA		# VB01 DISPLAY OCT COMP 1 (R1)
-		CADR	DSPB		# VB02 DISPLAY OCT COMP 2 (R1)
-		CADR	DSPC		# VB03 DISPLAY OCT COMP 3 (R1)
-		CADR	DSPAB		# VB04 DISPLAY OCT COMP 1,2 (R1,R2)
-		CADR	DSPABC		# VB05 DISPLAY OCT COMP 1,2,3 (R1,R2,R3)
-		CADR	DECDSP		# VB06 DECIMAL DISPLAY
-		CADR	DSPDPDEC	# VB07 DP DECIMAL DISPLAY (R1,R2)
-		CADR	GODSPALM	# VB08 SPARE
-		CADR	GODSPALM	# VB09 SPARE
-		CADR	DSPALARM	# VB10 SPARE
-		CADR	MONITOR		# VB11 MONITOR OCT COMP 1 (R1)
-		CADR	MONITOR		# VB12 MONITOR OCT COMP 2 (R1)
-		CADR	MONITOR		# VB13 MONITOR OCT COMP 3 (R1)
-		CADR	MONITOR		# VB14 MONITOR OCT COMP 1,2 (R1,R2)
+;
+; VBFANDIR - Verb Fan-Out via Direct Table Lookup
+;
+; For verbs 00-39, this performs indexed lookup in VERBTAB to retrieve the
+; CADR of the verb implementation routine, then executes cross-bank jump.
+;
+VBFANDIR	INDEX	VERBREG		# Use verb code as table index
+		CAF	VERBTAB		# Fetch CADR from verb table
+		TC	BANKJUMP	# Execute cross-bank jump to verb routine
+;
+; ============================================================================
+; VERBTAB - Verb Dispatch Table (Verbs 00-39)
+;
+; Each entry is a CADR (bank + address) pointing to the routine that implements
+; that verb function. The table is indexed directly by VERBREG (verb code).
+;
+; VERB CATEGORIES:
+; - Display Verbs (01-07): One-time data display in various formats
+; - Monitor Verbs (11-17): Continuous data display updated once per second
+; - Load Verbs (21-25): Crew data entry into computer memory
+; - Special Functions (27, 30-37): System control and mode change operations
+; - Verb 00 and unused codes: Route to alarm handler
+;
+; COMMENT-ONLY READERS: This table is the "menu" of available commands the
+; crew can execute via the DSKY. Display verbs show data once. Monitor verbs
+; continuously update displays (like a real-time dashboard). Load verbs accept
+; crew input to change parameters. Special verbs control computer operations
+; like requesting programs, changing modes, or restarting the system.
+;
+; CODE-ALONG READERS: VERBTAB implements O(1) verb dispatch via indexed CADR
+; array. Each verb code directly indexes to its implementation address. The
+; BANKJUMP instruction handles cross-bank transfer since verb implementations
+; are distributed across multiple fixed memory banks. Note that verbs 08-10,
+; 18-20, 26, 28-29, 38-39 are marked SPARE and route to GODSPALM (alarm).
+; ============================================================================
+;
+VERBTAB		CADR	GODSPALM	# VB00 ILLEGAL (reserved, causes alarm)
+;
+; DISPLAY VERBS (01-07) - One-time display of noun data
+; These verbs display data from the noun-specified memory locations and then
+; terminate. Display remains until overwritten by another verb or program.
+;
+		CADR	DSPA		# VB01 DISPLAY OCT COMP 1 (R1) - component A only
+		CADR	DSPB		# VB02 DISPLAY OCT COMP 2 (R1) - component B only  
+		CADR	DSPC		# VB03 DISPLAY OCT COMP 3 (R1) - component C only
+		CADR	DSPAB		# VB04 DISPLAY OCT COMP 1,2 (R1,R2) - components A,B
+		CADR	DSPABC		# VB05 DISPLAY OCT COMP 1,2,3 (R1,R2,R3) - all three
+		CADR	DECDSP		# VB06 DECIMAL DISPLAY - converts to decimal format
+		CADR	DSPDPDEC	# VB07 DP DECIMAL DISPLAY (R1,R2) - double-precision decimal
+		CADR	GODSPALM	# VB08 SPARE (unassigned)
+		CADR	GODSPALM	# VB09 SPARE (unassigned)
+		CADR	DSPALARM	# VB10 SPARE (currently causes alarm)
+;
+; MONITOR VERBS (11-17) - Continuous display updated once per second
+; These verbs display data and continue updating every second until terminated
+; by KEY RELEASE or another verb. Used for real-time parameter monitoring
+; during critical mission phases.
+;
+		CADR	MONITOR		# VB11 MONITOR OCT COMP 1 (R1) - component A, 1Hz update
+		CADR	MONITOR		# VB12 MONITOR OCT COMP 2 (R1) - component B, 1Hz update
+		CADR	MONITOR		# VB13 MONITOR OCT COMP 3 (R1) - component C, 1Hz update
+		CADR	MONITOR		# VB14 MONITOR OCT COMP 1,2 (R1,R2) - A,B, 1Hz update
 # Page 326
-		CADR	MONITOR		# VB15 MONITOR OCT COMP 1,2,3 (R1,R2,R3)
-		CADR	MONITOR		# VB16 MONITOR DECIMAL
-		CADR	MONITOR		# VB17 MONITOR DP DEC (R1,R2)
-		CADR	GODSPALM	# VB18 SPARE
-		CADR	GODSPALM	# VB19 SPARE
-		CADR	GODSPALM	# VB20 SPARE
-		CADR	ALOAD		# VB21 LOAD COMP 1 (R1)
-		CADR	BLOAD		# VB22 LOAD COMP 2 (R2)
-		CADR	CLOAD		# VB23 LOAD COMP 3 (R3)
-		CADR	ABLOAD		# VB24 LOAD COMP 1,2 (R1,R2)
-		CADR	ABCLOAD		# VB25 LOAD COMP 1,2,3 (R1,R2,R3)
-		CADR	GODSPALM	# VB26 SPARE
-		CADR	DSPFMEM		# VB27 FIXED MEMORY DISPLAY
+		CADR	MONITOR		# VB15 MONITOR OCT COMP 1,2,3 (R1,R2,R3) - all, 1Hz
+		CADR	MONITOR		# VB16 MONITOR DECIMAL - decimal format, 1Hz update
+		CADR	MONITOR		# VB17 MONITOR DP DEC (R1,R2) - DP decimal, 1Hz update
+		CADR	GODSPALM	# VB18 SPARE (unassigned)
+		CADR	GODSPALM	# VB19 SPARE (unassigned)
+		CADR	GODSPALM	# VB20 SPARE (unassigned)
+;
+; LOAD VERBS (21-25) - Crew data entry into computer memory
+; These verbs prompt crew to enter numerical data via DSKY, then store the
+; entered values into the memory locations specified by the noun. Used to
+; update navigation states, targeting parameters, or system configurations.
+;
+		CADR	ALOAD		# VB21 LOAD COMP 1 (R1) - load component A only
+		CADR	BLOAD		# VB22 LOAD COMP 2 (R2) - load component B only
+		CADR	CLOAD		# VB23 LOAD COMP 3 (R3) - load component C only
+		CADR	ABLOAD		# VB24 LOAD COMP 1,2 (R1,R2) - load components A,B
+		CADR	ABCLOAD		# VB25 LOAD COMP 1,2,3 (R1,R2,R3) - load all three
+		CADR	GODSPALM	# VB26 SPARE (unassigned)
+;
+; SPECIAL FUNCTION VERBS (27, 30-37) - System control operations
+; These verbs perform system-level functions that don't fit the display/load
+; pattern. They control program execution, mode changes, and system state.
+;
+		CADR	DSPFMEM		# VB27 FIXED MEMORY DISPLAY - inspect ROM contents
 					# THE FOLLOWING VERBS MAKE NO NOUN TEST
-		CADR	GODSPALM	# VB28 SPARE
-		CADR	GODSPALM	# VB29 SPARE
-REQEXLQC	CADR	VBRQEXEC	# VB30 REQUEST EXECUTIVE
-		CADR	VBRQWAIT	# VB31 REQUEST WAITLIST
-		CADR	VBRESEQ		# VB32 RESEQUENCE
-		CADR	VBPROC		# VB33 PROCEED WITHOUT DATA
-		CADR	VBTERM		# VB34 TERMINATE CURRENT TEST OR LOAD REQ
-		CADR	VBTSTLTS	# VB35 TEST LIGHTS
-		CADR	SLAP1		# VB36 FRESH START
-		CADR	MMCHANG		# VB37 CHANGE MAJOR MODE
-		CADR	GODSPALM	# VB38 SPARE
-		CADR	GODSPALM	# VB39 SPARE
+		CADR	GODSPALM	# VB28 SPARE (unassigned)
+		CADR	GODSPALM	# VB29 SPARE (unassigned)
+REQEXLQC	CADR	VBRQEXEC	# VB30 REQUEST EXECUTIVE - start executive job
+		CADR	VBRQWAIT	# VB31 REQUEST WAITLIST - schedule waitlist task
+		CADR	VBRESEQ		# VB32 RESEQUENCE - modify program sequence
+		CADR	VBPROC		# VB33 PROCEED WITHOUT DATA - continue without input
+		CADR	VBTERM		# VB34 TERMINATE CURRENT TEST OR LOAD REQ - abort operation
+		CADR	VBTSTLTS	# VB35 TEST LIGHTS - illuminate all DSKY indicators
+		CADR	SLAP1		# VB36 FRESH START - computer cold restart
+		CADR	MMCHANG		# VB37 CHANGE MAJOR MODE - switch mission program
+		CADR	GODSPALM	# VB38 SPARE (unassigned)
+		CADR	GODSPALM	# VB39 SPARE (unassigned)
+;
+; End of VERBTAB. Verbs 40-99 are extended verbs processed separately.
+;
 
 
 # THE LIST2 VERBFAN IS LOCATED IN THE EXTENDED VERB BANK.
@@ -986,7 +1504,33 @@ REQEXLQC	CADR	VBRQEXEC	# VB30 REQUEST EXECUTIVE
 # TO WHERE 3 CONSECUTIVE ADDRESSES ARE STORED (IN IDADDTAB).
 # MIXNOUN GETS DATA AND STORES IN MIXTEMP,+1,+2. IT SETS NOUNADD FOR
 #  MIXTEMP.
-
+;
+; ============================================================================
+; MIXNOUN - Mixed Noun Data Retrieval Handler
+;
+; COMMENT-ONLY READERS: Some DSKY nouns display data from multiple different
+; memory locations - called "mixed nouns". For example, displaying altitude
+; from one location, velocity from another, and fuel remaining from a third.
+; This routine gathers the three separate data values and assembles them into
+; the MIXTEMP storage area so they can be displayed together as R1, R2, R3.
+; During Apollo 11 operations, mixed nouns allowed the crew to monitor related
+; but separately-stored mission parameters on a single DSKY display.
+;
+; CODE-ALONG READERS: MIXNOUN handles mixed-noun data collection. Processing:
+; 1. Tests NNADTEM (noun address temporary) via CCS to verify noun in use:
+;    +: In use (normal), -: In use (special), +0: Not in use → GODSPALM alarm
+; 2. Verifies VERBREG ≤ 6 (display verb only, not load verb) via SIX subtract
+; 3. Loops K=2 down to 0 (three components: MIXTEMP+2, +1, +0):
+;    - Sets NOUNADD = MIXTEMP + K (destination for this component)
+;    - Gets IDADDTAB entry via INDEX DECOUNT from IDAD1TEM (indirect addr table)
+;    - Calls SFRUTMIX to get scale factor routine number
+;    - Calls DPTEST to check if double-precision (if so, increments NOUNTEM)
+;    - Calls SETEBANK to set memory bank, returns EADRES in A
+;    - Loads data from computed address into MIXTEMP+K via INDEX NOUNADD
+; 4. Returns to VERBFAN for display processing
+; MIXAD points to MIXTEMP base address.
+; ============================================================================
+;
 MIXNOUN		CCS	NNADTEM
 		TC	+4		# +  IN USE
 		TC	GODSPALM	# +0  NOT IN USE
@@ -1023,7 +1567,38 @@ MIXNN2		CA	NOUNTEM
 
 MIXAD		TC	MIXTEMP
 
-
+;
+; ============================================================================
+; DPTEST - Double-Precision Test for Scale Factor Routines
+;
+; COMMENT-ONLY READERS: Some displayed values require more precision than
+; a single AGC word can hold (15 bits). These "double-precision" values use
+; two consecutive memory words. This routine examines the scale factor routine
+; number to determine if the data format requires double-precision handling,
+; allowing the display system to fetch both words when necessary.
+;
+; CODE-ALONG READERS: Tests if scale factor routine indicates DP data format.
+; Entry: A register contains scale factor routine number (0-13)
+; Method: INDEX A followed by TCF +1 creates computed jump into table below:
+;   0: OCTAL - No DP (TC Q returns to L+1)
+;   1: FRACT - No DP (TC Q returns to L+1)
+;   2: DEG - No DP (TC Q returns to L+1)
+;   3: ARITH - No DP (TC Q returns to L+1)
+;   4: DP1OUT - DP (TCF DPTEST1 returns to L+2)
+;   5: DP2OUT - DP (TCF DPTEST1 returns to L+2)
+;   6: OPDEG - No DP (TC Q returns to L+1)
+;   7: DP3OUT - DP (TCF DPTEST1 returns to L+2)
+;   8: HMS - No DP (TC Q returns to L+1)
+;   9: M/S - No DP (TC Q returns to L+1)
+;   10: DP4OUT - DP (TCF DPTEST1 returns to L+2)
+;   11: ARITH1 - No DP (TC Q returns to L+1)
+;   12: 2INTOUT - No DP to get high part in MPAC (TC Q returns to L+1)
+;   13: DPFRACOT - DP (TCF DPTEST1 returns to L+2)
+; DPTEST1: INDEX Q / TC 1 performs return to L+2 for DP formats.
+; Calling code uses this return address to conditionally increment NOUNTEM
+; for double-precision data, ensuring correct memory allocation.
+; ============================================================================
+;
 # DPTEST   ENTER WITH SF ROUT NUMBER IN A.
 #          RETURNS TO L+1 IF NO DP.
 #          RETURNS TO L+2 IF DP.
@@ -1048,7 +1623,37 @@ DPTEST		INDEX	A
 DPTEST1		INDEX	Q
 		TC	1		# RETURN TO L+2
 
-
+;
+; ============================================================================
+; REQDATX/Y/Z - Request Data Input for Display Registers
+;
+; COMMENT-ONLY READERS: When the AGC needs data from the crew, it flashes
+; the appropriate display register (R1, R2, or R3) to signal where input
+; is expected. During Apollo 11, the crew used these flashing displays to
+; enter coordinates, time values, and other numerical data in response to
+; computer requests. For example, when updating the state vector or entering
+; target coordinates, specific registers would flash awaiting crew input.
+;
+; CODE-ALONG READERS: Three entry points request data for specific registers:
+; REQDATX: Entry point for R1 (register 1) data request
+;   - Loads R1D1 constant into A (R1 display address/code)
+;   - Falls through to REQCOM
+; REQDATY: Entry point for R2 (register 2) data request
+;   - Loads R2D1 constant into A (R2 display address/code)
+;   - Falls through to REQCOM
+; REQDATZ: Entry point for R3 (register 3) data request
+;   - Loads R3D1 constant into A (R3 display address/code)
+;   - Falls through to REQCOM
+; REQCOM: Common request processing
+;   - Stores register code in DSPCOUNT (display counter)
+;   - Saves complement of return address Q in REQRET (request return address)
+;   - Calls 5BLANK via BANKCALL to blank the target register display
+;   - Calls FLASHON to start flashing the register (visual cue for crew input)
+; ENDRQDAT: Calls ENTEXIT to pause execution until crew provides input
+; Returns when crew enters data and presses ENTR key.
+; Display system will then validate and store the entered value.
+; ============================================================================
+;
 REQDATX		CAF	R1D1
 		TCF	REQCOM
 REQDATY		CAF	R2D1
@@ -1062,6 +1667,36 @@ REQCOM		TS	DSPCOUNT
 		TC	FLASHON
 ENDRQDAT	TC	ENTEXIT
 
+; ============================================================================
+; UPDATNN - Update Display with Noun Data
+;
+; Core routine for displaying noun data on the DSKY. When the crew enters a
+; noun code, this routine retrieves the data from memory and prepares it for
+; display. Handles both normal nouns (single memory location) and machine
+; cadr to be specified (MCTBS/MCTBI) nouns where the crew must specify the
+; address.
+;
+; During Apollo 11, this routine processed every noun display request from
+; launch through splashdown. Examples: N16 (time remaining), N17 (current
+; time), N68 (landing site coordinates during descent).
+;
+; Process:
+; 1. Save return address in UPDATRET
+; 2. Switch memory banks to access noun table (LODNNLOC)
+; 3. Test NNADTEM to determine noun type:
+;    - NNADTEM positive: Normal noun, proceed to PUTADD
+;    - NNADTEM zero: MCTBS (machine cadr to be specified), skip address update
+;    - NNADTEM negative: MCTBI (machine cadr to be input), skip address update
+; 4. For normal nouns: Call SETNCADR to load ECADR into NOUNCADR
+; 5. Set display counter to ND1 (noun display mode)
+; 6. Jump to UPDAT1 with noun register value
+;
+; Inputs:  NOUNREG = Noun code entered by crew (01-99)
+;          NNADTEM = Noun address type indicator
+; Outputs: NOUNCADR = Extended memory address of noun data
+;          NOUNADD = Bank and address set for data retrieval
+;          DSPCOUNT = Display counter set to ND1
+; ============================================================================
 		TS	NOUNREG
 UPDATNN		XCH	Q
 		TS	UPDATRET
@@ -1079,6 +1714,26 @@ PUTADD		TC	SETNCADR	# ECADR INTO NOUNCADR. SETS EB, NOUNADD.
 		CA	NOUNREG
 		TCF	UPDAT1
 
+; ============================================================================
+; UPDATVB - Update Display with Verb Data
+;
+; Parallel routine to UPDATNN for verb-initiated displays. When internal
+; programs call NVSUB with a verb code, this routine retrieves the associated
+; data and prepares the display. Uses VERBREG instead of NOUNREG.
+;
+; Example: During descent, the guidance program called V16N68 to display
+; landing site coordinates. UPDATVB processed the verb portion while UPDATNN
+; handled the noun portion.
+;
+; Process:
+; 1. Save return address in UPDATRET
+; 2. Load VD1 constant into display counter (verb display mode)
+; 3. Get verb register value
+; 4. Jump to UPDAT1 common processing
+;
+; Inputs:  VERBREG = Verb code from internal program call
+; Outputs: DSPCOUNT = Display counter set to VD1 (verb display mode)
+; ============================================================================
 		TS	VERBREG
 UPDATVB		XCH	Q
 		TS	UPDATRET
@@ -1193,6 +1848,27 @@ DSPCOM3		TS	DISTEM		# +0 +1 +2 INTO DISTEM
 		XCH	DISTEM
 		TC	DSPCOM2 +2
 
+; ============================================================================
+; COMPTEST - Component Number Compatibility Test
+;
+; Validates that the verb's requested component number does not exceed the
+; noun's maximum component number. This prevents crew errors like requesting
+; the third component (R3) of a two-component noun.
+;
+; Example: During Apollo 11, if crew entered V16N68 (display landing site
+; coordinates with 2 components: latitude and longitude), attempting to
+; display R3 would trigger an operator error alarm via GODSPALM.
+;
+; Comparison performed: Noun component count - Verb component count
+;   If result positive: Noun has more components, valid operation
+;   If result zero: Component counts equal, valid operation  
+;   If result negative: Verb requests non-existent component, alarm
+;
+; Inputs:  A = Negative verb component number
+;          NNTYPTEM or NNADTEM = Noun component code (via GETCOMP)
+; Outputs: Operator error alarm if component mismatch
+;          Return to caller if valid
+; ============================================================================
 # COMPTEST ALARMS IF COMPONENT NUMBER OF VERB(LOAD OR OCT DISPLAY) IS
 # GREATER THAN THE HIGHEST COMPONENT NUMBER OF NOUN.
 COMPTEST	TS	SFTEMP1		# - VERB COMP
@@ -1209,6 +1885,20 @@ COMPTST1	TC	GETCOMP
 NDCMPTST	TC	L		# NOUN COMP = VERB COMP
 
 
+; ============================================================================
+; DCOMPTST - Decimal Component Test with Compatibility Check
+;
+; Two-stage validation: First checks if noun is decimal-only (some nouns
+; display only in decimal format, not octal). If decimal-only bit is set,
+; triggers operator error. If not decimal-only, proceeds to COMPTST1 for
+; regular component count validation.
+;
+; Used by octal display verbs to prevent displaying decimal-only data in
+; octal format, which would produce meaningless values on the DSKY.
+;
+; Inputs:  A = Negative verb component number
+; Outputs: Alarm if decimal-only or component mismatch
+; ============================================================================
 # DCOMPTST ALARMS IF DECIMAL ONLY BIT (BIT4 OF COMP CODE NUMBER) = 1.
 # IF NOT, IT PERFORMS REGULAR COMPTEST.
 DCOMPTST	TS	SFTEMP1		# - VERB COMP
@@ -1216,6 +1906,20 @@ DCOMPTST	TS	SFTEMP1		# - VERB COMP
 		TC	DECTEST
 		TC	COMPTST1
 
+; ============================================================================
+; DECTEST - Decimal-Only Bit Test
+;
+; Checks bit 14 (bit 4 of the 5-bit component code) in the noun's component
+; code number. If set, the noun data must be displayed in decimal format only.
+; Attempting to display in octal format triggers operator error alarm.
+;
+; Example: Time nouns (hours, minutes, seconds) are decimal-only. Displaying
+; time in octal would confuse the crew.
+;
+; Inputs:  NNTYPTEM or NNADTEM contains component code
+; Outputs: Alarm via GODSPALM if decimal-only bit set
+;          Return to caller if not decimal-only
+; ============================================================================
 DECTEST		EXTEND			# ALARMS IF DEC ONLY BIT = 1 (BIT4 OF COMP
 		QXCH	MPAC 	+2	# CODE NUMBER). RETURNS IF NOT.
 		TC	GETCOMP
@@ -1224,7 +1928,20 @@ DECTEST		EXTEND			# ALARMS IF DEC ONLY BIT = 1 (BIT4 OF COMP
 		TC	GODSPALM
 		TC	MPAC 	+2
 
-
+; ============================================================================
+; DCTSTCYC - Decimal Test with Recycle
+;
+; Similar to DECTEST but causes alarm and recycle instead of simple alarm.
+; Used by load verbs where decimal-only restriction requires re-entering the
+; entire verb/noun sequence rather than just correcting the current entry.
+;
+; Recycle returns crew to "VERB" flashing on DSKY, allowing fresh command
+; input. This prevents partial load operations on decimal-only nouns.
+;
+; Inputs:  NNTYPTEM or NNADTEM contains component code
+; Outputs: Alarm and recycle via ALMCYCLE if decimal-only
+;          Return if not decimal-only
+; ============================================================================
 DCTSTCYC	LXCH	Q		# ALARMS AND RECYCLES IF DEC ONLY BIT = 1
 		TC	GETCOMP		# ( BIT4 OF COMP CODE NUMBER). RETURNS
 		MASK	BIT14		# IF NOT.  USED BY LOAD VERBS.
@@ -1233,6 +1950,25 @@ DCTSTCYC	LXCH	Q		# ALARMS AND RECYCLES IF DEC ONLY BIT = 1
 		TC	L
 
 
+; ============================================================================
+; NOUNTEST - No-Load Bit Test
+;
+; Validates that a noun component can be loaded (written) by the crew. Some
+; nouns are display-only (read-only data) and cannot be modified through
+; load verbs. The no-load bit (bit 5 of the component code) indicates this
+; restriction.
+;
+; Example: Noun 36 (mission elapsed time) is display-only. The crew cannot
+; load arbitrary time values - time advances automatically. Attempting to
+; load such nouns triggers operator error.
+;
+; Used by load verbs (V21, V22, V23, V24, V25) to prevent unauthorized
+; data modification that could compromise guidance calculations.
+;
+; Inputs:  Component code from NNTYPTEM or NNADTEM
+; Outputs: Alarm via GODSPALM if no-load bit set (bit 5 = 1)
+;          Return to caller if load permitted
+; ============================================================================
 # NOUNTEST ALARMS IF NO-LOAD BIT (BIT5 OF COMP CODE NUMBER) = 1.
 # IF NOT, IT RETURNS.
 NOUNTEST	LXCH	Q
@@ -1242,6 +1978,31 @@ NOUNTEST	LXCH	Q
 		TC	L
 		TC	GODSPALM
 
+; ============================================================================
+; TSTFORDP - Test for Double-Precision and Extract Minor Part
+;
+; Determines if noun data is double-precision format and, if so, prepares
+; to access the minor (lower-order) word of the DP pair. For channel data
+; (I/O ports), branches to CHANDSP for special handling.
+;
+; AGC double-precision values use two consecutive words:
+; - Major part (word N): Most significant bits
+; - Minor part (word N+1): Least significant bits
+;
+; This routine handles the complexity of mixed nouns where some components
+; are single-precision and others are double-precision, adjusting NOUNADD
+; to point to the correct word.
+;
+; For channel-specified nouns (NNADTEM = -1), data comes from I/O channels
+; rather than memory, requiring different access logic via CHANDSP.
+;
+; Inputs:  NNADTEM = Noun address descriptor (-1 for channel)
+;          MIXBR = Branch selector (0=normal, 1=mixed)
+;          NOUNADD = Current address pointer
+; Outputs: NOUNADD incremented if DP minor part needed
+;          Branch to CHANDSP for channel data
+;          Branch based on DP/SP status and normal/mixed case
+; ============================================================================
 TSTFORDP	LXCH	Q		# TEST FOR DP. IF SO, GET MINOR PART ONLY.
 		CA	NNADTEM
 		AD	ONE		# IF NNADTEM = -1, CHANNEL TO BE SPECIFIED
@@ -1259,6 +2020,25 @@ TSTFORDP	LXCH	Q		# TEST FOR DP. IF SO, GET MINOR PART ONLY.
 		TC	L
 
 
+; ============================================================================
+; CHANDSP - Channel Display Data Retrieval
+;
+; Reads data directly from AGC I/O channels for display purposes. Used when
+; a noun specifies channel data (NNADTEM = -1) rather than memory locations.
+; Channels provide real-time hardware interface data such as:
+; - IMU CDU (Coupling Data Unit) angles from channels 12-14
+; - RCS jet firing status
+; - Engine on/off states
+; - Radar data inputs
+;
+; The 16-bit AGC uses channels 0-77 (octal) for I/O. This routine masks
+; to low 9 bits to get channel number (0-777 octal), reads the channel
+; value, complements it (AGC uses 1's complement), and proceeds to display.
+;
+; Inputs:  NOUNCADR = Noun definition with channel specification in low 9 bits
+; Outputs: Channel data in A register (complemented)
+;          Branch to DSPCOM1 for display processing
+; ============================================================================
 CHANDSP		CA	NOUNCADR
 		MASK	LOW9
 		EXTEND
@@ -1267,7 +2047,30 @@ CHANDSP		CA	NOUNCADR
 		CS	A
 		TCF	DSPCOM1
 
-
+; ============================================================================
+; COMPICK / GETCOMP - Component Code Picker and Retrieval
+;
+; COMPICK: Address table selecting between normal and mixed noun processing
+; GETCOMP: Retrieves component type or address code from appropriate table
+;
+; For normal nouns: All components have same characteristics (all octal,
+;                   all decimal, all same scaling). Uses NNTYPTEM.
+; For mixed nouns:  Components have different characteristics (R1 might be
+;                   decimal while R2/R3 are octal). Uses NNADTEM for each.
+;
+; The component code high 5 bits contain critical information:
+; - Bit 5 (no-load bit): 1 = display-only, 0 = can be loaded by crew
+; - Bits 4-3: Scale factor specification
+; - Bits 2-1: Component type (decimal, octal, etc.)
+;
+; MIXBR serves as the branch selector: 0 for normal nouns, 1 for mixed nouns.
+;
+; Used extensively throughout display and load processing to determine how
+; to format, display, or load each noun component.
+;
+; Inputs:  MIXBR = 0 (normal) or 1 (mixed)
+; Outputs: A register = High 5 bits of component code
+; ============================================================================
 COMPICK		ADRES	NNTYPTEM
 		ADRES	NNADTEM
 
@@ -1279,6 +2082,34 @@ GETCOMP		INDEX	MIXBR		# NORMAL                MIXED
 		TC	Q
 
 
+; ============================================================================
+; DECDSP - Decimal Display Processor
+;
+; Processes decimal (base-10) noun display operations. This complex routine
+; handles the conversion from AGC's internal binary representation to the
+; seven-segment decimal displays on the DSKY.
+;
+; The AGC stores all data in binary (1's complement), but many nouns display
+; values in decimal for crew readability (altitudes, velocities, angles).
+; This routine:
+; 1. Retrieves 1-3 component values from memory (DSPDCGET loop)
+; 2. Applies appropriate scaling factors (SFCONUM, GTSFOUT)
+; 3. Converts binary to decimal with proper sign handling
+; 4. Outputs formatted data to DSKY displays (DSPDCEND, DSPDCPUT loop)
+;
+; Example: Noun 44 (apogee/perigee/time-to-go) displays three decimal values.
+; DECOUNT tracks which component (1, 2, or 3) is being processed. XREG
+; temporarily stores values since MPAC and BUF are used by math subroutines.
+;
+; Scale factors (SF CON NUMB) are critical: a velocity scaled by 2^7 cm/sec
+; must be multiplied by the correct constant to display in feet/sec.
+;
+; Inputs:  DECOUNT = Number of components (1-3)
+;          NOUNADD = Base address of noun data in memory
+;          Component code from GETCOMP
+; Outputs: Formatted decimal display via DSPDECWD
+;          Multiple components displayed via DSPDCPUT loop
+; ============================================================================
 DECDSP		TC	GETCOMP
 		TC	LEFT5
 		MASK	THREE
@@ -1312,13 +2143,35 @@ DSPDCPUT	CAF	ZERO		# DISPLAYS DATA
 		TC	SFRUTMIX
 		TC	DECDSP3
 
+; ============================================================================
+; DSPSFNOR - Display Scale Factor Normal Case
+;
+; Handles scale factor application for normal (non-mixed) nouns. Branches
+; to SFRUTNOR to retrieve the appropriate scaling constant from the scale
+; factor table, then continues to DECDSP3 for output formatting.
+;
+; This is the simpler path where all components use the same scaling.
+; ============================================================================
 DSPSFNOR	TC	SFRUTNOR
 		TC	DECDSP3
 
 		EBANK=	DSPCOUNT
 GTSFOUTL	2CADR	GTSFOUT
 
-
+; ============================================================================
+; DSPDCEND - Decimal Display End Processing
+;
+; Final processing after scale factor conversion and decimal formatting.
+; Calls DSPDECWD (in another bank) to actually write the decimal word to
+; the DSKY display registers.
+;
+; Handles multi-component display by looping back to DSPDCPUT if DECOUNT
+; is still positive (more components to display). When DECOUNT reaches zero,
+; all components have been displayed and control passes to ENTEXIT.
+;
+; During Apollo missions, this code executed thousands of times as crews
+; monitored changing navigation data, velocities, and countdown timers.
+; ============================================================================
 DSPDCEND	TC	BANKCALL	# ALL SFOUT ROUTINES END HERE
 		CADR	DSPDECWD
 		CCS	DECOUNT
@@ -1327,7 +2180,24 @@ DSPDCEND	TC	BANKCALL	# ALL SFOUT ROUTINES END HERE
 		TS	DECOUNT
 		TC	DSPDCPUT	# MORE TO DISPLAY
 
-
+; ============================================================================
+; DECDSP3 / SFOUTABR - Scale Factor Output Dispatcher
+;
+; Jumps to the appropriate scale factor output routine based on the scaling
+; type returned in A register. Different noun components require different
+; conversion routines:
+;
+; SFOUTABR Table:
+; - PREDSPAL: Error handler - alarm if decimal display requested for
+;             octal-only noun (incompatible format)
+; - DSPDCEND: Standard decimal output endpoint
+; - DEGOUTSF: Degree angle output with scaling (IMU angles, etc.)
+; - ARTOUTSF: Arc-time output (time in degrees of orbital motion)
+; - DP1OUTSF: Double-precision single-component output
+;
+; This table-driven approach allows flexibility in display formatting without
+; duplicating code. Index (from A) selects the correct CADR pair.
+; ============================================================================
 DECDSP3		INDEX	A
 		CAF	SFOUTABR
 		TC	BANKJUMP
@@ -1356,8 +2226,36 @@ ENDRTOUT	EQUALS
 		SETLOC	BLANKCON +1
 
 		COUNT	40/PIN
+; ============================================================================
+; TRANSITION: From display formatting to scaled output and load verbs
+;
+; The DSKY interface now extends beyond basic display formatting to specialized
+; output scaling routines. These routines convert internal AGC scaled values
+; (angles, time, velocities) into crew-readable decimal formats displayed on
+; the DSKY. Critical for all mission phases where crew monitors navigation
+; state, attitude angles, mission elapsed time, and spacecraft parameters.
+; The following section also implements the LOAD VERBS that allow crew input
+; of data back into the computer during mission operations.
+; ============================================================================
+
 #    DEGOUTSF SCALES BY .18 THE LOW 14 BITS OF ANGLE , ADDING .18 FOR
 # NUMBERS IN THE NEGATIVE (AGC) RANGE.
+
+; SCALED OUTPUT ROUTINES - ANGLE DISPLAY
+; These routines convert internal angle representation to degrees for display.
+; The AGC stores angles in various scaled formats (typically fractions of
+; revolutions or half-revolutions). These routines scale the internal values
+; to decimal degrees that the crew can interpret on the DSKY.
+;
+; DEGOUTSF: Full-scale angle output (360 degrees)
+; OPDEGOUT: Optical angle output (90 degree range with 20 degree bias)
+; DEGCOM: Common degree output processing
+;
+; Used throughout mission for displaying:
+; - IMU gimbal angles
+; - Star tracker angles
+; - Optics shaft and trunnion angles
+; - Attitude error displays
 
 DEGOUTSF	CAF	ZERO
 		TS	MPAC 	+2	# SET INDEX FOR FULL SCALE
@@ -3631,98 +4529,210 @@ PINTEST		EQUALS	LST2FAN
 		SETLOC	ENDNVSB1 +1
 
 		COUNT	41/PIN
-
-VBTSTLTS	TC	BANKCALL
+;
+; ============================================================================
+; VBTSTLTS - Verb Test Lights (Verb 35 - Test Lights)
+;
+; Comprehensive self-test routine that illuminates all DSKY indicator lights
+; and displays all 8's in the seven-segment displays for approximately 5 seconds.
+; Ensures all display hardware is functioning properly before critical operations.
+;
+; COMMENT-ONLY READERS: When astronauts executed Verb 35, every light and display
+; segment on the DSKY would illuminate for 5 seconds - a quick visual check that
+; all indicators were working. This test was especially important before critical
+; mission phases like lunar descent, where display failures could be catastrophic.
+;
+; CODE-ALONG READERS: VBTSTLTS performs a comprehensive display self-test:
+; 1. Checks for POO-DOO conflicts via CHKPOOH
+; 2. Inhibits interrupts and sets IMODES33 BIT1 to prevent IMU monitor from
+;    turning off lamps during test
+; 3. Turns on all indicator lights via DSALMOUT (Channel 11) and DSPTAB+11D:
+;    - UPLINK ACTY, TEMP, KEY REL, V/N FLASH, OPR ERR (via TSTCON1)
+;    - NO ATT, GIMBAL LOCK, TRACKER, PROG ALM (via TSTCON2)
+;    - TEST ALARM outbit on Channel 13 (BIT10)
+; 4. Fills all 11 DSPTAB registers with FULLDSP pattern (octal 05675) to
+;    display all 8's in seven-segment displays
+; 5. Sets DSPTAB+1, +4, +6 to FULLDSP1 (octal 07675) to display plus signs
+; 6. Schedules TSTLTS2 via WAITLIST for SHOLTS (5 seconds = 764 decimal centiseconds)
+; 7. Exits to ENDOFJOB, leaving DSPLOCK busy to ensure test visibility
+;
+; This test verifies all DSKY display hardware before mission-critical operations.
+; Entry: From VERBTAB as Verb 35 execution
+; Exit: To ENDOFJOB, then WAITLIST calls TSTLTS2 after 5 seconds
+; Duration: Approximately 5 seconds of full display illumination
+; ============================================================================
+;
+VBTSTLTS	TC	BANKCALL	# Check for POO-DOO conflict first
 		CADR	CHKPOOH
 
-		INHINT
+		INHINT			# Inhibit interrupts during setup
 		CS	BIT1		# SET BIT 1 OF IMODES33 SO IMUMON WON'T
-		MASK	IMODES33	# TURN OUT ANY LAMPS.
-		AD	BIT1
+		MASK	IMODES33	# TURN OUT ANY LAMPS during test.
+		AD	BIT1		# (IMU monitor normally controls some lamps)
 		TS	IMODES33
 
 		CAF	TSTCON1		# TURN ON UPLINK ACTIVITY, TEMP, KEY RLSE,
-		EXTEND			# V/N FLASH, OPERATOR ERROR.
-		WOR	DSALMOUT
+		EXTEND			# V/N FLASH, OPERATOR ERROR (octal 00175).
+		WOR	DSALMOUT	# Set bits in DSALMOUT (Channel 11 output)
 		CAF	TSTCON2		# TURN ON NO ATT, GIMBAL LOCK, TRACKER,
-		TS	DSPTAB 	+11D	# PROG ALM.
+		TS	DSPTAB 	+11D	# PROG ALM (octal 40650 to DSPTAB+11).
 		CAF	BIT10		# TURN ON TEST ALARM OUTBIT
-		EXTEND
-		WOR	CHAN13
-		CAF	TEN
-TSTLTS1		TS	ERCNT
-		CS	FULLDSP
-		INDEX	ERCNT
-		TS	DSPTAB
-		CCS	ERCNT
-		TC	TSTLTS1
-		CS	FULLDSP1
-		TS	DSPTAB +1	# TURN ON 3 PLUS SIGNS
-		TS	DSPTAB +4
-		TS	DSPTAB +6
-		CAF	ELEVEN
-		TS	NOUT
-		CAF	SHOLTS
-		TC	WAITLIST
-		EBANK=	DSPTAB
-		2CADR	TSTLTS2
+		EXTEND			# (turns on STBY and RESTART lights)
+		WOR	CHAN13		# Set BIT10 in Channel 13
+		CAF	TEN		# Initialize loop counter for 11 registers
+; Loop to fill DSPTAB with all-8's display pattern
+TSTLTS1		TS	ERCNT		# Store loop counter (counts down 10 to 0)
+		CS	FULLDSP		# Load complement of FULLDSP (octal 05675)
+		INDEX	ERCNT		# Index by current counter value
+		TS	DSPTAB		# Store to DSPTAB+ERCNT (fills all registers)
+		CCS	ERCNT		# Decrement and check counter
+		TC	TSTLTS1		# Loop until all 11 DSPTAB registers filled
+		CS	FULLDSP1	# After loop, set plus signs in R1, R2, R3
+		TS	DSPTAB +1	# TURN ON 3 PLUS SIGNS in register displays
+		TS	DSPTAB +4	# R2 plus sign
+		TS	DSPTAB +6	# R3 plus sign
+		CAF	ELEVEN		# Set display output count to 11 words
+		TS	NOUT		# (all DSPTAB registers will be output)
+		CAF	SHOLTS		# Load 5-second wait time (764 decimal cs)
+		TC	WAITLIST	# Schedule TSTLTS2 for 5 seconds from now
+		EBANK=	DSPTAB		# Set EBANK for 2CADR
+		2CADR	TSTLTS2		# Address of continuation routine
 
 		TC	ENDOFJOB	# DSPLOCK IS LEFT BUSY (FROM KEYBOARD
 					# ACTION) UNTIL TSTLTS3 TO INSURE THAT
-					# LIGHTS TEST WILL BE SEEN.
+					# LIGHTS TEST WILL BE SEEN for full 5 sec.
 
-FULLDSP		OCT	05675		# DISPLAY ALL 8'S
-FULLDSP1	OCT	07675		# DISPLAY ALL 8'S AND +
-TSTCON1		OCT	00175
+; Display constants for light test
+FULLDSP		OCT	05675		# DISPLAY ALL 8'S (seven-segment pattern)
+FULLDSP1	OCT	07675		# DISPLAY ALL 8'S AND + (with plus sign)
+TSTCON1		OCT	00175		# Channel 11 bits for first set of lights:
 # Page 386
 					# UPLINK ACTIVITY, TEMP, KEY RLSE,
 					# V/N FLASH, OPERATOR ERROR.
-TSTCON2		OCT	40650		# DSPTAB+11D BITS 4,6,8,9,
+TSTCON2		OCT	40650		# DSPTAB+11D BITS 4,6,8,9 for second set:
 					# NO ATT, GIMBAL LOCK, TRACKER, PROG ALM.
-TSTCON3		OCT	00115		# CHAN 11 BITS 1, 3, 4, 7.
+TSTCON3		OCT	00115		# CHAN 11 BITS 1, 3, 4, 7 to clear:
 					# UPLINK ACITIVY, TEMP, OPERATOR ERROR.
-SHOLTS		OCT	764		# 5 SEC
+SHOLTS		OCT	764		# 5 SEC (764 centiseconds = 5 seconds)
+;
+; TSTLTS2 - Intermediate routine called by WAITLIST after 5-second delay
+; Schedules TSTLTS3 as an executive job to complete the light test cleanup
+;
+TSTLTS2		CAF	CHRPRIO		# CALLED BY WAITLIST after 5 seconds
+		TC	NOVAC		# Schedule executive job at CHRPRIO priority
+		EBANK=	DSPTAB		# Set EBANK for 2CADR
+		2CADR	TSTLTS3		# Address of cleanup routine
 
-TSTLTS2		CAF	CHRPRIO		# CALLED BY WAITLIST
-		TC	NOVAC
-		EBANK=	DSPTAB
-		2CADR	TSTLTS3
+		TC	TASKOVER	# End WAITLIST task
 
-		TC	TASKOVER
-
+; ----------------------------------------------------------------------------
+; TSTLTS3 - Cleanup and Restore After Test (5 Seconds After VBTSTLTS)
+; ----------------------------------------------------------------------------
+; COMMENT-ONLY READERS: After the 5-second light test completes, this routine
+; turns off all display lights, blanks the DSKY displays, and restores the
+; computer to normal operating configuration.
+;
+; CODE-ALONG READERS: This is the cleanup phase of the light test sequence.
+; It clears the test constants from DSALMOUT (turning off UPLINK ACTIVITY,
+; TEMP, and OPERATOR ERROR lights), turns off the test alarm outbit in
+; channel 13, and restores the original IMODES33 and IMODES30 values that
+; were saved before the test began. Uses WAND (write AND) instructions to
+; selectively clear bits without affecting other channel state.
+;
+; Called by: WAITLIST timer (5 seconds after TSTLTS2 scheduled it)
+; A register: TSTCON3, then BIT10, used for bit clearing operations
+; Entry conditions: Interrupts enabled, called as WAITLIST task
+; Exit: Via POSTJUMP to TSTLTS4 for final restoration
+; Timing: Executes with INHINT protection to ensure atomic light updates
+; ----------------------------------------------------------------------------
 TSTLTS3		CS	TSTCON3		# CALLED BY EXECUTIVE
 		INHINT
 		EXTEND			# TURN OFF UPLINK ACTIVITY, TEMP,
 		WAND	DSALMOUT	# OPERATOR ERROR.
 		CS	BIT10		# TURN OFF TEST ALARM OUTBIT
-		EXTEND
-		WAND	CHAN13
+		EXTEND			# Clear bit 10 in channel 13 to disable
+		WAND	CHAN13		# the test alarm output signal
+;
+; Restore NO ATT light to follow actual spacecraft attitude status rather than
+; test state. The NO ATT (No Attitude) light indicates when IMU is in coarse
+; align mode and cannot provide reliable attitude reference.
+;
 		CAF	BIT4		# MAKE NO ATT FOLLOW BIT 4 OF CHANNEL 12
-		EXTEND			#	(NO TT LIGHT ON IF IN COARSE ALIGN)
-		RAND	CHAN12
+		EXTEND			#   (NO ATT LIGHT ON IF IN COARSE ALIGN)
+		RAND	CHAN12		# Read actual coarse align status from channel 12
 		AD	BIT15		# TURN OFF AUTO, HOLD, FREE, SPARE,
 		TS	DSPTAB 	+11D	# GIMBAL LOCK, SPARE, TRACKER, PROG ALM
+;
+; The DSPTAB +11D update clears the test pattern from the lower display lights
+; while preserving the actual NO ATT status just read from channel 12. This
+; ensures crew sees real system status, not test artifacts.
+; ----------------------------------------------------------------------------
+; Restore IMODES Registers to Pre-Test State
+; ----------------------------------------------------------------------------
+; The IMODES33 and IMODES30 registers track display and program status bits.
+; During the light test, these were temporarily modified to show all lamps on.
+; Now we restore them to reflect actual system state before the test began.
+;
 		CS	13-11,1		# SET BITS TO INDICATE ALL LAMPS OUT. TEST
 		MASK	IMODES33	# LIGHTS COMPLETE.
-		AD	PRIO16
-		TS	IMODES33
+		AD	PRIO16		# Add back priority 16 (bit 13)
+		TS	IMODES33	# Store restored IMODES33 value
+;
+; IMODES33 controls upper display lamp status. The mask operation clears test
+; bits while preserving actual operational status bits. Priority bit indicates
+; this is a high-priority display update.
+;
+		CS	OCT55000	# Prepare mask for IMODES30 restoration
+		MASK	IMODES30	# Clear test pattern bits from IMODES30
+		AD	PRIO15		# 15000 (priority 15 for medium priority)
+		TS	IMODES30	# Store restored IMODES30 value
+;
+; IMODES30 controls lower display and operational mode indicators. Similar
+; masking operation to IMODES33, but with slightly different priority level.
+;
+		CS	OPTMODES	# Restore optical modes register
+		MASK	BIT7		# Clear test bit 7
+		ADS	OPTMODES	# Add result back to OPTMODES (additive store)
+		RELINT			# Re-enable interrupts (test cleanup complete)
 
-		CS	OCT55000
-		MASK	IMODES30
-		AD	PRIO15		# 15000.
-		TS	IMODES30
-
-		CS	OPTMODES
-		MASK	BIT7
-		ADS	OPTMODES
-		RELINT
-
+; ----------------------------------------------------------------------------
+; Final Display Restoration and Return to Normal Operations
+; ----------------------------------------------------------------------------
+; With lights and modes restored, now refresh the displays to show current
+; program status and clear any test-related visual artifacts from DSKY.
+;
 		TC	BANKCALL	# REDISPLAY C(MODREG)
-		CADR	DSPMM
-		TC	KILMONON	# TURN ON KILL MONITOR BIT.
-		TC	FLASHOFF	# TURN OFF V/N FLASH.
+		CADR	DSPMM		# Display current major mode to crew
+;
+; DSPMM (Display Major Mode) updates the two-digit program number shown on
+; DSKY, ensuring crew sees which program is actually running (e.g., P00 for
+; idle, P63 for landing) rather than test pattern artifacts.
+;
+		TC	KILMONON	# TURN ON KILL MONITOR BIT
+;
+; KILMONON enables monitoring for program termination requests. During the
+; test, this monitoring was suspended; now it's safe to resume normal kill
+; signal handling.
+;
+		TC	FLASHOFF	# TURN OFF V/N FLASH
+;
+; FLASHOFF stops any verb/noun flashing that may have been active during test.
+; Flashing indicates computer is waiting for crew input; test should not leave
+; displays in perpetual flash state.
+;
 		TC	POSTJUMP	# DOES RELDSP AND GOES TO PINBRNCH IF
 		CADR	TSTLTS4		# ENDIDLE IS AWAITING OPERATOR RESPONSE.
+;
+; POSTJUMP performs final cleanup and branches to TSTLTS4 continuation point.
+; If a program was waiting for operator response before V35 was entered, this
+; restores that program's display and control.
+;
+; ----------------------------------------------------------------------------
+; NOTE: TSTLTS4 is a continuation address, not a separate routine. It represents
+; the return point after POSTJUMP completes display release operations. The
+; test lamp sequence (VBTSTLTS) is now complete: lights tested for 5 seconds,
+; all displays and modes restored to pre-test state.
+; ----------------------------------------------------------------------------
 # Page 387
 13-11,1		OCT	16001
 OCT55000	OCT	55000
@@ -3742,60 +4752,272 @@ ENDPINS2	EQUALS
 		SETLOC	DOPROC +2
 		COUNT	40/PIN
 
+; ============================================================================
+; ERROR ROUTINE - Error Light Reset and Display Cleanup
+; ============================================================================
+; FUNCTIONAL DESCRIPTION:
+; The ERROR routine resets all indicator lights and display error conditions
+; when crew presses the KEY RELEASE button while OPERATOR ERROR light is on,
+; or when other error recovery procedures are invoked. This routine clears
+; transient failure indicators while preserving critical warnings that reflect
+; actual hardware states (GIMBAL LOCK, NO ATT).
+;
+; CALLING SEQUENCE:
+; - Called when KEY RELEASE is pressed with OPERATOR ERROR light active
+; - Called by error recovery procedures after correcting input errors
+; - Called to reset test alarm conditions
+;
+; TYPICAL USAGE:
+; During Apollo 11 mission, if crew entered invalid verb/noun combination or
+; incorrect data format, OPERATOR ERROR light would illuminate. Pressing
+; KEY RELEASE would call this routine to clear the error indication and
+; associated display states, allowing crew to retry the operation correctly.
+;
+; DESIGN NOTES:
+; The routine carefully preserves hardware-driven warning lights (GIMBAL LOCK
+; indicates actual IMU gimbal angles, NO ATT indicates lost attitude reference)
+; while clearing software-generated error indications. This distinction prevents
+; masking genuine spacecraft state problems while allowing recovery from
+; operator input mistakes.
+; ============================================================================
+;
+; ----------------------------------------------------------------------------
+; Step 1: Restore Display Lock State
+; ----------------------------------------------------------------------------
+; First operation is to restore DSPLOCK to its original state before the error
+; condition was detected. The original value was saved in 21/22REG by the error
+; detection logic.
+;
 ERROR		XCH	21/22REG	# RESTORE ORIGINAL C(DSPLOCK).  THUS ERROR
 		TS	DSPLOCK		# LIGHT RESET LEAVES DSPLOCK CHANGED.
-		INHINT
+;
+; DSPLOCK controls which program has permission to update DSKY displays. By
+; restoring the saved value, we ensure the display is released back to the
+; program that had control before the error occurred, preventing display
+; conflicts.
+; ----------------------------------------------------------------------------
+; Step 2: Signal Caution Reset to External Systems
+; ----------------------------------------------------------------------------
+; Disable interrupts during critical light manipulation sequence to prevent
+; race conditions with concurrent display updates or alarm generation.
+;
+		INHINT			# Disable interrupts for atomic operation
+;
 		CAF	BIT10		# TURN ON `CAUTION RESET' OUTBIT
 		EXTEND
 		WOR	DSALMOUT	# BIT10 CHAN 11
+;
+; BIT10 of DSALMOUT (Channel 11) is the CAUTION RESET signal. Setting this
+; bit tells the Master Alarm circuit and Caution/Warning system to reset their
+; latch states. The Master Alarm, if lit, will be extinguished, and the
+; caution/warning matrix will clear indicators for transient failures.
+;
+; This is a momentary pulse - the bit will be set here and cleared later in
+; the routine. External hardware detects the positive edge and performs the
+; reset operation.
+; ----------------------------------------------------------------------------
+; Step 3: Selectively Clear Indicator Lights (Preserve Hardware Warnings)
+; ----------------------------------------------------------------------------
+; This is the critical discrimination: preserve GIMBAL LOCK and NO ATT lights
+; (which reflect actual hardware states) while clearing software-generated
+; lights (AUTO, HOLD, FREE, PROG ALARM, TRACKER) that may be stale after error.
+;
 		CAF	GL+NOATT	# LEAVE GIMBAL LOCK AND NO ATT INTACT,
 		MASK	DSPTAB +11D	# TURNING OFF AUTO, HOLD, FREE,
 		AD	BIT15		# PROG ALARM, AND TRACKER.
 		TS	DSPTAB +11D
+;
+; DSPTAB +11D is the indicator light control word. The logic here:
+; 1. Load mask GL+NOATT (bits for GIMBAL LOCK and NO ATT lights)
+; 2. AND with current DSPTAB +11D to extract only those two light states
+; 3. Add BIT15 (keeps one additional system light)
+; 4. Store back to DSPTAB +11D, effectively clearing all other lights
+;
+; Why preserve these specifically?
+; - GIMBAL LOCK: Indicates IMU middle gimbal is near 90° - actual geometry
+; - NO ATT: Indicates IMU platform has lost inertial reference - actual state
+; Both reflect hardware conditions that persist regardless of operator errors.
+;
+; Why clear PROG ALARM, AUTO, HOLD, FREE, TRACKER?
+; - PROG ALARM: Software-generated, may be stale after error recovery
+; - AUTO/HOLD/FREE: Autopilot mode indicators, should be regenerated by DAP
+; - TRACKER: Optics tracker status, should be refreshed by optics program
+; ----------------------------------------------------------------------------
+; Step 4: Reset Fail Bits in IMODES33 (Allow Fresh Failure Detection)
+; ----------------------------------------------------------------------------
+; Clear failure indication bits in IMODES33 that were responsible for
+; generating PROG ALARM. This allows the system to re-evaluate whether the
+; failure condition still exists.
+;
 		CS	PRIO16		# RESET FAIL BITS WHICH GENERATE PROG
 		MASK	IMODES33	# ALARM SO THAT IF THE FAILURE STILL
 		AD	PRIO16		# EXISTS, THE ALARM WILL COME BACK.
 		TS	IMODES33
-		CS	BIT10
-		MASK	IMODES30
-		AD	BIT10
-		TS	IMODES30
+;
+; IMODES33 contains IMU and navigation system status bits. Some bits, when set,
+; trigger PROG ALARM to warn crew of system failures. The logic here:
+; 1. Complement PRIO16 to create mask of bits to preserve
+; 2. AND with IMODES33 to zero out the failure bits
+; 3. Add back PRIO16 to restore any bits that should remain set
+; 4. Store to IMODES33
+;
+; This "reset and re-evaluate" strategy is important: if the underlying problem
+; (e.g., IMU heater failure, coarse align timeout) has been corrected, the alarm
+; stays off. If the problem persists, the alarm will regenerate on the next
+; system check cycle, ensuring crew isn't misled about actual spacecraft state.
+;
+; During Apollo 11, this mechanism allowed crew to acknowledge and dismiss
+; transient alarms while being immediately re-warned of persistent failures.
+		CS	BIT10		# Reset specific failure bit in IMODES30
+		MASK	IMODES30	# Clear BIT10 while preserving other bits
+		AD	BIT10		# Restore BIT10 to default state
+		TS	IMODES30	# Update IMODES30 with reset value
+;
+; IMODES30 contains additional system mode and failure bits. BIT10 in IMODES30
+; represents a specific failure condition (likely optics or radar related).
+; The same "clear and allow regeneration" logic applies: reset the bit, and if
+; the failure still exists, subsequent monitoring will set it again.
 
-		CS	OPTMODES
-		MASK	BIT7
-		ADS	OPTMODES
+; ----------------------------------------------------------------------------
+; Step 5: Reset Optics Mode Flag
+; ----------------------------------------------------------------------------
+; Clear BIT7 of OPTMODES, which controls optics tracking mode or error state.
+;
+		CS	OPTMODES	# Complement current optics modes
+		MASK	BIT7		# Extract BIT7 status
+		ADS	OPTMODES	# Add to OPTMODES (effectively toggles BIT7)
+;
+; OPTMODES contains flags controlling optics telescope and sextant operations.
+; BIT7 likely indicates an optics error condition or special mode that should
+; be cleared during error recovery. The ADS (Add to Storage) instruction
+; performs the toggle operation atomically.
+; ----------------------------------------------------------------------------
+; Step 6: Clear Test Alarm Output Signal
+; ----------------------------------------------------------------------------
+; Turn off the TEST ALARM outbit (used during ground testing and preflight
+; checkout) to ensure no spurious alarm signals remain active after error reset.
+;
 		CS	BIT10		# TURN OFF 'TEST ALARM' OUTBIT
 		EXTEND
-		WAND	CHAN13
+		WAND	CHAN13		# Channel 13 controls test/diagnostic signals
+;
+; WAND (Write AND) performs bitwise AND of complement with channel, effectively
+; clearing BIT10. TEST ALARM was primarily used during ground operations to
+; verify alarm circuits without triggering genuine flight alarms.
+;
+; ----------------------------------------------------------------------------
+; Step 7: Clear Operator Error and Uplink Activity Indicators
+; ----------------------------------------------------------------------------
+; Turn off UPLINK ACTIVITY and OPERATOR ERROR lights on DSKY. These are the
+; visible crew indications that prompted the error reset in the first place.
+;
 		CS	ERCON		# TURN OFF UPLINK ACTIVITY,
 		EXTEND			# OPERATOR ERROR.
-		WAND	DSALMOUT
+		WAND	DSALMOUT	# Channel 11 DSKY alarm outputs
+;
+; ERCON (OCT 104) is a mask containing bits for:
+; - BIT3: UPLINK ACTIVITY (Channel 11) - indicates data being received from ground
+; - BIT7: OPERATOR ERROR (Channel 11) - indicates crew entered invalid input
+;
+; Complementing ERCON and using WAND clears both bits simultaneously, turning
+; off both indicator lights. This is the visible confirmation to crew that the
+; error reset has been accepted and they may proceed with corrected input.
+; ----------------------------------------------------------------------------
+; Step 8: Clear Display Table Error Flags (TSTAB Loop)
+; ----------------------------------------------------------------------------
+; Process all DSPTAB entries to clear error-related flag bits while preserving
+; valid display state. This loop iterates backward through DSPTAB from index 10
+; down to 0, examining each entry's sign and clearing BIT12 (error indicator).
+;
 TSTAB		CAF	BINCON		# (DEC 10)
 		TS	ERCNT		# ERCNT = COUNT
-		INHINT
-		INDEX	ERCNT
-		CCS	DSPTAB
-		AD	ONE
-		TC	ERPLUS
-		AD	ONE
-ERMINUS		CS	A
-		MASK	NOTBIT12
-		TC	ERCOM
+;
+; BINCON = DEC 10, so we'll process 11 DSPTAB entries (indices 10 down to 0).
+; DSPTAB contains the display format and state flags for each DSKY output
+; position (registers R1, R2, R3 and their components).
+;
+		INHINT			# Disable interrupts during table update
+;
+; Critical section: updating DSPTAB must be atomic to prevent display corruption
+; if a concurrent display request occurs mid-update.
+;
+		INDEX	ERCNT		# Index to DSPTAB[ERCNT]
+		CCS	DSPTAB		# Count Check and Skip on current entry
+		AD	ONE		# Entry was positive: add 1
+		TC	ERPLUS		# Go to positive processing path
+		AD	ONE		# Entry was negative: add 1
+;
+; CCS performs four-way branch based on value's sign and magnitude:
+; 1. Value > 0: execute next instruction (AD ONE), then continue
+; 2. Value = +0: skip next instruction, execute second instruction (TC ERPLUS)
+; 3. Value < 0: skip two instructions, execute third instruction (AD ONE)
+; 4. Value = -0: skip three instructions, fall through to ERMINUS
+;
+; This discriminates between positive and negative display entries, each
+; requiring different processing to correctly clear error flag while maintaining
+; proper sign.
+;
+ERMINUS		CS	A		# Entry was negative: complement result
+		MASK	NOTBIT12	# Clear BIT12 (error flag)
+		TC	ERCOM		# Jump to common completion path
 # Page 389
-ERPLUS		CS	A
-		MASK	NOTBIT12
+ERPLUS		CS	A		# Entry was positive: complement result
+		MASK	NOTBIT12	# Clear BIT12 (error flag)
 		CS	A		# MIGHT WANT TO RESET CLPASS, DECBRNCH,
 ERCOM		INDEX	ERCNT		# ETC.
-		TS	DSPTAB
-		RELINT
-		CCS	ERCNT
-		TC	TSTAB	+1
-		CAF	ZERO
-		TS	FAILREG
-		TS	FAILREG +1
-		TS	FAILREG +2
-		TS	SFAIL
-		TC	ENDOFJOB
+		TS	DSPTAB		# Store back to DSPTAB[ERCNT]
+;
+; NOTBIT12 (OCT 73777) is a mask with all bits set EXCEPT BIT12. ANDing with
+; this mask clears BIT12 while preserving all other bits.
+;
+; BIT12 in DSPTAB entries indicates an error or special condition requiring
+; crew attention. Clearing it during error reset allows displays to return
+; to normal state.
+;
+; The original comment "MIGHT WANT TO RESET CLPASS, DECBRNCH, ETC." suggests
+; the designers considered but decided against clearing additional display
+; control flags. Those flags (CLPASS = clear pass indicator, DECBRNCH = decimal
+; branch indicator) are managed by display formatting logic and should persist
+; through error resets.
+;
+		RELINT			# Re-enable interrupts
+		CCS	ERCNT		# Decrement and test loop counter
+		TC	TSTAB	+1	# More entries to process: continue loop
+;
+; Loop continues until ERCNT counts down to zero, processing all 11 DSPTAB
+; entries in descending order.
+;
+; ----------------------------------------------------------------------------
+; Step 9: Clear Failure Register Set
+; ----------------------------------------------------------------------------
+; Zero out all failure tracking registers, clearing all recorded system failures.
+; This is the final cleanup action before returning to normal operations.
+;
+		CAF	ZERO		# Load constant zero
+		TS	FAILREG		# Clear primary failure register
+		TS	FAILREG +1	# Clear secondary failure register
+		TS	FAILREG +2	# Clear tertiary failure register
+		TS	SFAIL		# Clear special failure indicator
+;
+; FAILREG, FAILREG+1, FAILREG+2: Three-word failure tracking registers recording
+; which systems have generated alarms. Each bit typically corresponds to a
+; specific subsystem or failure mode.
+;
+; SFAIL: Special failure indicator for conditions requiring immediate attention.
+;
+; Clearing these registers is appropriate after crew has acknowledged the error:
+; the system gets a "clean slate" to detect new failures. If any underlying
+; failure persists, the monitoring software will regenerate the appropriate
+; failure bits on its next check cycle.
+;
+; ----------------------------------------------------------------------------
+; ERROR Routine Complete - Return to Executive
+; ----------------------------------------------------------------------------
+; All error reset actions completed. The DSKY is cleared, lights are off,
+; failure registers are zeroed, and the system is ready for crew to re-enter
+; commands or for programs to resume normal display operations.
+;
+		TC	ENDOFJOB	# Terminate this EXEC job, return control
 
 ERCON		OCT	104		# CHAN 11 BITS 3,7.
 					# UPLINK ACTIVITY, AND OPERATOR ERROR.

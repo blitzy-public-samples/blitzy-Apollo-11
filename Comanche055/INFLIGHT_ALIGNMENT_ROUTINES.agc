@@ -28,11 +28,37 @@
 #			Colossus 2A
 
 # Page 1355
+; ============================================================================
+; FILE: INFLIGHT_ALIGNMENT_ROUTINES.agc
+; MODULE: CHIEFTAN Subsystem (Core OS)
+; MISSION PHASE: all-phases
+;
+; TL;DR: In-flight IMU alignment procedures enabling platform realignment without
+;        shutdown. Implements gyrocompass and optical alignment modes allowing
+;        IMU reorientation during flight to correct drift or establish new
+;        reference frames for mission phase transitions.
+;
+; COMMENT-ONLY READERS: This program realigned the navigation platform during
+;        flight without having to shut it down.
+; CODE-ALONG READERS: Study in-flight alignment algorithms, gyrocompass procedures,
+;        platform reorientation without power-down, alignment mode transitions.
+; ============================================================================
+
 		BANK	22
 		SETLOC	INFLIGHT
 		BANK
 
 		EBANK=	XSM
+
+; ============================================================================
+; TRANSITION: Gyro Torque Angle Computation
+;
+; The Inertial Measurement Unit's stable platform can drift during long missions.
+; To correct this drift without shutting down the IMU, the spacecraft computer
+; must calculate precise torquing angles for each of the three gyroscopes. This
+; section computes those angles to physically reorient the platform to match
+; the desired orientation.
+; ============================================================================
 
 # CALCGTA COMPUTES THE GYRO TORQUE ANGLES REQUIRED TO BRING THE STABLE MEMBER INTO THE DESIRED ORIENTATION.
 #
@@ -43,6 +69,17 @@
 # MGC, AND OGC RESPECTIVELY.
 
 		COUNT	23/INFLT
+
+; CALCGTA routine entry: Computes three gyro torquing angles (IGC, MGC, OGC)
+; to physically reorient the stable member platform. These angles represent
+; the amount each gyroscope must be torqued to bring the current platform
+; orientation into alignment with the desired orientation.
+;
+; TECHNICAL DETAILS for code-along readers:
+; - Uses vector algebra to compute rotation angles
+; - XDC, YDC, ZDC are half-unit vectors defining desired orientation
+; - Outputs IGC (inner gimbal), MGC (middle gimbal), OGC (outer gimbal)
+; - All angles stored as fractions of revolution (0.5 = 180 degrees)
 
 CALCGTA		ITA	DLOAD		# PUSHDOWN  00-03,16D-27D,34D-37D
 			S2		# XDC = (XD1 XD2 XD3)
@@ -93,6 +130,15 @@ CALCGTA		ITA	DLOAD		# PUSHDOWN  00-03,16D-27D,34D-37D
 			S2
 
 # Page 1357
+; ============================================================================
+; TRANSITION: Angle Computation from Trigonometric Components
+;
+; Once the computer has calculated the sine and cosine values for a gyro
+; torquing angle, it must determine the actual angle value. This arctangent-
+; style computation handles all four quadrants correctly, ensuring the gyros
+; receive the proper torquing commands to reorient the platform.
+; ============================================================================
+
 # ARCTRIG COMPUTES AN ANGLE GIVEN THE SINE AND COSINE OF THIS ANGLE.
 #
 # THE INPUTS ARE SIN/4 AND COS/4 STORED DP AT SINTH AND COSTH.
@@ -100,11 +146,25 @@ CALCGTA		ITA	DLOAD		# PUSHDOWN  00-03,16D-27D,34D-37D
 # THE OUTPUT IS THE CALCULATED ANGLE BETWEEN +.5 AND -.5 REVOLUTIONS AND STORED AT THETA. THE OUTPUT IS ALSO
 # AVAILABLE AT MPAC.
 
+; ARCTRIG routine: Arctangent-style angle computation from sine and cosine.
+; This handles all four quadrants properly, unlike simple arcsin or arccos.
+;
+; TECHNICAL DETAILS for code-along readers:
+; - Inputs: SINTH (sine/4), COSTH (cosine/4) in double precision
+; - Output: THETA (angle as fraction of revolution, range ±0.5)
+; - Handles special cases: zero crossings, sign changes, quadrant boundaries
+; - Uses conditional logic to select ACOS or ASIN based on angle magnitude
+; - Result also available in MPAC for immediate use
+
 ARCTRIG		DLOAD	ABS		# PUSHDOWN  16D-21D
 			SINTH
 		DSU	BMN
 			QTSN45		# ABS(SIN/4) - SIN(45)/4
 			TRIG1		# IF (-45,45) OR (135,-135)
+
+; For angles with large cosine component (near 0° or 180°), use ACOS for
+; better numerical accuracy. This branch handles the 45°-135° and -135° to -45°
+; ranges where sine magnitude exceeds cosine magnitude.
 
 		DLOAD	SL1		# (45,135) OR (-135,-45)
 			COSTH
@@ -112,6 +172,10 @@ ARCTRIG		DLOAD	ABS		# PUSHDOWN  16D-21D
 			SINTH
 		STORE	THETA		# X = ARCCOS(COS) WITH SIGN(SIN)
 		RVQ
+
+; For angles with large sine component (near 90° or -90°), use ASIN for
+; better numerical accuracy. This branch handles the -45° to 45° range and
+; the 135° to -135° range where cosine magnitude is small.
 
 TRIG1		DLOAD	SL1		# (-45,45) OR (135,-135)
 			SINTH
@@ -123,6 +187,10 @@ TRIG1		DLOAD	SL1		# (-45,45) OR (135,-135)
 
 		DLOAD	RVQ
 			THETA		# X = ARCSIN(SIN)   (-45,45)
+
+; Special handling for angles near ±180° where cosine is negative.
+; Computes angle as ±0.5 revolution minus the arcsin value to correctly
+; place angle in second or third quadrant.
 
 TRIG2		DLOAD	SIGN		# (135,-135)
 			HIDPHALF
@@ -138,6 +206,16 @@ TRIG2		DLOAD	SIGN		# (135,-135)
 # FLIGHT SUBROUTINES.
 
 # Page 1359
+; ============================================================================
+; TRANSITION: CDU Driving Angle Computation
+;
+; The Coupling Data Units (CDUs) measure the actual gimbal angles of the IMU.
+; To drive the stable member to a new orientation, the computer must calculate
+; what CDU angles will position the gimbals correctly. This routine computes
+; those driving angles by comparing the desired stable member orientation
+; with the current navigation base orientation.
+; ============================================================================
+
 # CALCGA COMPUTES THE CDU DRIVING ANGLES REQUIRED TO BRING THE STABLE MEMBER INTO THE DESIRED ORIENTATION.
 #
 # THE INPUTS ARE  1) THE NAVIGATION BASE COORDINATES REFERRED TO ANY COORDINATE SYSTEM. THE THREE HALF-UNIT
@@ -146,12 +224,32 @@ TRIG2		DLOAD	SIGN		# (135,-135)
 #
 # THE OUTPUTS ARE THE THREE CDU DRIVING ANGLES AND ARE STORED SP AT THETAD, THETAD +1, AND THETAD +2.
 
+; CALCGA routine: Computes CDU (Coupling Data Unit) driving angles.
+; These angles position the IMU gimbals to achieve the desired stable member
+; orientation. During in-flight alignment, these CDU angles command the
+; physical gimbal motors to rotate the platform smoothly into proper alignment.
+;
+; TECHNICAL DETAILS for code-along readers:
+; - Inputs: XNB/YNB/ZNB (navigation base coords), XSM/YSM/ZSM (desired SM coords)
+; - Outputs: THETAD, THETAD+1, THETAD+2 (three CDU angles in single precision)
+; - Computes gimbal axis vectors via cross products
+; - Uses ARCTRIG to resolve angles from trig components
+; - Handles gimbal lock region (middle gimbal near 90°)
+
 CALCGA		SETPD			# PUSHDOWN  00-05, 16D-21D, 34D-37D
 			0
+
+; Step 1: Compute middle gimbal axis (MGA) from cross product of outer and
+; inner gimbal axes. XNB represents outer gimbal axis, YSM represents inner
+; gimbal axis. The middle gimbal axis is perpendicular to both.
+
 		VLOAD	VXV
 			XNB		# XNB = OGA (OUTER GIMBAL AXIS)
 			YSM		# YSM = IGA (INNER GIMBAL AXIS)
 		UNIT	PUSH		# PD0 = UNIT(OGA X IGA) = MGA
+
+; Step 2: Compute outer gimbal angle (OGC) by projecting middle gimbal axis
+; onto navigation base Z and Y axes to get cosine and sine components.
 
 		DOT	ITA
 			ZNB
@@ -164,6 +262,11 @@ CALCGA		SETPD			# PUSHDOWN  00-05, 16D-21D, 34D-37D
 			ARCTRIG
 		STOVL	OGC
 			0
+
+; Step 3: Compute middle gimbal angle (MGC). This computation includes special
+; handling for the case where middle gimbal is near 90 degrees (gimbal lock
+; region). Uses cross product (MGA X OGA) dotted with IGA for cosine, and
+; direct dot product IGA . OGA for sine.
 
 		VXV	DOT		# PROVISION FOR MG ANGLE OF 90 DEGREES
 			XNB
@@ -182,6 +285,10 @@ CALCGA		SETPD			# PUSHDOWN  00-05, 16D-21D, 34D-37D
 		BPL
 			GIMLOCK1	# IF ANGLE GREATER THAN 60 DEGREES
 
+; Step 4: Compute inner gimbal angle (IGC) by projecting desired stable
+; member Z and X axes onto the middle gimbal axis. Normal path proceeds here
+; if middle gimbal is in safe operating region (not near 90 degrees).
+
 CALCGA1		VLOAD	DOT
 			ZSM
 			0
@@ -194,12 +301,22 @@ CALCGA1		VLOAD	DOT
 
 		STOVL	IGC
 			OGC
+
+; Step 5: Convert computed angles from fractions of revolution to CDU angle
+; format. V1STO2S routine converts three DP angles to three SP CDU values.
+; CPHIFLAG indicates whether to bypass certain CDU transformations.
+
 		RTB	BONCLR
 			V1STO2S
 			CPHIFLAG
 			S2
 		STCALL	THETAD
 			S2
+
+; GIMBAL LOCK WARNING: If middle gimbal angle exceeds 60 degrees, the IMU
+; approaches gimbal lock (singularity at 90 degrees where outer and inner
+; gimbals align). This condition triggers alarm 00401 and sets the GLOKFAIL
+; flag to warn the crew. The computation continues but with reduced accuracy.
 
 GIMLOCK1	EXIT
 		TC	ALARM
@@ -212,6 +329,16 @@ GIMLOCK1	EXIT
 			CALCGA1
 
 # Page 1361
+; ============================================================================
+; TRANSITION: Coordinate System Transformation
+;
+; During in-flight alignment, the navigation platform must be reoriented to
+; match a desired reference frame. To compute this transformation, the AGC
+; uses star sightings observed in two different coordinate systems. AXISGEN
+; constructs the transformation matrix between these coordinate systems by
+; analyzing how two star vectors appear in each reference frame.
+; ============================================================================
+
 # AXISGEN COMPUTES THE COORDINATES OF ONE COORDINATE SYSTEM REFERRED TO ANOTHER COORDINATE SYSTEM.
 #
 # THE INPUTS ARE  1) THE STAR1 VECTOR REFERRED TO COORDINATE SYSTEM A STORED AT STARAD.  2) THE STAR2 VECTOR
@@ -222,6 +349,18 @@ GIMLOCK1	EXIT
 # THE OUTPUT DEFINES COORDINATE SYSTEM A REFERRED TO COORDINATE SYSTEM B.  THE THREE HALF-UNIT VECTORS ARE STORED
 # AT LOCATIONS XDC, XDC +6, XDC +12D, AND STARAD, STARAD +6, STARAD +12D.
 
+; AXISGEN routine: Transforms coordinate system A to coordinate system B
+; using star vector observations. This fundamental routine enables IMU
+; realignment by computing the rotation matrix between the current platform
+; orientation and the desired orientation.
+;
+; TECHNICAL DETAILS for code-along readers:
+; - Inputs: Two star vectors (S1, S2) observed in both coordinate systems
+; - Process: 1) Build orthonormal basis from cross products of star vectors
+;           2) Compute transformation matrix via dot products of basis vectors
+;           3) Store result at XDC, YDC, ZDC and STARAD locations
+; - Uses indexed addressing (X1, X2) to iterate through vector components
+
 AXISGEN		AXT,1	SSP		# PUSHDOWN  00-30D, 34D-37D
 			STARAD 	+6
 			S1
@@ -229,6 +368,15 @@ AXISGEN		AXT,1	SSP		# PUSHDOWN  00-30D, 34D-37D
 
 		SETPD
 			0
+
+; Step 1: Build orthonormal basis vectors for both coordinate systems A and B.
+; The loop (AXISGEN1) executes twice, once for each coordinate system.
+; For each system:
+;   - Take first star vector (UA or UB)
+;   - Compute cross product with second star vector to get perpendicular (VA or VB)
+;   - Normalize to unit vector
+;   - Compute third orthogonal vector (WA or WB) to complete right-handed basis
+
 AXISGEN1	VLOAD*	VXV*		# 06D	UA = S1
 			STARAD 	+12D,1	#	STARAD +00D	UB = S1
 			STARAD 	+18D,1
@@ -258,6 +406,12 @@ AXISGEN1	VLOAD*	VXV*		# 06D	UA = S1
 			S2
 			2
 
+; Step 2: Compute transformation matrix from system A to system B using the
+; orthonormal basis vectors constructed above. The nested loop computes each
+; row of the transformation matrix by taking dot products of basis vectors
+; from system A with basis vectors from system B. This produces the three
+; direction cosine vectors XDC, YDC, ZDC defining system A in terms of B.
+
 AXISGEN2	XCHX,1	VLOAD*
 			30D		# X1=-6 X2=+6	X1=-6 X2=+4	X1=-6 X2=+2
 			0,1
@@ -285,6 +439,11 @@ AXISGEN2	XCHX,1	VLOAD*
 AXISGEN3	TIX,2
 			AXISGEN2
 
+; Step 3: Store final transformation matrix. The computed direction cosine
+; vectors (XDC, YDC, ZDC) are copied to STARAD locations for subsequent use
+; in alignment calculations. These three half-unit vectors completely define
+; the orientation of coordinate system A relative to coordinate system B.
+
 		VLOAD
 			XDC
 		STOVL	STARAD
@@ -296,6 +455,10 @@ AXISGEN3	TIX,2
 		RVQ
 
 # Page 1363
+; Mathematical constants used in in-flight alignment routines:
+; QTSN45 = 0.1768 (approximately sin(45°)/sqrt(2), used in gimbal lock checks)
+; .166... = 0.1666666667 (1/6, used in Taylor series expansions)
+
 QTSN45		2DEC	.1768
 .166...		2DEC	.1666666667
 

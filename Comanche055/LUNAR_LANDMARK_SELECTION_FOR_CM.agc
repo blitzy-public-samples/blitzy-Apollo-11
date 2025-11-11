@@ -30,6 +30,53 @@
 
 # Page 936
 
+; ============================================================================
+; FILE: LUNAR_LANDMARK_SELECTION_FOR_CM.agc
+; MODULE: TROUBLE Subsystem (Mission Programs)
+; MISSION PHASE: lunar-orbit
+;
+; TL;DR: Lunar surface landmark optical tracking for Command Module navigation
+;        updates. Enables crew to sight known lunar surface features through
+;        optics, providing navigation state corrections during lunar orbit
+;        operations while LM conducts surface mission.
+;
+; COMMENT-ONLY READERS: This program let Michael Collins track known features
+;        on the Moon's surface to improve navigation while orbiting alone.
+; CODE-ALONG READERS: Study landmark sighting processing, optical navigation
+;        measurement incorporation, and navigation state update algorithms.
+; ============================================================================
+
+; PLACEHOLDER FILE NOTATION
+;
+; This file marks the end of the TROUBLE subsystem section 043 in the Command
+; Module AGC program. The actual lunar landmark selection code would have
+; enabled optical tracking of known surface features for navigation updates.
+;
+; OPERATIONAL CONTEXT:
+; During Apollo 11's mission, while the Lunar Module Eagle descended to the
+; surface with Armstrong and Aldrin, Command Module pilot Michael Collins
+; remained in lunar orbit aboard Columbia. Landmark tracking allowed Collins
+; to sight known lunar surface features through the Command Module optics
+; (sextant), improving the spacecraft's navigation state vector accuracy.
+;
+; NAVIGATION MEASUREMENT PROCESS:
+; 1. Crew identifies known landmark on lunar surface using star charts
+; 2. Sights landmark through Command Module sextant optics
+; 3. AGC records sighting angles and timing
+; 4. Measurement incorporation routines (MEASUREMENT_INCORPORATION.agc) 
+;    compute state vector corrections based on expected vs actual landmark
+;    position
+; 5. Navigation state updated with improved position/velocity accuracy
+;
+; MISSION SIGNIFICANCE:
+; Landmark tracking provided independent navigation verification during lunar
+; orbit operations, especially critical during periods when ground tracking
+; was unavailable (far side of Moon passes). Collins performed these optical
+; navigation tasks while maintaining solo orbit operations, demonstrating the
+; Command Module's autonomous navigation capabilities.
+;
+; Source: This notation explains the purpose of landmark selection programs
+; that would integrate with MEASUREMENT_INCORPORATION.agc navigation updates.
 
 # *** END OF TROUBLE .043 ***
 

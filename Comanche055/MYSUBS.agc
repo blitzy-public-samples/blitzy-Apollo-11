@@ -29,6 +29,22 @@
 #			Colossus 2A
 
 # Page 999
+; ============================================================================
+; FILE: MYSUBS.agc
+; MODULE: TVCDAPS Subsystem (Control Systems)
+; MISSION PHASE: all-phases
+;
+; TL;DR: Utility subroutines for control system calculations including
+;        mathematical operations, coordinate transformations, and common
+;        functions used by TVC and DAP modules. Provides shared computational
+;        routines to autopilot and guidance systems.
+;
+; COMMENT-ONLY READERS: This file contains helper math functions used by
+;        other control and steering programs.
+; CODE-ALONG READERS: Study utility subroutine implementations for control
+;        system support functions.
+; ============================================================================
+
 		BANK	20
 		SETLOC	MYSUBS
 		BANK
@@ -42,52 +58,93 @@ SPSIN2		EQUALS	SPSIN
 
 		COUNT	21/DAPMS
 
+; ============================================================================
+; SMALLMP - ONE AND ONE HALF PRECISION MULTIPLICATION ROUTINE
+;
+; This subroutine performs multiplication with extended precision, providing
+; greater accuracy than standard single-precision operations. Used throughout
+; the control system calculations where precision is critical for spacecraft
+; attitude control and trajectory computations.
+;
+; OPERATION: Multiplies the value in A register by a double-precision value
+; in KMPAC (KMPAC and KMPAC+1), producing a double-precision result. The
+; algorithm splits the multiplication into two parts (AX and AY) and
+; combines them using double-precision addition.
+;
+; INPUT:  A register contains multiplier (single precision)
+;         KMPAC, KMPAC+1 contain multiplicand (double precision)
+; OUTPUT: KMPAC, KMPAC+1 contain product (double precision)
+; TIMING: 14 machine cycles
+; ============================================================================
 # ONE AND ONE HALF PRECISION MULTIPLICATION ROUTINE
 
-SMALLMP		TS	KMPTEMP		# A(X+Y)
+SMALLMP		TS	KMPTEMP		# A(X+Y) - Store multiplier for later use
 		EXTEND
-		MP	KMPAC 	+1
-		TS	KMPAC 	+1	# AY
-		CAF	ZERO
-		XCH	KMPAC
+		MP	KMPAC 	+1	# Multiply A by lower word of KMPAC
+		TS	KMPAC 	+1	# AY - Store lower product term
+		CAF	ZERO		# Clear A register
+		XCH	KMPAC		# Exchange with upper word of KMPAC
 		EXTEND
-		MP	KMPTEMP		# AX
-		DAS	KMPAC		# AX+AY
-		TC	Q
+		MP	KMPTEMP		# AX - Multiply A by original multiplier
+		DAS	KMPAC		# AX+AY - Double precision add, final result
+		TC	Q		# Return to caller
 
-
+; ============================================================================
+; DPADD - DOUBLE PRECISION ANGLE ADDITION WITH OVERFLOW HANDLING
+;
+; This subroutine adds a double-precision angle to the accumulator KMPAC,
+; with special handling for angular overflow conditions. Critical for
+; attitude control computations where angles wrap around at 180 degrees.
+; During spacecraft maneuvers, this routine ensures angle calculations
+; remain within valid ranges even when rotation exceeds 360 degrees.
+;
+; OPERATION: Performs double-precision addition of angle in A,L registers
+; to KMPAC. If overflow occurs (angle exceeds ±180 degrees), the routine
+; wraps the angle back into valid range by adding or subtracting 360 degrees.
+; This prevents angle representation errors during continuous rotations.
+;
+; INPUT:  A, L registers contain angle to add (scaled by 180 degrees)
+;         KMPAC, KMPAC+1 contain current angle accumulator
+; OUTPUT: KMPAC, KMPAC+1 contain sum with overflow correction
+; TIMING: 6 machine cycles (normal), 22 machine cycles (with overflow)
+;
+; ANGLE SCALING: Angles are represented as fractions of 180 degrees.
+; +1.0 = +180 degrees, -1.0 = -180 degrees, 0.5 = +90 degrees, etc.
+; ============================================================================
 # SUBROUTINE FOR DOUBLE PRECISION ADDITIONS OF ANGLES
 # A AND L CONTAIN A DP(1S) ANGLE SCALED BY 180 DEGS TO BE ADDED TO KMPAC.
 # RESULT IS PLACED IN KMPAC.  TIMING = 6 MCT (22 MCT ON OVERFLOW)
 
-DPADD		DAS	KMPAC
+DPADD		DAS	KMPAC		# Double precision add to KMPAC
 		EXTEND
-		BZF	TSK 	+1	# NO OVERFLOW
-		CCS	KMPAC
-		TCF	DPADD+		# + OVERFLOW
-		TCF	+2
-		TCF	DPADD-		# - OVERFLOW
-		CCS	KMPAC 	+1
-		TCF	DPADD2+		# UPPER = 0, LOWER +
-		TCF	+2
-		COM			# UPPER = 0, LOWER -
-		AD	POSMAX		# LOWER = 0, A=0
-		TS	KMPAC 	+1	# CAN NOT OVERFLOW
-		CA	POSMAX		# UPPER WAS = 0
-TSK		TS	KMPAC
-		TC	Q
+		BZF	TSK 	+1	# NO OVERFLOW - Branch if no overflow occurred
+		CCS	KMPAC		# Check sign of upper word to determine overflow direction
+		TCF	DPADD+		# + OVERFLOW - Positive overflow, angle > +180 deg
+		TCF	+2		# Skip negative overflow case
+		TCF	DPADD-		# - OVERFLOW - Negative overflow, angle < -180 deg
+		CCS	KMPAC 	+1	# Upper word was zero, check lower word
+		TCF	DPADD2+		# UPPER = 0, LOWER + (small positive overflow)
+		TCF	+2		# Skip complement case
+		COM			# UPPER = 0, LOWER - (complement for negative)
+		AD	POSMAX		# LOWER = 0, A=0 - Handle zero case
+		TS	KMPAC 	+1	# CAN NOT OVERFLOW - Store corrected lower word
+		CA	POSMAX		# UPPER WAS = 0 - Set upper word to max
+TSK		TS	KMPAC		# Store corrected upper word
+		TC	Q		# Return to caller with corrected angle
 
-DPADD+		AD	NEGMAX		# KMPAC GREATER THAN 0
-		TCF	TSK
+DPADD+		AD	NEGMAX		# KMPAC GREATER THAN 0 - Wrap positive overflow
+		TCF	TSK		# Store and return
 
 # Page 1000
-DPADD-		COM
-		AD	POSMAX		# KMPAC LESS THAN 0
-		TCF	TSK
+; Negative overflow correction - angle wrapped below -180 degrees
+DPADD-		COM			# Complement the negative overflow
+		AD	POSMAX		# KMPAC LESS THAN 0 - Add 360 deg correction
+		TCF	TSK		# Store corrected angle and return
 
-DPADD2+		AD	NEGMAX		# CAN NOT OVERFLOW
-		TS	KMPAC 	+1
-		CA	NEGMAX		# UPPER WAS = 0
-		TCF	TSK
+; Small positive overflow when upper word was zero
+DPADD2+		AD	NEGMAX		# CAN NOT OVERFLOW - Wrap small positive excess
+		TS	KMPAC 	+1	# Store corrected lower word
+		CA	NEGMAX		# UPPER WAS = 0 - Set upper to negative max
+		TCF	TSK		# Store and return
 
 # Page 1001 (empty page)

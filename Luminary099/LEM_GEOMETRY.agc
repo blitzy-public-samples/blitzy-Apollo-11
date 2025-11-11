@@ -26,6 +26,24 @@
 #	Assemble revision 001 of AGC program LMY99 by NASA 2021112-061
 #	16:27 JULY 14, 1969
 
+# ============================================================================
+# FILE: LEM_GEOMETRY.agc
+# MODULE: Lunar Module Navigation System
+# MISSION PHASE: all-phases (continuous state vector management)
+#
+# TL;DR: Implements Lunar Module physical geometry calculations and state vector
+#        conversions. Computes actual LM and CSM state vectors by combining conic
+#        position/velocity with deviation vectors. Converts between different
+#        scaling conventions (B-27/B-5 vs B-29/B-7) and formats state vectors
+#        for downlink telemetry. Manages coordinate transformations accounting
+#        for LM physical configuration including landing gear geometry.
+#
+# COMMENT-ONLY READERS: These routines track where the Lunar Module is in space
+#        and convert that information for transmission to Mission Control.
+# CODE-ALONG READERS: Study state vector scaling conversions, coordinate frame
+#        transformations, and downlink data formatting for navigation telemetry.
+# ============================================================================
+
 # Page 320
 		BANK	23
 		SETLOC	LEMGEOM
