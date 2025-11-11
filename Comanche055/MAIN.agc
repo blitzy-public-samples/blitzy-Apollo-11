@@ -1,3 +1,21 @@
+# ============================================================================
+# FILE: MAIN.agc
+# MODULE: Command Module Top-Level Assembly File
+# MISSION PHASE: all-phases (master assembly structure)
+#
+# TL;DR: Top-level assembly file for Comanche055 Command Module AGC software.
+#        Defines complete file inclusion structure organizing 76 source files
+#        into subsystems (INFORMATION, COMERASE, COMAID, COMEKISS, TROUBLE,
+#        TVCDAPS, CHIEFTAN). Controls assembly order and memory allocation for
+#        entire CM flight program. This is the master build file that assembles
+#        all code for Apollo Command Module guidance computer.
+#
+# COMMENT-ONLY READERS: This file shows the organization of all Command Module
+#        software - the table of contents for the entire AGC program.
+# CODE-ALONG READERS: Study subsystem organization and assembly structure that
+#        builds the complete CM flight program from component source files.
+# ============================================================================
+
 $CONTRACT_AND_APPROVALS.agc			# p. 1
 $ASSEMBLY_AND_OPERATION_INFORMATION.agc		# pp. 2-26
 $TAGS_FOR_RELATIVE_SETLOC.agc			# pp. 27-35
