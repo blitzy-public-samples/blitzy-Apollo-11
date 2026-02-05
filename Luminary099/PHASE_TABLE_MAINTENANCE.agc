@@ -81,6 +81,23 @@ DSPMMJOB	EQUALS	DSPMMJB
 		BANK
 
 # Page 1295
+# ============================================================================
+# PHASE TABLE MAINTENANCE - STATE CHECKPOINTING SUBSYSTEM
+# ============================================================================
+# [MODERN EQUIVALENT: This module implements a state checkpointing mechanism
+# for fault-tolerant restart. The PHASCHNG (State Checkpoint Update) routines
+# allow mission programs to save their execution state so that hardware
+# restarts can resume programs without losing progress.]
+#
+# TERMINOLOGY TRANSLATION:
+#   Phase Tables = State Checkpointing
+#   PHASCHNG = State Checkpoint Update
+#   CADRTAB = Recovery Routing Table
+#   2CADR = Two-Word Bank-Switched Address
+#   FINDVAC = Job with VAC Area Allocation
+#   NOVAC = Job without VAC Area
+# ============================================================================
+#
 # PHASCHNG IS THE MAIN WAY OF MAKING PHASE CHANGES FOR RESTARTS.  THERE ARE THREE FORMS OF PHASCHNG, KNOWN AS TYPE
 # A, TYPE B, AND TYPE C.  THEY ARE ALL CALLED AS FOLLOWS, WHERE OCT XXXXX CONTAINS THE PHASE INFORMATION,
 #		TC	PHASCHNG
@@ -98,7 +115,17 @@ DSPMMJOB	EQUALS	DSPMMJB
 # WHERE EACH LETTER OR NUMBER STANTS FOR A BIT.  THE G'S STAND FOR THE GROUP, OCTAL 1-7, THE P'S FOR THE PHASE,
 # OCTAL 0 - 127.  0'S MUST BE 0.  IF ONE WISHES TO HAVE THE TBASE OF GROUP G TO BE SET AT THIS TIME,
 # T IS SET TO 1, OTHERWISE IT IS SET TO 0.  SIMILARLY IF ONE WISHES TO SET LONGBASE, THEN L IS SET TO 1, OTHERWISE
-# IT IS SET TO 0.  SOME EXAMPLES,
+# IT IS SET TO 0.
+#
+# [MODERN: The bit encoding TL0 00P PPP PPP GGG represents:
+#   Bits 0-2 (GGG): Restart group (1-7) - logical grouping of related tasks
+#   Bits 3-9 (PPP PPP P): Phase value (0-127) - index into restart tables
+#   Bits 10-11: Must be 00 for Type A
+#   Bit 12: Must be 0 for Type A
+#   Bit 14 (L): LONGBASE flag - if 1, set LONGBASE for longcall timing
+#   Bit 15 (T): TBASE flag - if 1, set TBASEn time reference for this group]
+#
+# SOME EXAMPLES,
 #		TC	PHASCHNG	# THIS WILL CAUSE GROUP 3 TO BE SET TO 0,
 #		OCT	00003		# MAKING GROUP 3 INACTIVE
 #
@@ -125,6 +152,12 @@ DSPMMJOB	EQUALS	DSPMMJB
 # WHERE EACH LETTER OR NUMBER STANDS FOR A BIT.  THE G'S STAND FOR THE GROUP, OCTAL 1 - 7.  IF THE RESTART IS TO
 # BE BY WAITLIST, W IS SET TO 1, IF IT IS A JOB, J IS SET TO 1, IF IT IS A LONGCALL, C IS SET TO 1.  ONLY ONE OF
 # THESE THREE BITS MAY BE SET.  X'S ARE IGNORED, 1 MUST BE 1, AND 0 MUST BE 0.  AGAIN T STANDS FOR THE TBASE,
+#
+# [MODERN: Type C implements variable phase changes where restart information
+# is stored at runtime rather than compiled into tables. The CJW bits select
+# the restart type: Longcall (C=1), Job (J=1), or Waitlist task (W=1).
+# Only ONE of these three bits may be set.]
+#
 # Page 1296
 # AND L FOR LONGBASE.  THE BITS A AND D ARE CONCERNED WITH THE VARIABLE INFORMATION.  IF D IS SET TO 1, A PRIORITY
 # OR DELTA TIME WILL BE READ FROM THE NEXT LOCATION AFTER THE OCTAL INFORMATION., IF THIS IS TO BE INDIRECT, THAT
@@ -158,7 +191,13 @@ DSPMMJOB	EQUALS	DSPMMJB
 # PHASE INFORMATION, OCTAL 0 - 127.  1 MUST BE 1.  AND AGAIN T STANDS FOR THE TBASE AND L FOR LONGBASE.  D THIS
 # TIME STANDS ONLY FOR PRIORITY SINCE THIS WILL BE CONSIDERED A JOB, AND IT MUST BE GIVEN DIRECTLY IF GIVEN.
 # AGAIN A STANDS FOR THE ADDRESS OF THE LOCATION TO BE RESTARTED, 1 IF THE 2CADR IS GIVEN, OR 0 IF IT IS TO BE
-# THE NEXT LOCATION.  (THE RETURN LOCATION OF PHASCHNG) EXAMPLES,
+# THE NEXT LOCATION.  (THE RETURN LOCATION OF PHASCHNG)
+#
+# [MODERN: Type B is a hybrid checkpoint - combines a variable job restart
+# with a fixed table entry. Used when both a critical job AND a scheduled
+# task need restart protection at the same program point.]
+#
+# EXAMPLES,
 #	AD	TC	PHASCHNG	# TBASE IS SET AND A RESTART CAUSE GROUP 3
 #	AD+1	OCT	56043		# TO START THE JOB AJOBAJOB WITH PRIORITY
 #	AD+2	OCT	31000		# 31 AND THE FIRST ENTRY OF 3.4SPOT (WE CAN
@@ -177,6 +216,11 @@ DSPMMJOB	EQUALS	DSPMMJB
 #	TYPE A		TL0 00P PPP PPP GGG
 #	TYPE B		TL1 DAP PPP PPP GGG
 #	TYPE C		TL0 1AD XXX CJW GGG
+#
+# [MODERN SUMMARY:
+#   Type A (Fixed): Restarts from compiled RESTART_TABLES entries
+#   Type B (Hybrid): Variable job + fixed table entry combination
+#   Type C (Variable): Runtime-specified restart with stored 2CADR/priority]
 
 # Page 1298
 # 2PHSCHNG IS USED WHEN ONE WISHES TO START UP A GROUP OR CHANGE A GROUP WHILE UNDER THE CONTROL OF A DIFFERENT
@@ -197,6 +241,15 @@ DSPMMJOB	EQUALS	DSPMMJB
 ## [WORKAROUND] RSB 2004
 		SBANK=	PINSUPER
 ## [WORKAROUND]
+
+# ============================================================================
+# 2PHSCHNG - DOUBLE PHASE CHANGE
+# ============================================================================
+# [MODERN: Atomic multi-group checkpoint - allows updating two restart groups
+# in a single operation. Essential for coordinating restarts between related
+# but independent program sections (e.g., updating Group 3 while executing
+# under Group 5 protection).]
+# ============================================================================
 
 		COUNT*	$$/PHASE
 2PHSCHNG	INHINT			# THE ENTRY FOR A DOUBLE PHASE CHANGE
@@ -224,6 +277,14 @@ DSPMMJOB	EQUALS	DSPMMJB
 		TS	TEMPSW
 
 		TCF	PHASJUMP
+
+# ============================================================================
+# PHASCHNG - SINGLE PHASE CHANGE (STATE CHECKPOINT UPDATE)
+# ============================================================================
+# [MODERN: Primary checkpoint interface. Atomically updates a restart group's
+# phase information so that if a hardware fault occurs, the RESTARTS routine
+# can resume execution at the correct program point with proper context.]
+# ============================================================================
 
 PHASCHNG	INHINT			# NORMAL PHASCHNG ENTRY POINT.
 		INDEX	Q
@@ -291,6 +352,14 @@ GETNEWNM	EXTEND
 
 		TCF	TOCON2
 
+# TEMPORARY STORAGE ALLOCATION FOR PHASE CHANGE PROCESSING
+# [MODERN: These registers provide workspace for the checkpoint operation:
+#   TEMPG: Current group number (doubled for indexing)
+#   TEMPP: Phase value being stored
+#   TEMPNM/TEMPBB: 2CADR address for restart target
+#   TEMPSW/TEMPSW2: Control flags (TBASE/LONGBASE settings)
+#   TEMPPR: Priority or delta-time value]
+
 OCT14000	EQUALS	PRIO14
 TEMPG		EQUALS	ITEMP1
 TEMPP		EQUALS	ITEMP2
@@ -331,6 +400,9 @@ PHSCHNG2	LXCH	TEMPBBCN
 # Page 1301
 		TCF	ONEORTWO
 
+# Store phase value to PHASEn register (checkpoint state)
+# [MODERN: This stores the current phase into the group's phase register.
+# During restart, RESTARTS routine reads this to determine restart point.]
 		CA	TEMPP		# START STORING THE PHASE INFORMATION
 		NDX	TEMPG
 		TS	PHASE1 -2
@@ -352,6 +424,9 @@ BELOW1		CCS	TEMPSW2		# IS IT A PHASCHNG OR A 2PHSCHNG
 		NDX	TEMPG2
 		TS	TBASE1 -2
 
+# [MODERN: TBASE provides a time reference for relative scheduling.
+# LONGBASE provides extended timing for longcalls (events > 163.84 sec).
+# These are set when the T or L bits are set in the phase change word.]
 BELOW2		CCS	TEMPSW		# SEE IF WE SHOULD SET TBASE OR LONGBASE
 		TCF	BELOW3		# SET LONGBASE ONLY
 		TCF	BELOW4		# SET NEITHER
@@ -371,6 +446,9 @@ BELOW3		EXTEND			# SET LONGBASE
 		DCA	TIME2
 		DXCH	LONGBASE
 
+# Store complemented phase to -PHASEn (validation copy)
+# [MODERN: The dual-storage (PHASE/-PHASE) provides corruption detection.
+# During restart, PHASE RXOR -PHASE must yield -0 to confirm consistency.]
 BELOW4		CS	TEMPP		# AND STORE THE FINAL PART OF THE PHASE
 		NDX	TEMPG
 		TS	-PHASE1 -2
