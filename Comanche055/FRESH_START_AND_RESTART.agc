@@ -286,6 +286,34 @@ OCT6200	OCT	6200
 
 # Page 186
 # COMES HERE FROM LOCATION 4000, GOJAM, RESTART ANY PROGRAMS WHICH MAY HAVE BEEN RUNNING AT THE TIME.
+#
+# ============================================================================
+# GOPROG - HARDWARE RESTART ENTRY POINT (GOJAM VECTOR 4000)
+# ============================================================================
+# [MODERN EQUIVALENT: Hardware Interrupt Handler for System Recovery]
+#
+# PURPOSE: This routine handles hardware-initiated restarts triggered by
+#          transient faults (radiation-induced bit flips, power transients,
+#          oscillator failures). The GOJAM hardware vector transfers control
+#          to address 4000 (octal) when a hardware restart condition occurs.
+#
+# HARDWARE AUTOMATIC REGISTER SAVE:
+#   - Registers A, L, Q are automatically saved by hardware
+#   - BBANK (current execution bank) is preserved
+#   - SUPERBNK must be saved by software (done via RSBBQ)
+#
+# FLOW:
+#   1. Increment REDOCTR (restart counter for telemetry/debugging)
+#   2. Save Q and SUPERBNK to RSBBQ register pair
+#   3. Store erasables for debugging (VAC5STOR)
+#   4. Check OSC FAIL and AGC WARNING - if both on, fresh start
+#   5. Restore ISS coarse align if needed (LIGHTSET)
+#   6. Validate erasable memory consistency (ERESTORE check)
+#   7. If corrupted: Branch to fresh start (NONAVKEY+1)
+#   8. If valid: Continue to ELRSKIP (controlled restart)
+#
+# Source: Comanche055/FRESH_START_AND_RESTART.agc:290
+# ============================================================================
 
 GOPROG		INCR	REDOCTR		# ADVANCE RESTART COUNTER.
 
@@ -293,6 +321,10 @@ GOPROG		INCR	REDOCTR		# ADVANCE RESTART COUNTER.
 		EXTEND
 		ROR	SUPERBNK
 		DXCH	RSBBQ
+				# [MODERN: Save return context. LXCH Q saves Q register,
+				# ROR SUPERBNK combines with BBANK to save full execution
+				# context. DXCH RSBBQ stores both to restart save area.
+				# This allows restart to return to interrupted code.]
 		TC	BANKCALL	# STORE ERASABLES FOR DEBUGGING PURPOSES.
 		CADR	VAC5STOR
 		CA	BIT15		# TEST OSC FAIL BIT TO SEE IF WE HAVE
@@ -314,12 +346,33 @@ BUTTONS		TC	LIGHTSET	# MAKE FRESH START CHECKS BEFORE ERESTORE.
 # ERESTORE.  IF ERASCHK IS INTERRUPTED BY A RESTART, C(ERESTORE) SHOULD
 # EQUAL C(SKEEP7),AND SHOULD BE A + NUMBER LESS THAN 2000 OCT.  OTHERWISE
 # C(ERESTORE) SHOULD EQUAL +0.
+#
+# ============================================================================
+# E-MEMORY VALIDATION (ERASCHK INTERRUPT DETECTION)
+# ============================================================================
+# [MODERN: State Checkpoint Consistency Validation]
+#
+# The ERASCHK routine (elsewhere) temporarily stores erasable memory contents
+# during self-test operations. If a hardware restart occurs while ERASCHK is
+# running, memory may be in an inconsistent state.
+#
+# VALIDATION ALGORITHM:
+#   ERESTORE = +0: No ERASCHK was interrupted, continue normally
+#   ERESTORE = SKEEP7: ERASCHK was interrupted, restore memory then continue
+#   ERESTORE = other: Memory corruption detected, force fresh start
+#
+# The sentinel value ERESTORE provides a "transaction log" mechanism - if
+# it doesn't match expected values, the E-memory state is suspect and
+# a full reinitialization (fresh start) is required.
+# ============================================================================
 
+# HI5 masks upper bits - if any set, ERESTORE is invalid (>= 2000 octal)
 		CAF	HI5
 		MASK	ERESTORE
 		EXTEND
 		BZF	+2		# IF ERESTORE NOT = +0 OR +N LESS THAN 2K,
 		TCF	NONAVKEY +1	# DOUBT E MEMORY AND DO A FRESH START.
+# If ERESTORE != SKEEP7, E memory is suspect, force fresh start
 		CS	ERESTORE
 		EXTEND
 		BZF	ELRSKIP -1
@@ -327,12 +380,16 @@ BUTTONS		TC	LIGHTSET	# MAKE FRESH START CHECKS BEFORE ERESTORE.
 		EXTEND
 		BZF	+2		# = SKEEP7, RESTORE E MEMORY.
 		TCF	NONAVKEY +1	# NOT=SKEEP7, DOUBT EMEM, DO FRESH START
+# If valid, restore the two locations ERASCHK was modifying when interrupted
 		CA	SKEEP4
 		TS	EBANK		# EBANK OF E MEMORY THAT WAS UNDER TEST.
 		EXTEND			# (NOT DXCH SINCE THIS MIGHT HAPPEN AGAIN)
 		DCA	SKEEP5
 		INDEX	SKEEP7
 		DXCH	0000		# E MEMORY RESTORED.
+				# [MODERN: Transaction rollback. Restore the locations
+				# that ERASCHK was modifying when interrupted. Setting
+				# ERESTORE to ZERO marks restoration as complete.]
 		CA	ZERO
 		TS	ERESTORE
 # Page 187
@@ -407,14 +464,38 @@ ENEMA		INHINT
 		EBANK=	BZERO
 		2CADR	TVCEXEC
 
+# ============================================================================
+# PHASE TABLE VALIDATION (GOPROG3/PCLOOP)
+# ============================================================================
+# [MODERN: State Checkpoint Integrity Verification]
+#
+# PURPOSE: Verify all six phase groups have consistent state by checking
+#          that PHASE and -PHASE (complement) registers agree.
+#
+# ALGORITHM: For each group 1-6:
+#   1. Load -PHASEn (complement) into A and PHASEn into L
+#   2. RXOR LCHAN: XOR A with L, result should be -0 if consistent
+#   3. CCS A: If result is NOT -0, phase table is corrupted
+#
+# RXOR VALIDATION LOGIC:
+#   If PHASEn was stored correctly, -PHASEn = ~PHASEn (ones complement)
+#   PHASEn RXOR -PHASEn = all 1s = -0 (negative zero in ones complement)
+#   Any other result indicates memory corruption during restart
+#
+# If validation fails: Alarm 1107 and force fresh start (DOFSTART)
+# If validation passes: Continue to process active restart groups
+# ============================================================================
 GOPROG3		CAF	NUMGRPS		# VERIFY PHASE TABLE AGREEMENTS
+# MPAC+5 = group counter (NUMGRPS down to 0)
 PCLOOP		TS	MPAC +5
 		DOUBLE
 		EXTEND
 		INDEX	A
 		DCA	-PHASE1		# COMPLEMENT INTO A, DIRECT INTO L.
+# RXOR combines -PHASEn (A) and PHASEn (L) - must yield -0 for consistency
 		EXTEND
 		RXOR	LCHAN		# RESULT MUST BE -0 FOR AGREEMENT.
+# CCS A: Any PNZ/+0/-0 except -0 indicates phase table failure -> PTBAD
 		CCS	A
 		TCF	PTBAD		# RESTART FAILURE.
 		TCF	PTBAD
@@ -440,6 +521,9 @@ PCLOOP		TS	MPAC +5
 		CAF	EBANK3
 		TS	EBANK
 # Page 189
+# [MODERN: Dispatch loop - for each active restart group, invoke the
+# RESTARTS dispatcher via SWCALL (RACTCADR) to resume the protected job/task.
+# MPAC+6 counts active groups; if zero after all groups processed, check mode.]
 		CAF	NUMGRPS		# SEE IF ANY GROUPS RUNNING.
 NXTRST		TS	MPAC +5
 		DOUBLE
@@ -464,6 +548,19 @@ PINACT		CCS	MPAC +5		# PROCESS ALL RESTART GROUPS.
 		EXTEND
 		BZF	GOTOPOOH	# NO
 		TCF	ENDRSTRT	# YES
+# ============================================================================
+# PHASE TABLE FAILURE - ALARM 1107
+# ============================================================================
+# [MODERN: Checkpoint Corruption Detected - Force Full Reinitialization]
+#
+# If the PCLOOP validation detects inconsistency between PHASEn and -PHASEn,
+# the phase tables may have been corrupted by the hardware fault that
+# triggered this restart. Since restart protection depends on valid phase
+# tables, a controlled restart is not possible.
+#
+# ACTION: Set alarm 1107 to record the failure, then branch to DOFSTART
+# to perform a complete fresh start (losing all program state).
+# ============================================================================
 PTBAD		TC	ALARM		# SET ALARM TO SHOW PHASE TABLE FAILURE.
 		OCT	1107
 
