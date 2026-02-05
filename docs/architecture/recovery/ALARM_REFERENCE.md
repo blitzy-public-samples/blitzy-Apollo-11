@@ -40,6 +40,7 @@ The AGC's fault recovery system includes a comprehensive alarm mechanism that re
 2. **State Corruption Alarms** (1107): Triggered when phase table validation detects inconsistency
 
 These alarms interact with the restart system to determine whether the AGC should:
+
 - Continue execution after recording the alarm
 - Perform a software restart (BAILOUT)
 - Abort to program idle (POODOO)
@@ -51,7 +52,7 @@ These alarms interact with the restart system to determine whether the AGC shoul
 
 AGC alarm codes follow a structured format documented in the assembly listing:
 
-```
+```text
 AAANN
 
 Where:
@@ -111,11 +112,13 @@ FINDVAC2        TS      EXECTEM1        # (SAVE CALLER'S BANK FIRST.)
 VAC (Vector Accumulator) areas are 43-word blocks of erasable memory used as work areas for interpretive (vector/matrix) code. Programs requiring interpretive computation must be started via `FINDVAC` rather than `NOVAC`.
 
 The five VAC areas provide:
+
 - Temporary storage during interpretive operations
 - Push-down list (stack) for nested subroutine calls
 - Working registers for vector/matrix calculations
 
 **Trigger Conditions**:
+
 - Five interpretive jobs already running
 - New interpretive job requested via `FINDVAC`
 - No VAC areas available for allocation
@@ -168,6 +171,7 @@ Core sets are 12-word blocks of erasable memory that store the execution context
 The Lunar Module Executive supports 7 core sets (DEC 7), while the Command Module supports 6 (DEC 6).
 
 **Trigger Conditions**:
+
 - Seven jobs already registered (active or dormant)
 - New job requested via `NOVAC` or `FINDVAC`
 - No core set has PRIORITY = -0 (available)
@@ -209,6 +213,7 @@ The priority-based design ensures that critical guidance programs (higher priori
 On July 20, 1969, during the Apollo 11 powered descent to the Moon's surface, the AGC displayed multiple 1202 alarms. This is one of the most famous incidents in computing history.
 
 **Timeline of Events**:
+
 - **T-05:17** (5 minutes 17 seconds before touchdown): First 1202 alarm
 - Mission Control (Steve Bales, Guidance Officer): "We're GO on that alarm"
 - Multiple additional 1202 alarms during descent
@@ -236,6 +241,7 @@ The AGC's priority-based design saved the mission:
 The AGC's designers (MIT Instrumentation Laboratory) had built a system that gracefully degraded under overload, shedding lower-priority work to preserve mission-critical functions.
 
 **Lessons for Modern Systems**:
+
 - Priority-based scheduling enables graceful degradation
 - State checkpointing allows recovery without data loss
 - Alarm systems should distinguish severity levels
@@ -276,6 +282,7 @@ PCLOOP          TS      MPAC +5
 **Validation Logic**:
 
 For each restart group (1-6), the algorithm:
+
 1. Loads `-PHASE` register (complement) into A
 2. Loads `PHASE` register (direct value) into L
 3. Performs `RXOR LCHAN` (XOR operation)
@@ -294,6 +301,7 @@ PTBAD           TC      ALARM           # SET ALARM TO SHOW PHASE TABLE FAILURE.
 **Why Dual Storage?**
 
 Phase tables store critical restart state. The dual-storage mechanism (PHASE and -PHASE) provides:
+
 - Corruption detection during restart validation
 - Protection against single-bit memory errors
 - Indication of potential systematic memory failure
@@ -329,6 +337,7 @@ The Waitlist manager handles time-driven task scheduling. When the task queue is
 **Waitlist Capacity**: 8 concurrent tasks
 
 **Trigger Conditions**:
+
 - Eight waitlist tasks already scheduled
 - New task requested via `WAITLIST`, `VARDELAY`, or `FIXDELAY`
 - No available task slots
@@ -347,6 +356,7 @@ The AGC distinguishes between alarms that allow continued operation and those re
 ### BAILOUT: Software Restart with Alarm
 
 BAILOUT provides a controlled restart mechanism that:
+
 1. Records the alarm in FAILREG
 2. Preserves return address in ALMCADR
 3. Performs software restart via WHIMPER/ENEMA
@@ -398,6 +408,7 @@ GOPOODOO        INHINT
 ```
 
 POODOO:
+
 1. Records alarm in FAILREG
 2. Sets up phase 4 for GOPOODOO restart
 3. Clears state flags

@@ -89,7 +89,7 @@ The recovery system integrates tightly with two primary AGC subsystems: the Exec
 
 The Executive provides priority-based job scheduling for the AGC. Recovery system integration occurs at several points:
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                    EXECUTIVE SCHEDULER                          │
 │                                                                 │
@@ -134,7 +134,7 @@ Source: Luminary099/EXECUTIVE.agc:37-60, Luminary099/RESTARTS_ROUTINE.agc:153-16
 
 The Waitlist provides time-based task scheduling. Recovery integration handles delta-time recalculation:
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                    WAITLIST SCHEDULER                           │
 │                                                                 │
@@ -330,6 +330,7 @@ flowchart TD
 **1. Hardware Fault Detection (GOJAM Trigger)**
 
 When hardware detects a fault condition, the GOJAM signal asserts:
+
 - CPU halts current instruction
 - Program counter forced to address 4000 (octal)
 - Registers A, L, Q, BBANK automatically saved
@@ -349,7 +350,7 @@ GOPROG		INCR	REDOCTR		# Count restart for telemetry
 
 The ERESTORE/SKEEP7 mechanism detects whether a memory-modifying operation (ERASCHK) was interrupted:
 
-```
+```text
 IF ERESTORE = +0:
     E-memory is valid, proceed to DORSTART
 ELSE IF ERESTORE = SKEEP7 (and valid range):
@@ -389,7 +390,7 @@ Source: Luminary099/FRESH_START_AND_RESTART.agc:290-304
 
 For each active group, RESTARTS decodes the phase type and schedules recovery:
 
-```
+```text
 Phase Types:
 - Type A: Fixed phase (table lookup in CADRTAB/PRDTTAB)
 - Type B: Variable job + fixed table entry
@@ -473,7 +474,7 @@ During the powered descent phase (P63/P66), the AGC triggered multiple 1202 "Exe
 
 The alarms were caused by the rendezvous radar being left in a mode that generated excessive interrupts:
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                    EXECUTIVE RESOURCE CONTENTION                │
 │                                                                 │

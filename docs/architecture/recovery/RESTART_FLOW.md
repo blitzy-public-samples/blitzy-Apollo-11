@@ -9,6 +9,7 @@ The AGC restart flow is a sophisticated fault recovery mechanism that enables th
 **Modern Equivalent**: Hardware Interrupt Handler / Exception Recovery Sequence
 
 **Primary Components**:
+
 - **GOJAM Vector (4000₈)**: Hardware restart interrupt entry point
 - **GOPROG**: Software handler for hardware restarts
 - **E-Memory Validation**: ERESTORE/SKEEP7 consistency checking
@@ -37,7 +38,7 @@ The AGC hardware initiates a restart (GOJAM - "Go to JAM") when it detects any o
 
 When a fault is detected, the hardware forces an unconditional transfer to memory address **4000₈** (octal):
 
-```
+```text
 Address 4000₈ = GOJAM Vector → GOPROG Entry Point
 ```
 
@@ -80,6 +81,7 @@ Source: Luminary099/FRESH_START_AND_RESTART.agc:203-206
 ### Restart Counter Increment
 
 The first action is to increment the **REDOCTR** (restart counter), which:
+
 - Provides telemetry data about system stability
 - Helps diagnose potential hardware problems
 - Tracks restart frequency during mission phases
@@ -96,6 +98,7 @@ GOPROG saves the Q register and SUPERBNK for potential use in debugging and rest
 ```
 
 This preserves the complete 2CADR (two-word address) of where execution was interrupted, enabling:
+
 - Post-flight analysis of restart locations
 - Debugging of restart patterns
 - Potential future restoration (not typically used)
@@ -118,6 +121,7 @@ BUTTONS         TC      LIGHTSET
 ```
 
 **LIGHTSET** performs additional fresh start checks:
+
 - Verifies MARK REJECT button state
 - Checks for ERROR RESET simultaneous press
 - Provides early exit to DOFSTART if certain conditions are met
@@ -164,7 +168,7 @@ Source: Luminary099/FRESH_START_AND_RESTART.agc:221-231
 
 ### Decision Tree
 
-```
+```text
 ERESTORE value:
 │
 ├─ High 5 bits non-zero → FRESH START (memory likely corrupted)
@@ -200,6 +204,7 @@ Source: Luminary099/FRESH_START_AND_RESTART.agc:239-247
 ### DORSTART Path
 
 After E-memory validation passes, **DORSTART** calls **STARTSUB** to perform common initialization for both fresh starts and restarts:
+
 - Initialize TIME3, TIME4, TIME5 counters
 - Reset outbit channels
 - Clear waitlist structures
@@ -255,6 +260,7 @@ PTBAD           TC      ALARM           # SET ALARM TO SHOW PHASE TABLE FAILURE.
 ```
 
 **Alarm 1107** indicates the phase table is corrupted and cannot be trusted. The system must perform a fresh start (DOFSTRT1), which:
+
 - Clears all phase tables
 - Terminates all programs
 - Returns to the idle loop
@@ -342,6 +348,7 @@ ITSAVAR         MASK    OCT1400         # IS IT TYPE B ?
 ```
 
 The low 3 bits (CJW field) determine:
+
 - **1**: Longcall restart
 - **2**: Waitlist task restart  
 - **3+**: Job restart
@@ -539,6 +546,7 @@ GOLOC           EQUALS  VAC5 +20D       # Location for 2CADR of restart destinat
 ```
 
 The restart routines populate:
+
 - **GOLOC-1**: Address of FINDVAC, NOVAC, WAITLIST, or LONGCALL
 - **GOLOC**: Low word of restart 2CADR
 - **GOLOC+1**: High word of restart 2CADR (BBCON)

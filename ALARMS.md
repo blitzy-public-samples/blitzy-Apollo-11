@@ -33,6 +33,7 @@ The alarm system is tightly integrated with the AGC's fault recovery and state p
 **Primary Audience**: Modern software engineers analyzing historical fault-tolerant systems, aerospace historians, and computer science researchers.
 
 **Source Files**:
+
 - `Luminary099/ASSEMBLY_AND_OPERATION_INFORMATION.agc:896-1022`
 - `Comanche055/ASSEMBLY_AND_OPERATION_INFORMATION.agc:867-959`
 - `Luminary099/ALARM_AND_ABORT.agc:1-200`
@@ -55,6 +56,7 @@ Alarm codes are stored and displayed in **octal** (base-8) notation, a common co
 - Leading zeros may be omitted in some contexts
 
 **Example**: Alarm `01202` breaks down as:
+
 - Area `012` = Executive/Job Scheduler area
 - Number `02` = No core sets available
 
@@ -152,6 +154,7 @@ The Executive (modern equivalent: priority-based job scheduler) allocates VAC ar
 **Root Cause Analysis**:
 
 This alarm typically occurs when:
+
 1. Multiple computationally intensive programs are running simultaneously
 2. A lower-priority program is holding a VAC area while a higher-priority program needs one
 3. The system is under heavy computational load (as during powered descent)
@@ -186,6 +189,7 @@ Alarm 1202 indicates that a new job was requested, but all 7 core sets are in us
 **Root Cause Analysis**:
 
 This alarm occurs when:
+
 1. Seven jobs are already scheduled (the maximum the AGC can handle)
 2. An eighth job is requested before any existing job completes
 3. Jobs are accumulating faster than they can be executed
@@ -210,6 +214,7 @@ The most famous occurrence of this alarm was during the Apollo 11 lunar landing,
 Alarm 1203 indicates that a new waitlist task was requested, but the waitlist is full. The Waitlist (modern equivalent: time-based task scheduler) manages tasks that must execute at specific future times. The AGC can maintain a limited number of pending timed tasks.
 
 **Root Cause**: Too many time-delayed tasks are pending execution. This can occur when:
+
 1. Programs are scheduling many future events
 2. Timed tasks are accumulating faster than they expire
 3. A timing anomaly causes task scheduling to outpace execution
@@ -460,7 +465,7 @@ The following table lists all alarm codes defined in the Comanche055 (CM) softwa
 | 00217 | - | Bad return from stall routines | CURTAINS | ALARM2 |
 | 00220 | - | IMU not aligned - no REFSMMAT | R02, P51 | VARALARM |
 
-### Gimbal and Attitude Alarms (004xx)
+### Gimbal and Attitude Alarms - CM (004xx)
 
 | Code | Category | Description | Set By | Alarm Routine |
 |------|----------|-------------|--------|---------------|
@@ -472,7 +477,7 @@ The following table lists all alarm codes defined in the Comanche055 (CM) softwa
 | 00421 | - | W-matrix overflow | INTEGRV | VARALARM |
 | 00430 | `*` | Integration abort due to subsurface state vector | All Calls to INTEG | POODOO |
 
-### Rendezvous Alarms (006xx)
+### Rendezvous Alarms - CM (006xx)
 
 | Code | Category | Description | Set By | Alarm Routine |
 |------|----------|-------------|--------|---------------|
@@ -489,13 +494,13 @@ The following table lists all alarm codes defined in the Comanche055 (CM) softwa
 | 00612 | - | State vector in wrong sphere of influence | P37 | VARALARM |
 | 00613 | - | Reentry angle out of limits | P37 | VARALARM |
 
-### Miscellaneous Alarms (007xx)
+### Miscellaneous Alarms - CM (007xx)
 
 | Code | Category | Description | Set By | Alarm Routine |
 |------|----------|-------------|--------|---------------|
 | 00777 | - | PIPA fail caused ISS warning | T4RUPT | VARALARM |
 
-### Executive and System Alarms (011xx - 012xx)
+### Executive and System Alarms - CM (011xx - 012xx)
 
 | Code | Category | Description | Set By | Alarm Routine |
 |------|----------|-------------|--------|---------------|
@@ -514,14 +519,14 @@ The following table lists all alarm codes defined in the Comanche055 (CM) softwa
 | 01210 | `*` | Two programs using device at same time | IMU Mode Switch | POODOO |
 | 01211 | `*` | Illegal interrupt of extended verb | SXTMARK | BAILOUT |
 
-### Interpreter Alarms (013xx)
+### Interpreter Alarms - CM (013xx)
 
 | Code | Category | Description | Set By | Alarm Routine |
 |------|----------|-------------|--------|---------------|
 | 01301 | - | ARCSIN-ARCCOS argument too large | Interpreter | ALARM |
 | 01302 | `*` | SQRT called with negative argument - abort | Interpreter | POODOO |
 
-### Guidance Alarms (014xx)
+### Guidance Alarms - CM (014xx)
 
 | Code | Category | Description | Set By | Alarm Routine |
 |------|----------|-------------|--------|---------------|
@@ -529,7 +534,7 @@ The following table lists all alarm codes defined in the Comanche055 (CM) softwa
 | 01426 | - | IMU unsatisfactory | P61, P62 | ALARM |
 | 01427 | - | IMU reversed | P61, P62 | ALARM |
 
-### Display Alarms (015xx)
+### Display Alarms - CM (015xx)
 
 | Code | Category | Description | Set By | Alarm Routine |
 |------|----------|-------------|--------|---------------|
@@ -547,7 +552,7 @@ The following table lists all alarm codes defined in the Comanche055 (CM) softwa
 | 01602 | - | Bad optics during verification | OPTALGN Calib (CSM) | ALARM |
 | 01703 | - | Insufficient time for integration, TIG was slipped | R41 | ALARM |
 
-### ISS Warning Alarms (x7777)
+### ISS Warning Alarms - CM (x7777)
 
 | Code | Category | Description | Set By | Alarm Routine |
 |------|----------|-------------|--------|---------------|

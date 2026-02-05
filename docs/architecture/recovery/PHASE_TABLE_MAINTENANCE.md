@@ -11,6 +11,7 @@ The Phase Table Maintenance system implements **state checkpointing** for the Ap
 **Purpose**: The phase table system allows mission-critical programs to establish restart points at key execution milestones. When a hardware fault triggers a restart, the recovery system consults the phase tables to determine what programs were active and where execution should resume.
 
 **Key Concepts**:
+
 - Six independent **restart groups** (1-6) can operate concurrently
 - Each group maintains a **phase register** indicating current execution state
 - Phase values index into **restart tables** containing recovery addresses
@@ -50,7 +51,7 @@ The AGC maintains six independent restart groups, each with its own phase regist
 
 Each phase value is stored twice: once in PHASEN and once (complemented) in -PHASEN. During restart validation, the recovery system performs an RXOR operation:
 
-```
+```agc
 DCA     -PHASE1         # Load -PHASE and PHASE
 EXTEND
 RXOR    LCHAN           # XOR should yield -0 if consistent
@@ -96,9 +97,9 @@ Source: Luminary099/PHASE_TABLE_MAINTENANCE.agc:176-179
 
 Type A phase changes store fixed phase information permanently in the restart tables. This is the simplest form of restart protection.
 
-### Bit Format
+### Type A Bit Format
 
-```
+```text
 TL0 00P PPP PPP GGG
 │││   │ │││ │││ └┴┴── G's: Group number (octal 1-7)
 │││   │ └┴┴─┴┴┴────── P's: Phase value (octal 0-127)
@@ -122,18 +123,21 @@ TL0 00P PPP PPP GGG
 Source: Luminary099/PHASE_TABLE_MAINTENANCE.agc:102-120
 
 **Example 1: Make Group 3 Inactive**
+
 ```agc
         TC      PHASCHNG        # Set group 3 phase to 0
         OCT     00003           # Group 3 inactive, no restart
 ```
 
 **Example 2: Display Restart for Group 2**
+
 ```agc
         TC      PHASCHNG        # Set up display restart
         OCT     00012           # Group 2, phase 1 = display restart
 ```
 
 **Example 3: Double Restart with TBASE**
+
 ```agc
         TC      PHASCHNG        # Set TBASE4 and double restart
         OCT     40064           # T=1, Group 4, phase 6 (4.6SPOT)
@@ -141,6 +145,7 @@ Source: Luminary099/PHASE_TABLE_MAINTENANCE.agc:102-120
 ```
 
 **Example 4: Longcall Restart**
+
 ```agc
         TC      PHASCHNG        # Set LONGBASE and single restart
         OCT     20135           # L=1, Group 5, phase 13 (5.13SPOT)
@@ -148,6 +153,7 @@ Source: Luminary099/PHASE_TABLE_MAINTENANCE.agc:102-120
 ```
 
 **Example 5: Both TBASE and LONGBASE**
+
 ```agc
         TC      PHASCHNG        # Set both TBASE4 and LONGBASE
         OCT     60124           # T=1, L=1, Group 4, phase 12
@@ -160,9 +166,9 @@ Source: Luminary099/PHASE_TABLE_MAINTENANCE.agc:102-120
 
 Type B combines a variable job restart with a fixed restart entry. It starts up a job as specified and also starts the first entry of a fixed restart location.
 
-### Bit Format
+### Type B Bit Format
 
-```
+```text
 TL1 DAP PPP PPP GGG
 │││ ││  │││ │││ └┴┴── G's: Group number (octal 1-7)
 │││ ││  └┴┴─┴┴┴────── P's: Fixed phase (octal 0-127)
@@ -188,6 +194,7 @@ TL1 DAP PPP PPP GGG
 ### Job Type Selection
 
 The sign of the priority determines job type:
+
 - **Positive priority** → FINDVAC (job with VAC area allocation)
 - **Negative priority** → NOVAC (job without VAC area)
 
@@ -196,6 +203,7 @@ Source: Luminary099/PHASE_TABLE_MAINTENANCE.agc:150-174
 ### Type B Examples
 
 **Example 1: Full Variable Job + Fixed Restart**
+
 ```agc
 AD      TC      PHASCHNG        # TBASE3 set, start job + fixed restart
 AD+1    OCT     56043           # T=1, D=1, A=1, Group 3, phase 4
@@ -206,6 +214,7 @@ AD+5                            # PHASCHNG returns here
 ```
 
 **Example 2: Display + Variable Job with Old Priority**
+
 ```agc
 AD      TC      PHASCHNG        # Display restart + job restart
 AD+1    OCT     10015           # D=0, A=0, Group 5, phase 1
@@ -219,9 +228,9 @@ AD+2                            # Job starts at AD+2 with old priority
 
 Type C provides fully variable restart information. Instead of referencing fixed restart table entries, the restart address and timing information are stored in erasable memory.
 
-### Bit Format
+### Type C Bit Format
 
-```
+```text
 TL0 1AD XXX CJW GGG
 │││ │││     │││ └┴┴── G's: Group number (octal 1-7)
 │││ │││     ││└────── W: Waitlist restart (only one of C,J,W set)
@@ -260,6 +269,7 @@ Source: Luminary099/PHASE_TABLE_MAINTENANCE.agc:122-151
 ### Type C Examples
 
 **Example 1: Job with Direct Priority**
+
 ```agc
 AD      TC      PHASCHNG        # Variable job restart for group 3
 AD+1    OCT     05023           # D=1, J=1, Group 3
@@ -269,6 +279,7 @@ AD+3                            # Job restarts at AD+3
 ```
 
 **Example 2: Longcall with Indirect Time**
+
 ```agc
 AD      TC      PHASCHNG        # Variable longcall for group 1
 AD+1    OCT     27441           # L=1, D=1, A=1, C=1, Group 1
@@ -340,10 +351,12 @@ X.YSPOT         OCT     pppp0           # PRDTTAB: Priority (positive=FINDVAC, n
 ```
 
 **Priority Sign Convention**:
+
 - **Positive priority** → FINDVAC call (job with VAC area for interpreter)
 - **Negative priority** → NOVAC call (job without VAC area)
 
 **Example: FINDVAC Job**
+
 ```agc
 5.7SPOT         OCT     23000           # Priority 23, positive = FINDVAC
                 2CADR   SOMEJOB         # Restart SOMEJOB as FINDVAC
@@ -352,6 +365,7 @@ X.YSPOT         OCT     pppp0           # PRDTTAB: Priority (positive=FINDVAC, n
 Source: Luminary099/RESTART_TABLES.agc:37-44
 
 **Example: NOVAC Job**
+
 ```agc
 5.5SPOT         OCT     -23000          # Priority 23, negative = NOVAC
                 2CADR   ANYJOB          # Restart ANYJOB as NOVAC
@@ -375,6 +389,7 @@ X.YSPOT         DEC/OCT/GENADR  tttt    # PRDTTAB: Time specification
 | OCT 77777 (-0) | Immediate restart (10ms from now) |
 
 **Example: Direct Time**
+
 ```agc
                 DEC     200             # Delta time: 2 seconds (200 centiseconds)
                -2CADR   DUMMY           # Task starts when time elapses
@@ -383,6 +398,7 @@ X.YSPOT         DEC/OCT/GENADR  tttt    # PRDTTAB: Time specification
 Source: Luminary099/RESTART_TABLES.agc:75-78
 
 **Example: Indirect Time**
+
 ```agc
                -GENADR  DTIME           # Time stored in DTIME register
                -2CADR   TASKTASK        # Task address
@@ -391,6 +407,7 @@ Source: Luminary099/RESTART_TABLES.agc:75-78
 Source: Luminary099/RESTART_TABLES.agc:80-81
 
 **Example: Immediate Restart**
+
 ```agc
                 OCT     77777           # -0 means immediate restart
                -2CADR   ATASK           # Task starts in 10ms
@@ -407,6 +424,7 @@ X.YSPOT         GENADR  DELTATIME       # PRDTTAB: Location of DP delta time
 ```
 
 **Example: Longcall**
+
 ```agc
 3.6SPOT         GENADR  DELTAT          # DP delta time at DELTAT
                -GENADR  LONGTASK        # Task address (negative GENADR)
@@ -469,10 +487,12 @@ Restart table entries are labeled X.YSPOT where X is the group number (1-6) and 
 ### Entry Organization
 
 **Even Spots (G.EVEN)**: Two restart items per phase
+
 - First entry: Words 0-2 (PRDTTAB, CADRTAB, CADRTAB+1)
 - Second entry: Words 3-5
 
 **Odd Spots (G.ODD, not G.1)**: One restart item per phase
+
 - Single entry: Words 0-2
 
 ### Luminary099 Restart Table Entries
@@ -699,11 +719,13 @@ When a restart requires scheduling a waitlist task:
 
 1. Phase table provides delta time and 2CADR
 2. FINDTIME calculates when task should execute:
-   ```
+
+   ```text
    Scheduled Time = TBASE(group) + Delta Time
    Current Time = TIME1
    Remaining = Scheduled - Current
    ```
+
 3. If time already passed, task executes immediately (10ms delay)
 4. Task added to waitlist
 
