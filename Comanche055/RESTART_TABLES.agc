@@ -32,6 +32,26 @@
 # information.  Please report any errors to info@sandroid.org.
 
 # Page 211
+# ============================================================================
+# RESTART TABLES - RECOVERY ROUTING TABLE DEFINITIONS
+# ============================================================================
+# [MODERN EQUIVALENT: Recovery Routing Table / State Recovery Dispatch Table]
+#
+# These tables define restart entry points for each phase group, allowing the
+# RESTARTS dispatcher to resume jobs, waitlist tasks, or longcalls after a
+# hardware fault. Each X.YSPOT entry specifies:
+#   - What to restart (job, task, or longcall)
+#   - Where to restart (2CADR address)
+#   - When to restart (priority or delta-time)
+#
+# TERMINOLOGY TRANSLATION:
+#   CADRTAB = Recovery Routing Table (restart address storage)
+#   PRDTTAB = Priority/Delta-Time Table (scheduling parameters)
+#   2CADR = Two-Word Bank-Switched Address (12-bit CADR + BBCON)
+#   GENADR = General Address (12-bit erasable/fixed address)
+#   X.YSPOT = Restart entry point for group X, phase Y
+# ============================================================================
+#
 # RESTART TABLES
 # --------------
 #
@@ -53,6 +73,13 @@
 #				2CADR	ANYJOB
 #
 # HERE A RESTART OF GROUP 5 WITH PHASE 7 WOULD CAUSE ANYJOB TO BE RESTARTED AS A NOVAC WITH PRIORITY 23.
+#
+# [MODERN: Job restarts use the Executive scheduler (FINDVAC/NOVAC).
+# Sign convention:
+#   Positive priority -> FINDVAC (job gets VAC work area for interpreter)
+#   Negative priority -> NOVAC (job runs without VAC area)
+# The absolute value is the job priority (higher = more important).]
+#
 # A LONGCALL HAS ITS GENADR OF ITS 2CADR STORED NEGATIVELY AND ITS BBCON STORED POSITIVELY.  IN ITS PRDTTAB IS
 # PLACED THE LOCATION OF A DP REGISTER THAT CONTAINS THE DELTA TIME THAT LONGCALL HAD BEEN ORIGINALLY STARTED
 # WITH.  EXAMPLE,
@@ -67,6 +94,11 @@
 # THIS WOULD START UP LONGTASK AT THE APPROPRIATE TIME, OR IMMEDIATELY IF THE TIME HAD ALREADY PASSED. IT SHOULD
 # BE NOTED THAT IF DELTAT IS IN A SWITCHED E BANK, THIS INFORMATION SHOULD BE IN THE BBCON OF THE 2CADR OF THE
 # TASK.  FROM ABOVE, WE SEE THAT THE SECOND PART OF THIS PHASE WOULD BE STARTED AS A JOB WITH A PRIORITY OF 31.
+#
+# [MODERN: Longcalls are time-delayed tasks scheduled beyond 163.84 seconds.
+# The PRDTTAB entry points to the original delta-time in erasable memory.
+# GENADR stored negatively flags this as a longcall rather than a job.
+# BBCON provides E-bank context if delta-time is in switched erasable.]
 #
 # WAITLIST CALLS ARE IDENTIFIED BY THE FACT THAT THEIR 2CADR IS STORED NEGATIVELY.  IF PRDTTAB OF THE PHASE SPOT
 # IS POSITIVE, THEN IT CONTAINS THE DELTA TIME, IF PRDTTAB IS NEGATIVE THEN IT IS THE -GENADR OF AN ERASABLE
@@ -86,6 +118,17 @@
 #				-GENADR	DTIME		# WHERE DTIME CONTAINS THE DELTA TIME
 #				-2CADR	TASKTASK	# OTHERWISE THIS IS AS ABOVE
 #
+# [MODERN: Waitlist tasks are time-based events scheduled by relative delay.
+# Time storage options:
+#   +DT (positive): Direct delta-time in centiseconds (1 cs = 10ms)
+#   -GENADR: Indirect - points to erasable location containing delta-time
+#   OCT 77777 (-0): Special flag meaning "restart immediately"
+# 
+# The immediate restart (OCT 77777) pattern is critical for tasks that
+# must resume as soon as possible after hardware restart, regardless of
+# their original scheduled time. This ensures time-critical operations
+# like engine control don't miss their windows.]
+#
 # ***** NOW THE TABLES THEMSELVES *****
 
 		BANK	01
@@ -97,6 +140,23 @@
 PRDTTAB		EQUALS	12000			# USED TO FIND THE PRIORITY OR DELTATIME
 CADRTAB		EQUALS	12001			# THIS AND THE NEXT RELATIVE LOC CONTAIN
 						# RESTART 2CADR
+# [MODERN: These are base addresses for the restart table indexing.
+# PRDTTAB (12000 octal) = Priority/Delta-Time base
+# CADRTAB (12001 octal) = 2CADR Address base
+# The RESTARTS routine uses (group*2 + phase offset) indexing to locate
+# the correct table entry for each restart phase.]
+#
+# ============================================================================
+# SIZETAB - PHASE GROUP SIZE/OFFSET TABLE
+# ============================================================================
+# [MODERN: Index table for calculating restart entry positions.
+# Each TC instruction encodes the offset from PRDTTAB/CADRTAB to the
+# start of that group's restart entries. The calculation:
+#   Table offset = TC X.YSPOT - 12006 (for even) or -12004 (for odd)
+# 
+# Even phases (X.2, X.4, etc.) have TWO restart entries (6 words each)
+# Odd phases (X.3, X.5, etc.) have ONE restart entry (3 words each)]
+# ============================================================================
 
 SIZETAB		TC	1.2SPOT -12006
 		TC	1.3SPOT -12004
@@ -117,10 +177,15 @@ SIZETAB		TC	1.2SPOT -12006
 1.3SPOT		DEC	120			# THIS NUMBER MUST BE EQUAL C(JTAGTIME)
 		EBANK=	AOG
 		-2CADR	SETJTAG
+# [MODERN: Example ODD entry with direct time storage.
+# DEC 120 = 1.2 seconds delay -> waitlist task to SETJTAG
+# -2CADR flags this as waitlist (negative 2CADR = task, positive = job)]
 
 1.5SPOT		OCT	10000
 		EBANK=	DAPDATR1
 		2CADR	REDO40.9
+# [MODERN: Job restart at priority 10000 (octal) via FINDVAC.
+# REDO40.9 restarts DAP-related calculations.]
 
 1.7SPOT		OCT	10000
 		EBANK=	ESTROKER
@@ -197,6 +262,10 @@ SIZETAB		TC	1.2SPOT -12006
 		OCT	30000
 		EBANK=	DELVIMU
 		2CADR	P47BODY
+# [MODERN: IMMEDIATE RESTART pattern (OCT 77777 = -0).
+# First entry: PRECHECK restarts immediately regardless of original time.
+# Second entry: P47BODY job at priority 30 (octal).
+# Group 4 protects powered flight operations.]
 
 4.4SPOT		OCT	77777
 		EBANK=	TIG
@@ -213,6 +282,10 @@ SIZETAB		TC	1.2SPOT -12006
 		DEC	2496
 		EBANK=	TIG
 		-2CADR	TIG-5
+# [MODERN: Group 4 EVEN entries protect powered flight sequences.
+# Pattern: OCT 77777 immediate restart for PRECHECK
+# Plus timed entry for burn sequencing (TTG/0 at 29.96 sec, TIG-5 at 24.96 sec)
+# This ensures engine ignition sequences are protected across restarts.]
 
 # ANY MORE GROUP 4.EVEN RESTART VALUES SHOULD GO HERE
 
