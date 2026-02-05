@@ -137,6 +137,19 @@ Source File                          | Page Number
 [UPDATE_PROGRAM.agc]                 | 1497-1507
 [RT8_OP_CODES.agc]                   | 1508-1516
 
+## Recovery System
+
+The Comanche055 recovery system provides fault-tolerant restart capability through phase-based state checkpointing for the Command Module (CM). This mechanism enables the AGC to resume mission-critical operations after transient hardware faults without requiring complete system reinitialization.
+
+Key components:
+
+- **[FRESH_START_AND_RESTART.agc]** (pages 181-210): GOPROG entry point at hardware restart, DOFSTART fresh start initialization
+- **[RESTART_TABLES.agc]** (pages 211-221): Restart point definitions (SIZETAB, PRDTTAB, CADRTAB)
+- **[RESTARTS_ROUTINE.agc]** (pages 1414-1419): Restart type dispatching (Type A/B/C discrimination)
+- **[PHASE_TABLE_MAINTENANCE.agc]** (pages 1404-1413): Phase change mechanism (PHASCHNG, 2PHSCHNG) for state checkpointing
+
+For detailed recovery system documentation, see [Recovery Architecture](/docs/architecture/recovery/).
+
 ### MISCELLANEOUS
 
 Source File          | Page Number

@@ -125,6 +125,17 @@ What follows is simply a bunch of file-includes for the individual code chunks. 
 | [AOSTASK_AND_AOSJOB.agc]                      | 1485-1506   |
 | [SPS_BACK-UP_RCS_CONTROL.agc]                 | 1507-1510   |
 
+## Recovery System
+
+The Luminary099 recovery system provides fault-tolerant restart capability through phase-based state checkpointing for the Lunar Module (LM). Key components:
+
+- **[FRESH_START_AND_RESTART.agc]** (pages 211-237): GOPROG entry point at hardware restart, DOFSTART fresh start initialization
+- **[PHASE_TABLE_MAINTENANCE.agc]** (pages 1294-1302): Phase change mechanism (PHASCHNG, 2PHSCHNG) for state checkpointing
+- **[RESTART_TABLES.agc]** (pages 238-243): Restart point definitions (SIZETAB, PRDTTAB, CADRTAB)
+- **[RESTARTS_ROUTINE.agc]** (pages 1303-1308): Restart type dispatching (Type A/B/C discrimination)
+
+For detailed recovery system documentation, see [Recovery Architecture](/docs/architecture/recovery/).
+
 ### MISCELLANEOUS
 
 | Source File          | Page Number   |
