@@ -200,6 +200,33 @@ V37KLEAN	EXTEND
 		TC	Q
 
 # Page 215
+# ============================================================================
+# GOPROG - HARDWARE RESTART ENTRY POINT (GOJAM VECTOR 4000)
+# ============================================================================
+# [MODERN EQUIVALENT: Hardware Interrupt Handler for System Recovery]
+#
+# PURPOSE: This routine handles hardware-initiated restarts triggered by
+#          transient faults (radiation-induced bit flips, power transients,
+#          oscillator failures). The GOJAM hardware vector transfers control
+#          to address 4000 (octal) when a hardware restart condition occurs.
+#
+# HARDWARE AUTOMATIC REGISTER SAVE:
+#   - Registers A, L, Q are automatically saved by hardware
+#   - BBANK (current execution bank) is preserved
+#   - SUPERBNK must be saved by software (done via RSBBQ)
+#
+# FLOW:
+#   1. Increment REDOCTR (restart counter for telemetry/debugging)
+#   2. Save Q and SUPERBNK to RSBBQ register pair
+#   3. Restore ISS coarse align if needed (LIGHTSET)
+#   4. Validate erasable memory consistency (ERESTORE check)
+#   5. If corrupted: Branch to fresh start (NONAVKEY+3)
+#   6. If valid: Continue to DORSTART (controlled restart)
+#
+# EXIT: Via ENDRSTRT to DUMMYJOB or via restart table dispatch
+#
+# Source: Luminary099/FRESH_START_AND_RESTART.agc:206
+# ============================================================================
 # COMES HERE FROM LOCATION 4000, GOJAM, RESTART ANY PROGRAMS WHICH MAY HAVE BEEN RUNNING AT THE TIME.
 
 		EBANK=	LST1
@@ -208,7 +235,12 @@ GOPROG		INCR	REDOCTR		# ADVANCE RESTART COUNTER.
 		LXCH	Q
 		EXTEND
 		ROR	SUPERBNK
-		DXCH	RSBBQ
+		DXCH	RSBBQ		# [MODERN: Save return context. LXCH Q saves
+					# Q register, ROR SUPERBNK combines with
+					# BBANK to save full execution context.
+					# DXCH RSBBQ stores both to restart save
+					# area. This allows restart to return to
+					# interrupted code location.]
 		CA	DSPTAB +11D
 		MASK	BIT4
 		EXTEND
@@ -218,32 +250,58 @@ GOPROG		INCR	REDOCTR		# ADVANCE RESTART COUNTER.
 		WOR	CHAN12		# ISS WAS IN COARSE ALIGN SO GO BACK TO
 BUTTONS		TC	LIGHTSET
 
+# ============================================================================
+# E-MEMORY VALIDATION (ERASCHK INTERRUPT DETECTION)
+# ============================================================================
+# [MODERN: State Checkpoint Consistency Validation]
+#
+# The ERASCHK routine (elsewhere) temporarily stores erasable memory contents
+# during self-test operations. If a hardware restart occurs while ERASCHK is
+# running, memory may be in an inconsistent state.
+#
+# VALIDATION ALGORITHM:
+#   ERESTORE = +0: No ERASCHK was interrupted, continue normally
+#   ERESTORE = SKEEP7: ERASCHK was interrupted, restore memory then continue
+#   ERESTORE = other: Memory corruption detected, force fresh start
+#
+# The sentinel value ERESTORE provides a "transaction log" mechanism - if
+# it doesn't match expected values, the E-memory state is suspect and
+# a full reinitialization (fresh start) is required.
+# ============================================================================
+
 # ERASCHK TEMPORARILY STORES THE CONTENST OF TWO ERASABLE LOCATIONS, X
 # AND X+1 INTO SKEEP5 AND SKEEP6.  IT ALSO STORES X INTO SKEEP7 AND
 # ERESTORE.  IF ERASCHK IS INTERRUPTED BY A RESTART, C(ERESTORE) SHOULD
 # EQUAL C(SKEEP7), AND SHOULD BE A + NUMBER LESS THAN 2000 OCT.  OTHERWISE
 # C(ERESTORE) SHOULD EQUAL +0.
 
-		CAF	HI5
-		MASK	ERESTORE
+# [Check if ERESTORE is +0 or small positive (<2000 octal)]
+		CAF	HI5		# HI5 = 76000 masks upper bits
+		MASK	ERESTORE	# If any upper bits set, ERESTORE is invalid
 		EXTEND
 		BZF	+2		# IF ERESTORE NOT = +0 OR +N LESS THAN 2K,
 		TCF	NONAVKEY +3	# DO FRESH START -- E MEMORY MIGHT BE BAD
+					# [Invalid ERESTORE -> force fresh start]
+# [If ERESTORE = +0, no ERASCHK was active, proceed to controlled restart]
 		CS	ERESTORE
 		EXTEND
 		BZF	DORSTART	# = +0 CONTINUE WITH RESTART.
+# [If ERESTORE = SKEEP7, ERASCHK was interrupted - need to restore memory]
 		AD	SKEEP7
 		EXTEND
 		BZF	+2		# = SKEEP7, RESTORE E MEMORY.
 		TCF	NONAVKEY +3	# DO FRESH START -- E MEMORY MIGHT BE BAD
+# [MODERN: Transaction rollback - restore the two E-memory locations that
+#  ERASCHK was modifying when interrupted. This ensures E-memory is in a
+#  consistent state before restart continues.]
 		CA	SKEEP4
 		TS	EBANK		# EBANK OF E MEMORY THAT WAS UNDER TEST.
 		EXTEND			# (NOT DXCH SINCE THIS MIGHT HAPPEN AGAIN)
-		DCA	SKEEP5
-		INDEX	SKEEP7
+		DCA	SKEEP5		# Get saved values from SKEEP5,SKEEP6
+		INDEX	SKEEP7		# SKEEP7 contains address that was tested
 		DXCH	0000		# E MEMORY RESTORED
 		CA	ZERO
-		TS	ERESTORE
+		TS	ERESTORE	# Setting ERESTORE=0 marks restore complete
 DORSTART	TC	STARTSUB	# DO INITIALIZATION AFTER ERASE RESTORE.
 
 SETINFL		CS	INTFLBIT
@@ -287,15 +345,38 @@ GOPROG2A	TC	LIGHTSET
 		MASK	FLGWRD10
 		TS	FLGWRD10
 
+# ============================================================================
+# PHASE TABLE VALIDATION (GOPROG3/PCLOOP)
+# ============================================================================
+# [MODERN: State Checkpoint Integrity Verification]
+#
+# PURPOSE: Verify all six phase groups have consistent state by checking
+#          that PHASE and -PHASE (complement) registers agree.
+#
+# ALGORITHM: For each group 1-6:
+#   1. Load -PHASEn (complement) into A and PHASEn into L
+#   2. RXOR LCHAN: XOR A with L, result should be -0 if consistent
+#   3. CCS A: If result is NOT -0, phase table is corrupted
+#
+# RXOR VALIDATION LOGIC:
+#   If PHASEn was stored correctly, -PHASEn = ~PHASEn (ones complement)
+#   PHASEn RXOR -PHASEn = all 1s = -0 (negative zero in ones complement)
+#   Any other result indicates memory corruption during restart
+#
+# If validation fails: Alarm 1107 and force fresh start (DOFSTRT1)
+# If validation passes: Continue to process active restart groups
+# ============================================================================
 GOPROG3		CAF	NUMGRPS		# VERIFY PHASE TABLE AGREEMENTS
+					# [MPAC+5 = group counter (NUMGRPS down to 0)]
 PCLOOP		TS	MPAC +5
-		DOUBLE
+		DOUBLE			# Double for indexing (2 words per group)
 		EXTEND
-		INDEX	A
+		INDEX	A		# [Load -PHASEn (complement) and PHASEn]
 		DCA	-PHASE1		# COMPLEMENT INTO A, DIRECT INTO L.
 		EXTEND
 		RXOR	LCHAN		# RESULT MUST BE -0 FOR AGREEMENT.
-		CCS	A
+					# [RXOR combines A and L - must yield -0]
+		CCS	A		# [CCS A: any PNZ/+0/-0 except -0 = failure]
 		TCF	PTBAD		# RESTART FAILURE.
 		TCF	PTBAD
 		TCF	PTBAD
@@ -320,19 +401,23 @@ PCLOOP		TS	MPAC +5
 		MASK	FLAGWRD0	# NEW BASE STATE VECTORS.
 		TS	FLAGWRD0
 
+# [MODERN: Dispatch loop - for each active restart group, invoke the
+#  RESTARTS dispatcher via SWCALL to resume the protected job/task.
+#  MPAC+6 counts active groups; if zero at end, go to POOH (idle state).]
 		CAF	NUMGRPS		# SEE IF ANY GROUPS RUNNING.
 NXTRST		TS	MPAC +5
 		DOUBLE
 		INDEX	A
-		CCS	PHASE1
+		CCS	PHASE1		# Check if group is active (phase != 0)
 		TCF	PACTIVE		# PNZ -- GROUP ACTIVE.
 		TCF	PINACT		# +0 -- GROUP NOT RUNNING.
 
-PACTIVE		TS	MPAC
+PACTIVE		TS	MPAC		# Save phase value for RESTARTS
 		INCR	MPAC		# ABS OF PHASE.
 		INCR	MPAC +6		# INDICATE GROUP DEMANDS PRESENT.
-		CA	RACTCADR
+		CA	RACTCADR	# RACTCADR = CADR RESTARTS
 		TC	SWCALL		# MUST RETURN TO SWRETURN.
+					# [Invoke RESTARTS to dispatch job/task]
 
 PINACT		CCS	MPAC +5		# PROCESS ALL RESTART GROUPS.
 		TCF	NXTRST
@@ -344,6 +429,19 @@ PINACT		CCS	MPAC +5		# PROCESS ALL RESTART GROUPS.
 		EXTEND
 		BZF	GOTOPOOH	# NO
 		TCF	ENDRSTRT	# YES
+# ============================================================================
+# PHASE TABLE FAILURE - ALARM 1107
+# ============================================================================
+# [MODERN: Checkpoint Corruption Detected - Force Full Reinitialization]
+#
+# If the PCLOOP validation detects inconsistency between PHASEn and -PHASEn,
+# the phase tables may have been corrupted by the hardware fault that
+# triggered this restart. Since restart protection depends on valid phase
+# tables, a controlled restart is not possible.
+#
+# ACTION: Set alarm 1107 to record the failure, then branch to DOFSTRT1
+# to perform a complete fresh start (losing all program state).
+# ============================================================================
 PTBAD		TC	ALARM		# SET ALARM TO SHOW PHASE TABLE FAILURE.
 		OCT	1107
 
