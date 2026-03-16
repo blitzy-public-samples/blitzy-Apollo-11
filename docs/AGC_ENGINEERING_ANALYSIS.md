@@ -2,7 +2,7 @@
 
 This report is a read-only architectural analysis of the Apollo 11 Guidance Computer (AGC) source code. It documents engineering tradeoffs, design constraints, and architectural decisions embedded in the flight software, drawing evidence exclusively from the repository's AGC assembly source files. No source code has been modified.
 
-**Scope**: Analysis is limited strictly to `Comanche055/*.agc` (Command Module / Colossus 2A, assembled April 1, 1969) and `Luminary099/*.agc` (Lunar Module / Luminary 1A, assembled July 14, 1969). The repository contains 178 `.agc` source files totaling approximately 130,186 lines of code — two parallel implementations sharing core architecture but diverging where mission requirements demanded. The `Comanche055/MAIN.agc` manifest includes 85 source files; `Luminary099/MAIN.agc` includes 90. Ground systems, hardware schematics, and non-AGC artifacts are excluded.
+**Scope**: Analysis is limited strictly to `Comanche055/*.agc` (Command Module / Colossus 2A, assembled April 1, 1969) and `Luminary099/*.agc` (Lunar Module / Luminary 1A, assembled July 14, 1969). The repository contains 175 `.agc` source files totaling approximately 130,186 lines of code — two parallel implementations sharing core architecture but diverging where mission requirements demanded. `Comanche055/` comprises 85 source files (84 included modules plus MAIN.agc); `Luminary099/` comprises 90 (89 included modules plus MAIN.agc). Ground systems, hardware schematics, and non-AGC artifacts are excluded.
 
 ## 1. Memory and Resource Constraints
 
@@ -51,9 +51,9 @@ The Executive manages long-running **jobs** — computations that may span many 
 - **NOVAC** (`Comanche055/EXECUTIVE.agc`, line 37): Creates a job that requires no VAC (Vector Accumulator) area — used for basic-instruction-only jobs
 - **FINDVAC** (line 52): Creates a job that requires a VAC area — used for jobs containing interpretive code, which needs the multi-purpose accumulator workspace
 
-FINDVAC sequentially checks five VAC areas (`VAC1USE` through `VAC5USE`, lines 134-144). If all five are occupied, it triggers `BAILOUT` with alarm `OCT 1201` (line 145-146) — the famous "Executive overflow — no VAC areas" alarm.
+FINDVAC sequentially checks five VAC areas (`VAC1USE` through `VAC5USE`, lines 134-144). If all five are occupied, it triggers `BAILOUT` with alarm `OCT 01201` (line 145-146) — the famous "Executive overflow — no VAC areas" alarm.
 
-After securing resources, `NOVAC2` (line 154) scans core sets to find a free slot. The CM provides **7 core sets** (`NO.CORES DEC 6` at line 161 — six scannable plus the currently running job's set). The LM provides **8 core sets** (`NO.CORES DEC 7`, `Luminary099/EXECUTIVE.agc`, line 162) — the additional core set accommodating the heavier concurrent workload during powered descent, where landing guidance, radar processing, and crew display all compete for Executive resources. If no core sets are available, `BAILOUT` fires with alarm `OCT 1202` (line 204-205) — "Executive overflow — no core sets."
+After securing resources, `NOVAC2` (line 154) scans core sets to find a free slot. The CM provides **7 core sets** (`NO.CORES DEC 6` at line 161 — six scannable plus the currently running job's set). The LM provides **8 core sets** (`NO.CORES DEC 7`, `Luminary099/EXECUTIVE.agc`, line 162) — the additional core set accommodating the heavier concurrent workload during powered descent, where landing guidance, radar processing, and crew display all compete for Executive resources. If no core sets are available, `BAILOUT` fires with alarm `OCT 01202` (line 204-205) — "Executive overflow — no core sets."
 
 **CHANJOB** (`Comanche055/EXECUTIVE.agc`, line 211) performs context switching by swapping the contents of core set 0 (the active set) with the highest-priority waiting job's core set. This includes the location counter, bank registers, multi-purpose accumulator (MPAC through MPAC+6), push-down pointer, and priority — a complete context save/restore in approximately 30 instructions.
 
@@ -80,7 +80,7 @@ The T3RUPT interrupt vector (`Comanche055/INTERRUPT_LEAD_INS.agc`, lines 51-54; 
 
 **LONGCALL** extends the Waitlist beyond its native 16,250-centisecond (162.5-second) range by chaining successive waitlist entries, enabling delays of arbitrary duration.
 
-If all 9 task slots are full, the system triggers `WTABORT` with alarm `OCT 1203` — annotated with the comment `# NO ROOM IN THE INN.` (`Comanche055/WAITLIST.agc`, line 339). The LM Waitlist (`Luminary099/WAITLIST.agc`) adds a `FILLED` routine for overflow handling and alternate `WAITPOOH`/`LONGPOOH` error paths that route through `POODOO1` with alarm `OCT 01204`.
+If all 9 task slots are full, the system triggers `WTABORT` with alarm `OCT 01203` — annotated with the comment `# NO ROOM IN THE INN.` (`Comanche055/WAITLIST.agc`, line 339). The LM Waitlist (`Luminary099/WAITLIST.agc`) adds a `FILLED` routine for overflow handling and alternate `WAITPOOH`/`LONGPOOH` error paths that route through `POODOO1` with alarm `OCT 01204`.
 
 ### Phase Table Restart Protection
 
@@ -98,9 +98,9 @@ This system is what made the 1202/1201 alarm recovery possible during the Apollo
 
 The alarms that nearly aborted the Apollo 11 lunar landing trace directly to the Executive's resource exhaustion detection:
 
-- **OCT 1201**: FINDVAC exhausts all 5 VAC areas → `BAILOUT` (`Comanche055/EXECUTIVE.agc`, lines 145-146)
-- **OCT 1202**: Core set scan finds no free sets → `BAILOUT` (lines 204-205)
-- **OCT 1203**: Waitlist overflow → `WTABORT` (`Comanche055/WAITLIST.agc`, lines 339-340)
+- **OCT 01201**: FINDVAC exhausts all 5 VAC areas → `BAILOUT` (`Comanche055/EXECUTIVE.agc`, lines 145-146)
+- **OCT 01202**: Core set scan finds no free sets → `BAILOUT` (lines 204-205)
+- **OCT 01203**: Waitlist overflow → `WTABORT` (`Comanche055/WAITLIST.agc`, lines 339-340)
 
 During descent, the rendezvous radar — its processing logic located in `Luminary099/P20-P25.agc` — was left in an auto-track mode that generated a stream of interrupts spawning Executive jobs competing with landing guidance (driven by `Luminary099/SERVICER.agc` and `Luminary099/THE_LUNAR_LANDING.agc`) for core sets and VAC areas. The resulting 1202 alarms triggered software restarts. Because the landing guidance had properly called `PHASCHNG` before each critical computation, the restart routine recovered it. The rendezvous radar tasks, lacking restart protection, were shed — exactly the designed behavior.
 
@@ -175,7 +175,7 @@ The alarm system implements three severity levels, each with distinct behavior:
 
 **WHIMPER** (line 156) is the common restart entry point shared by both BAILOUT and POODOO — its name an allusion to T.S. Eliot. It manipulates the `BRUPT` register and executes `RESUME` to force control through `POSTJUMP` to `ENEMA`.
 
-**CURTAINS** (line 205) handles fatal hardware errors (alarm `OCT 00217`). Despite the dramatic name, it returns to the caller — even a hardware error does not halt the computer.
+**CURTAINS** (line 205) handles unrecoverable software faults (alarm `OCT 00217` — "Bad return from IMUSTALL"). Despite the dramatic name, it returns to the caller — even a fatal error condition does not halt the computer.
 
 ### LM-Specific Alarm Differences
 
@@ -209,7 +209,7 @@ The alarm code storage system (`Comanche055/ALARM_AND_ABORT.agc`, lines 74-105) 
 | **GOPROG** | Hardware restart | Power transient, watchdog | Validates `ERESTORE`, processes phase tables, recovers active groups |
 | **ENEMA** | Software restart | BAILOUT/POODOO via WHIMPER | Selective cleanup, kills integration-waiting programs, processes phase tables |
 
-**GOPROG** (line 290) is the critical restart path. It increments the restart counter, stores erasables for debugging via `VAC5STOR`, checks hardware status (oscillator fail, AGC warning), and — if erasable memory passes validation — proceeds to process phase tables and recover active jobs and tasks. If phase table validation fails, it displays alarm `1107` ("Phase table failure — erasable memory suspect", `Luminary099/ASSEMBLY_AND_OPERATION_INFORMATION.agc`, line 964) and falls through to DOFSTART.
+**GOPROG** (line 290) is the critical restart path. It increments the restart counter, stores erasables for debugging via `VAC5STOR`, checks hardware status (oscillator fail, AGC warning), and — if erasable memory passes validation — proceeds to process phase tables and recover active jobs and tasks. If phase table validation fails, it displays alarm `OCT 01107` ("Phase table failure — erasable memory suspect", `Luminary099/ASSEMBLY_AND_OPERATION_INFORMATION.agc`, line 964) and falls through to DOFSTART.
 
 **MR.KLEAN** (`Comanche055/FRESH_START_AND_RESTART.agc`, line 264) is the group termination cascade. It zeroes phase tables for groups 2, 4, 1, 3, 5, and 6 in sequence — the ordering ensures that the most critical groups (2 and 4, typically guidance) are terminated first to establish a known state before cleaning up auxiliary groups. **P00KLEAN** and **V37KLEAN** (lines 268, 274) are partial-cascade entry points for less destructive cleanup.
 
@@ -219,11 +219,11 @@ The alarm code storage system (`Comanche055/ALARM_AND_ABORT.agc`, lines 74-105) 
 
 - **ITSAVAR** (line 69): Variable restart — the phase table contains a direct 2CADR address. The routine loads the restart address from `PHSNAMEx` and jumps to it. Used when the restart point is a fixed location in code.
 
-- **ITSATBL** (line 60): Table restart — the phase value encodes an index into `Comanche055/RESTART_TABLES.agc` (and its LM counterpart `Luminary099/RESTART_TABLES.agc`), which contains structured entries specifying whether to restart as a job (via FINDVAC or NOVAC), a waitlist task, or a longcall. Each restart group has two table forms (even and odd phases), with priority encoding using sign convention (+FINDVAC, -NOVAC) and longcall entry format for extended-duration recovery. **FINDTIME** recovers the elapsed delta-time from `TBASE`/`LONGBASE` registers to re-establish timer-dependent tasks at the correct point in their timing sequence.
+- **ITSATBL** (line 178): Table restart — the phase value encodes an index into `Comanche055/RESTART_TABLES.agc` (and its LM counterpart `Luminary099/RESTART_TABLES.agc`), which contains structured entries specifying whether to restart as a job (via FINDVAC or NOVAC), a waitlist task, or a longcall. Each restart group has two table forms (even and odd phases), with priority encoding using sign convention (+FINDVAC, -NOVAC) and longcall entry format for extended-duration recovery. **FINDTIME** recovers the elapsed delta-time from `TBASE`/`LONGBASE` registers to re-establish timer-dependent tasks at the correct point in their timing sequence.
 
 ### CCSHOLE: Defensive Programming Pattern
 
-The CCS (Count, Compare, and Skip) instruction has four branches: positive, +0, negative, -0. In many uses, one or more branches represent "impossible" states. Rather than leaving these branches as dead code, the AGC programmers routed every impossible CCS branch to `CCSHOLE` (`Comanche055/ALARM_AND_ABORT.agc`, line 197), which triggers alarm `OCT 1103` ("Unused CCS branch executed"). This transforms undefined behavior into a detectable, diagnosable alarm — a defensive programming pattern that converts silent corruption into visible failure.
+The CCS (Count, Compare, and Skip) instruction has four branches: positive, +0, negative, -0. In many uses, one or more branches represent "impossible" states. Rather than leaving these branches as dead code, the AGC programmers routed every impossible CCS branch to `CCSHOLE` (`Comanche055/ALARM_AND_ABORT.agc`, line 197), which triggers alarm `OCT 01103` ("Unused CCS branch executed"). This transforms undefined behavior into a detectable, diagnosable alarm — a defensive programming pattern that converts silent corruption into visible failure.
 
 ### The DOALARM Equivalence
 
@@ -313,7 +313,7 @@ Comments throughout the codebase use humor as a mnemonic device:
 
 - `# PLEASE CRANK THE SILLY THING AROUND` — Annotating the crew prompt to reposition the landing radar antenna (line 245-246). A V50N25 display asks the astronaut to manually adjust hardware — the comment captures the programmer's mild exasperation at requiring human intervention in an automated sequence.
 
-- **ENEMA** (`Comanche055/FRESH_START_AND_RESTART.agc`, line 72) — The software restart that "cleanses" system state. The medical metaphor is deliberately uncomfortable and therefore memorable.
+- **ENEMA** (`Comanche055/FRESH_START_AND_RESTART.agc`, line 393) — The software restart that "cleanses" system state. The medical metaphor is deliberately uncomfortable and therefore memorable.
 
 - **MR.KLEAN** (line 264) — The cleanup routine that terminates restart groups. Named after the cleaning product mascot, immediately communicating its purpose: it cleans everything out.
 
@@ -325,7 +325,7 @@ The erasable assignment notation (`Comanche055/ERASABLE_ASSIGNMENTS.agc`, lines 
 
 ### Readability Under Label Length Constraints
 
-AGC labels were limited to approximately six characters, forcing aggressive abbreviation. The programmers compensated with maximally informative abbreviations: `CHANJOB` (change job), `NEWPRIO` (new priority), `ALMCADR` (alarm CADR), `BANKSET` (bank setting), `PHSCHNG` (phase change). These pack maximum semantic content into minimum characters. Where abbreviation was insufficient, comments filled the gap — every routine begins with a block comment explaining its purpose, calling sequence, and return conventions.
+AGC labels were limited to approximately six characters, forcing aggressive abbreviation. The programmers compensated with maximally informative abbreviations: `CHANJOB` (change job), `NEWPRIO` (new priority), `ALMCADR` (alarm CADR), `BANKSET` (bank setting), `PHASCHNG` (phase change). These pack maximum semantic content into minimum characters. Where abbreviation was insufficient, comments filled the gap — every routine begins with a block comment explaining its purpose, calling sequence, and return conventions.
 
 ## 5. Modern Context
 
@@ -333,7 +333,7 @@ The AGC's 1960s design patterns anticipate several contemporary software enginee
 
 ### Load Shedding and Priority Inversion
 
-The BAILOUT mechanism on Executive overflow (`OCT 1202`) is functionally **load shedding** — when demand exceeds capacity, the system discards lower-priority work to preserve critical functions. The Apollo 11 landing's 1202 alarms are the canonical example: the computer shed rendezvous radar tasks to maintain landing guidance. Modern systems implement the same pattern through Kubernetes pod eviction under resource pressure, circuit breakers that reject excess requests, and backpressure mechanisms in streaming systems. The AGC's approach was more dramatic — a full software restart rather than selective rejection — but the principle is identical: when overloaded, shed non-essential work to protect essential functions.
+The BAILOUT mechanism on Executive overflow (`OCT 01202`) is functionally **load shedding** — when demand exceeds capacity, the system discards lower-priority work to preserve critical functions. The Apollo 11 landing's 1202 alarms are the canonical example: the computer shed rendezvous radar tasks to maintain landing guidance. Modern systems implement the same pattern through Kubernetes pod eviction under resource pressure, circuit breakers that reject excess requests, and backpressure mechanisms in streaming systems. The AGC's approach was more dramatic — a full software restart rather than selective rejection — but the principle is identical: when overloaded, shed non-essential work to protect essential functions.
 
 ### Watchdog and Heartbeat Patterns
 
@@ -349,7 +349,7 @@ The restart protection system (phase tables + restart groups + RESTARTS_ROUTINE)
 
 ### Resource Pool Exhaustion Strategies
 
-The AGC's response to VAC area exhaustion (`OCT 1201`) and core set exhaustion (`OCT 1202`) follows a **detect → alarm → restart → recover** pattern. Modern systems face analogous resource exhaustion: thread pool exhaustion, connection pool depletion, memory pressure triggering OOM killers. The key insight embedded in the AGC design is that for real-time systems, **queuing is not an acceptable response to exhaustion** — a navigation computation that arrives 500 milliseconds late is worse than one that never runs, because stale guidance commands can send the vehicle in the wrong direction. The AGC chose restart over queuing because bounded-time recovery through restart protection was more predictable than unbounded queuing delay.
+The AGC's response to VAC area exhaustion (`OCT 01201`) and core set exhaustion (`OCT 01202`) follows a **detect → alarm → restart → recover** pattern. Modern systems face analogous resource exhaustion: thread pool exhaustion, connection pool depletion, memory pressure triggering OOM killers. The key insight embedded in the AGC design is that for real-time systems, **queuing is not an acceptable response to exhaustion** — a navigation computation that arrives 500 milliseconds late is worse than one that never runs, because stale guidance commands can send the vehicle in the wrong direction. The AGC chose restart over queuing because bounded-time recovery through restart protection was more predictable than unbounded queuing delay.
 
 ## Appendix: Key Alarm Codes Reference
 
@@ -380,10 +380,10 @@ The following table catalogs critical alarm codes from `Luminary099/ASSEMBLY_AND
 | 01210 | * | Two programs using device at same time | Mode Switching |
 | 01301 | — | ARCSIN-ARCCOS argument too large | Interpreter |
 | 01302 | ** | SQRT called with negative argument | Interpreter |
-| 01406 | ** | Bad return from ROOTPSRS (during ignition algorithm) | Ignition Algorithm |
+| 01406 | —/\*\* | Bad return from ROOTPSRS — non-abortive in Descent Guidance EQS., abortive (\*\*) during Ignition Algorithm | Descent Guidance / Ignition Algorithm |
 | 01501 | ** | Keyboard and display alarm during internal use (NVSUB) | Pinball |
 | 01520 | — | V37 request not permitted at this time | V37 |
-| 02000 | * | DAP still in progress at next TIME5 RUPT | DAP (`Luminary099/DAPIDLER_PROGRAM.agc`) |
+| 02000 | * | DAP still in progress at next TIMES RUPT | DAP (`Luminary099/DAPIDLER_PROGRAM.agc`) |
 
 **Severity Legend** (source: `Luminary099/ASSEMBLY_AND_OPERATION_INFORMATION.agc`, lines 1014-1021):
 
