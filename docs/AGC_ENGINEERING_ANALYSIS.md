@@ -250,14 +250,14 @@ flowchart TD
 ```mermaid
 flowchart TD
     A[Restart Entry] --> B{Source?}
-    B -->|Hardware| C[SLAP1]
-    B -->|Software via WHIMPER| D[GOPROG]
+    B -->|Hardware| D[GOPROG]
+    B -->|Manual Fresh Start| C[SLAP1]
     B -->|Mode Change| E[ENEMA]
     B -->|Full Init| F[DOFSTART]
-    C --> G{ERESTORE Valid?}
-    G -->|Yes| D
+    D --> G{ERESTORE Valid?}
+    G -->|Yes| H[Process Phase Tables 1-6]
     G -->|No| F
-    D --> H[Process Phase Tables 1-6]
+    C --> F
     H --> I{Phase Group Active?}
     I -->|Variable| J[ITSAVAR — Direct Restart]
     I -->|Table| K[ITSATBL — Table Dispatch]
