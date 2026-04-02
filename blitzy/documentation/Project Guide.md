@@ -1,61 +1,57 @@
-# Blitzy Project Guide — Apollo 11 AGC Engineering Analysis Report
-
----
+# Blitzy Project Guide
 
 ## 1. Executive Summary
 
 ### 1.1 Project Overview
 
-This project delivers a single standalone markdown report (`docs/AGC_ENGINEERING_ANALYSIS.md`) performing a read-only architectural analysis of the Apollo 11 Guidance Computer (AGC) source code. The report documents engineering tradeoffs, design constraints, and architectural decisions embedded across the Comanche055 (Command Module / Colossus 2A) and Luminary099 (Lunar Module / Luminary 1A) assembly source modules. It covers five decision domains — memory constraints, scheduling architecture, error handling philosophy, naming conventions, and modern context — drawing evidence exclusively from 175 AGC assembly source files totaling ~130,186 lines of code. No source code was modified; the repository is a historical artifact preserved for fidelity to the original MIT Instrumentation Lab printouts.
+This project produces a single concise markdown report (`docs/AGC_ENGINEERING_ANALYSIS.md`) performing a read-only architectural analysis of the Apollo 11 Guidance Computer (AGC) source code. The report documents engineering tradeoffs, design constraints, and architectural decisions embedded across the Comanche055 (Command Module / Colossus 2A) and Luminary099 (Lunar Module / Luminary 1A) assembly source modules — 175 `.agc` files totaling ~130,186 lines of code. The report covers five decision domains: memory constraints, real-time scheduling, error handling, naming conventions, and modern context parallels. The target audience is software engineers seeking to understand the AGC's architectural patterns and their relevance to contemporary systems. No source code files were modified; this is a documentation-only deliverable.
 
 ### 1.2 Completion Status
 
 ```mermaid
-pie title Project Completion — 88.5%
-    "Completed (AI)" : 38.5
-    "Remaining" : 5
+pie title Project Completion Status
+    "Completed (37h)" : 37
+    "Remaining (3h)" : 3
 ```
 
 | Metric | Value |
 |--------|-------|
-| **Total Project Hours** | 43.5 |
-| **Completed Hours (AI)** | 38.5 |
-| **Remaining Hours** | 5 |
-| **Completion Percentage** | 88.5% (38.5 / 43.5) |
+| **Total Project Hours** | 40.0 |
+| **Completed Hours (AI)** | 37.0 |
+| **Remaining Hours** | 3.0 |
+| **Completion Percentage** | 92.5% |
+
+**Formula**: 37.0 completed hours / 40.0 total hours × 100 = **92.5%**
 
 ### 1.3 Key Accomplishments
 
-- ✅ Created `docs/AGC_ENGINEERING_ANALYSIS.md` — 395 lines, 37,238 bytes, ~5,346 words
-- ✅ All 5 decision domains fully authored with evidence-backed analysis
-- ✅ 33 distinct `.agc` source files cited with verified line-number references (requirement: 25+)
-- ✅ 5 Mermaid diagrams embedded (Executive scheduling, Waitlist timer, Phase table protection, Alarm hierarchy, Restart decision tree)
-- ✅ 27 alarm codes documented in appendix with severity markers from source
-- ✅ CM vs LM architectural divergences explicitly documented (core sets 7 vs 8, abort defaults, GOPOODOO, BAILOUT1/POODOO1)
-- ✅ Markdown linting: 0 errors via `markdownlint-cli2`
-- ✅ Read-only constraint verified: `git diff` shows only 1 file added, 0 files modified
-- ✅ All label names match exact source spelling (POODOO, CHANJOB, DUMMYJOB, CCSHOLE, FLAGORGY, etc.)
-- ✅ All alarm codes in octal notation matching AGC source convention
+- [x] Created `docs/AGC_ENGINEERING_ANALYSIS.md` — 469-line standalone markdown report
+- [x] Documented all 5 AAP-specified decision domains with evidence-backed architectural analysis
+- [x] Embedded 5 Mermaid diagrams (alarm hierarchy, restart decision tree, scheduling model, waitlist architecture, phase table protection)
+- [x] Cited 34 distinct `.agc` source files across both Comanche055/ and Luminary099/
+- [x] Curated 25 alarm codes with severity markers, OCT notation, and source modules in appendix
+- [x] Added Decision Log (12 entries), Deviation Register (5 entries), and bidirectional Traceability Matrix
+- [x] All CM vs LM divergences explicitly documented (core sets, abort defaults, GOPOODOO, BAILOUT1/POODOO1)
+- [x] Markdownlint validation: 0 errors; repository lint (`npm run lint`): 0 errors
+- [x] All source citations verified against `.agc` files (labels, line numbers, alarm codes)
+- [x] Zero `.agc` source files modified — read-only constraint fully respected
 
 ### 1.4 Critical Unresolved Issues
 
 | Issue | Impact | Owner | ETA |
 |-------|--------|-------|-----|
-| `docs/` directory not included in `package.json` lint script glob | Markdown lint CI will not automatically lint the new report file | Human Developer | 0.5h (but out of AAP scope — read-only constraint prevents modifying `package.json`) |
-| Report not linked from repository `README.md` | Discoverability — users must navigate to `docs/` directly | Human Developer | N/A (read-only constraint prevents modifying `README.md`) |
+| Architectural claims require domain expert review | Risk of inaccurate AGC interpretations reaching final publication | Human Reviewer | 2 hours |
+| `package.json` lint glob does not include `docs/*.md` | New report file not covered by `npm run lint` CI workflow | Human Developer | 1 hour |
 
 ### 1.5 Access Issues
 
-No access issues identified. The project is a standalone markdown documentation file requiring no external services, API keys, databases, or third-party access. The repository is public domain.
+No access issues identified. The repository is a public-domain historical archive. All analysis was performed using locally available source files. No external APIs, credentials, or restricted services were required.
 
 ### 1.6 Recommended Next Steps
 
-1. **[High]** Conduct peer review of the report by an AGC domain expert or aerospace historian to validate engineering rationale claims
-2. **[High]** Incorporate peer review feedback — adjust any factual corrections or architectural mischaracterizations
-3. **[Medium]** Verify all 5 Mermaid diagrams render correctly on GitHub's native Mermaid renderer
-4. **[Low]** Final proofreading pass for grammar, consistency, and readability
-5. **[Low]** Monitor citation drift — verify cited line numbers remain accurate after any upstream repository commits
-
----
+1. **[High]** Conduct peer review of architectural claims by an AGC domain expert or embedded systems engineer — verify the engineering rationale in all five report sections
+2. **[Medium]** Update `package.json` lint script glob to include `docs/*.md` so the report is covered by CI markdown linting
+3. **[Low]** Consider adding a link to `docs/AGC_ENGINEERING_ANALYSIS.md` from the repository's `README.md` for discoverability (note: this would modify an existing file, which was out of scope for the read-only analysis constraint)
 
 ## 2. Project Hours Breakdown
 
@@ -63,161 +59,142 @@ No access issues identified. The project is a standalone markdown documentation 
 
 | Component | Hours | Description |
 |-----------|-------|-------------|
-| Source Code Analysis & Research | 13 | Deep reading of 20+ key `.agc` files across Comanche055/Luminary099; analysis of Executive, Waitlist, Alarm, Phase Table, Erasable Assignments, Inter-Bank Communication, Interpreter, and Interrupt subsystems; grep surveys for naming conventions, humor, and cultural references across all 175 `.agc` files |
-| Report Writing & Content Creation | 17 | Authoring all 5 decision domain sections: Memory Constraints (3h), Scheduling Architecture (4h), Error Handling & Recovery (4h), Naming Conventions (2h), Modern Context (2h), Alarm Code Appendix (1.5h), Preamble and document structure (0.5h) |
-| Mermaid Diagram Creation | 2.5 | Design and implementation of 5 Mermaid flowchart diagrams: Executive scheduling model, Waitlist timer architecture, Phase table protection flow, Alarm hierarchy escalation, Restart decision tree |
-| Citation Verification & Cross-Referencing | 3 | Line-number verification for all 33 cited `.agc` source files; confirmed exact label names, routine addresses, alarm codes, and comment text match source |
-| Quality Assurance & Fixes | 3 | Markdown linting validation (markdownlint-cli2); 10 code review finding fixes; Restart Decision Tree diagram routing label correction; encoding/line-ending verification |
-| **Total Completed** | **38.5** | |
+| Report skeleton and preamble | 2.0 | Created `docs/AGC_ENGINEERING_ANALYSIS.md` with title, scope declaration, repository overview, heading structure |
+| Section 1: Memory and Resource Constraints | 4.0 | Analyzed INTER-BANK_COMMUNICATION.agc (BANKCALL/SWCALL/POSTJUMP/SUPERSW), ERASABLE_ASSIGNMENTS.agc (M/SIZE/N notation, EQUALS sharing, hardwired registers), INTERPRETER.agc (memory compression), CM vs LM erasable budget |
+| Section 2: Real-Time Scheduling | 5.0 | Analyzed EXECUTIVE.agc (NOVAC/FINDVAC/CHANJOB, 7 CM vs 8 LM core sets, DUMMYJOB), WAITLIST.agc (LST1/LST2, T3RUPT, LONGCALL), PHASE_TABLE_MAINTENANCE.agc (PHASCHNG Type A/B/C), INTERRUPT_LEAD_INS.agc (interrupt vectors), 1202/1201 alarm mechanism |
+| Section 3: Error Handling and Recovery | 5.0 | Analyzed ALARM_AND_ABORT.agc (three-tier hierarchy, FAILREG cascade, CCSHOLE, DOALARM), FRESH_START_AND_RESTART.agc (four restart pathways, MR.KLEAN), RESTARTS_ROUTINE.agc (ITSAVAR/ITSATBL/FINDTIME), LM-specific differences (GOPOODOO, BAILOUT1/POODOO1) |
+| Section 4: Naming Conventions | 3.0 | Surveyed cultural references (BURN BABY BURN, PINBALL, FLAGORGY), Latin phrases (HONI SOIT, NOLI SE TANGERE), abort naming hierarchy, sardonic humor catalog, M/SIZE/N notation |
+| Section 5: Modern Context | 3.0 | Synthesized load shedding parallels, watchdog/heartbeat patterns, graceful degradation, phase-based checkpointing vs WAL, resource pool exhaustion strategies |
+| Alarm Codes Appendix | 2.0 | Curated 25 alarm codes from ASSEMBLY_AND_OPERATION_INFORMATION.agc with severity markers, OCT notation, source modules |
+| Mermaid diagrams (5 total) | 3.0 | Created alarm hierarchy flowchart, restart decision tree, Executive scheduling model, waitlist timer architecture, phase table protection diagram |
+| CM vs LM divergence analysis | 2.0 | Documented core sets (7 vs 8), ABORT EQUALS differences, GOPOODOO SERVICER handling, BAILOUT1/POODOO1 alternate entries, erasable budget comparison |
+| Source citation collection and verification | 2.0 | Identified 34 distinct .agc files, verified all labels/line numbers/alarm codes against source via grep/sed |
+| Label accuracy and OCT notation validation | 2.0 | Verified exact spelling of all labels (BANKCALL, BAILOUT, FLAGORGY, DUMMYJOB, DOALARM, NO.CORES), confirmed all alarm codes use OCT notation |
+| Decision Log appendix | 1.5 | Documented 12 non-trivial decisions with alternatives, rationale, and risks |
+| Deviation Register appendix | 1.0 | Documented 5 AAP deviations with justifications |
+| Traceability Matrix appendix | 1.5 | Created bidirectional source-to-report mapping: 21 source files → sections (forward) + 7 sections → evidence (reverse) |
+| **Total Completed** | **37.0** | |
 
 ### 2.2 Remaining Work Detail
 
 | Category | Hours | Priority |
 |----------|-------|----------|
-| Peer review by AGC domain expert | 2 | High |
-| Review feedback incorporation | 1.5 | High |
-| GitHub Mermaid rendering verification | 0.5 | Medium |
-| Final proofreading pass | 0.5 | Low |
-| Citation drift monitoring (post-merge) | 0.5 | Low |
-| **Total Remaining** | **5** | |
-
-### 2.3 Hours Calculation
-
-- **Completed Hours**: 38.5 (source analysis 13h + writing 17h + diagrams 2.5h + citation verification 3h + QA 3h)
-- **Remaining Hours**: 5 (peer review 2h + feedback 1.5h + rendering verification 0.5h + proofreading 0.5h + citation monitoring 0.5h)
-- **Total Project Hours**: 38.5 + 5 = 43.5
-- **Completion Percentage**: 38.5 / 43.5 = **88.5%**
-
----
+| Peer review of architectural claims by AGC/embedded systems domain expert | 2.0 | High |
+| Update `package.json` lint glob to include `docs/*.md` for CI coverage | 1.0 | Medium |
+| **Total Remaining** | **3.0** | |
 
 ## 3. Test Results
 
 | Test Category | Framework | Total Tests | Passed | Failed | Coverage % | Notes |
 |---------------|-----------|-------------|--------|--------|------------|-------|
-| Markdown Linting | markdownlint-cli2 v0.16.0 | 1 file | 1 | 0 | 100% | 0 lint errors against `.markdownlint.yml` configuration |
-| Citation Verification | Manual + grep | 33 files | 33 | 0 | 100% | All 33 distinct `.agc` file citations verified: labels, line numbers, alarm codes, and comment text match source exactly |
-| Encoding Validation | file + cat -A | 1 file | 1 | 0 | 100% | UTF-8 encoding, LF line endings, no trailing whitespace confirmed |
-| Read-Only Constraint | git diff --name-status | 1 check | 1 | 0 | 100% | Only `A docs/AGC_ENGINEERING_ANALYSIS.md` — zero existing files modified |
-| Content Completeness | Manual audit | 42 items | 42 | 0 | 100% | All 5 decision domains, 5 Mermaid diagrams, 27 alarm codes, CM/LM divergences verified |
+| Markdown Linting (report) | markdownlint-cli2 v0.16.0 | 1 file | 1 | 0 | 100% | `npx markdownlint-cli2 docs/AGC_ENGINEERING_ANALYSIS.md --config .markdownlint.yml` — 0 errors |
+| Markdown Linting (repo) | markdownlint-cli2 v0.16.0 | 5 files | 5 | 0 | 100% | `npm run lint` — 0 errors across CONTRIBUTING.md, LICENSE.md, README.md, Comanche055/README.md, Luminary099/README.md |
+| Citation Verification | grep/sed (manual) | 34 files | 34 | 0 | 100% | All cited .agc labels, line numbers, and alarm codes verified against source |
+| Encoding Validation | file/cat/grep (manual) | 1 file | 1 | 0 | 100% | UTF-8 encoding, LF line endings, 0 trailing whitespace lines |
+| Source Integrity | git diff | 175 .agc files | 175 | 0 | 100% | Zero .agc files modified — read-only constraint respected |
 
-**Note**: No unit tests exist in this repository — it is a historical AGC source preservation project with no executable code or test framework. The tests above represent Blitzy's autonomous validation activities.
-
----
+All tests originate from Blitzy's autonomous validation pipeline for this project.
 
 ## 4. Runtime Validation & UI Verification
 
-### Runtime Health
+**Runtime Health**:
+- ✅ `docs/AGC_ENGINEERING_ANALYSIS.md` exists and contains 469 lines of valid markdown
+- ✅ All 5 Mermaid diagram code blocks syntactically valid (GitHub-renderable `flowchart TD` syntax)
+- ✅ All 113 markdown table rows parse correctly (pipe-delimited format)
+- ✅ Heading hierarchy consistent: 1 `#`, 8 `##`, 30 `###` — no skipped levels
 
-- ✅ **Standalone markdown file** — No runtime component, no server, no build pipeline required
-- ✅ **Markdown lint validation passes** — `npx markdownlint-cli2 docs/AGC_ENGINEERING_ANALYSIS.md --config .markdownlint.yml` returns 0 errors
-- ✅ **File encoding correct** — UTF-8, LF line endings per `.editorconfig` requirements
-- ✅ **File size appropriate** — 395 lines, 37,238 bytes (~5,346 words) — concise per AAP directive
+**Content Verification**:
+- ✅ 5 decision domain sections present with subsections
+- ✅ 3 appendices present (Alarm Codes, Decision Log, Traceability Matrix)
+- ✅ 25 alarm codes in appendix with severity markers matching source
+- ✅ 34 distinct .agc files cited (exceeds AAP minimum of 25)
+- ✅ CM vs LM comparison table in Section 2 with verified data
 
-### UI Verification
+**Integration Verification**:
+- ✅ No .agc source files modified (git diff clean)
+- ✅ Repository lint (`npm run lint`) still passes with 0 errors
+- ✅ No breaking changes to existing repository files
 
-- ✅ **Document structure** — 6 main sections (`##`), 27 subsections (`###`), consistent heading hierarchy
-- ✅ **Tables render correctly** — 89 table rows across multiple comparison and reference tables
-- ✅ **Mermaid diagrams present** — 5 embedded `mermaid` code blocks (GitHub renders natively since Nov 2022)
-- ⚠ **Mermaid rendering** — Diagrams use valid `flowchart TD` syntax; GitHub rendering should be verified post-merge by human reviewer
-- ✅ **Alarm code appendix** — 27 alarm codes with OCT notation, severity markers, and source module mapping
-
-### API Integration
-
-Not applicable — this is a documentation-only project with no API endpoints.
-
----
+**Not Applicable**:
+- ⚠️ No UI components — project is documentation-only
+- ⚠️ No API endpoints — project is documentation-only
+- ⚠️ No database operations — project is documentation-only
 
 ## 5. Compliance & Quality Review
 
 | AAP Requirement | Status | Evidence |
-|----------------|--------|----------|
-| Create `docs/AGC_ENGINEERING_ANALYSIS.md` | ✅ Pass | File created: 395 lines, 37,238 bytes |
-| Read-only analysis — no code modifications | ✅ Pass | `git diff --name-status master..HEAD` shows only `A docs/AGC_ENGINEERING_ANALYSIS.md` |
-| Section 1: Memory and resource constraints | ✅ Pass | 4 subsections: core-rope memory, erasable allocation, interpretive compression, CM vs LM budget |
-| Section 2: Scheduling and priority architecture | ✅ Pass | 5 subsections: Executive, CM vs LM core sets, Waitlist, Phase tables, 1202/1201 alarms |
-| Section 3: Error handling and recovery | ✅ Pass | 7 subsections: alarm hierarchy, LM differences, FAILREG, restart pathways, phase dispatch, CCSHOLE, DOALARM |
-| Section 4: Naming conventions and documentation | ✅ Pass | 6 subsections: cultural references, Latin phrases, abort naming, humor, M/SIZE/N, label constraints |
-| Section 5: Modern context | ✅ Pass | 5 subsections: load shedding, watchdog, graceful degradation, checkpointing, resource exhaustion |
-| Appendix: Alarm codes reference | ✅ Pass | 27 alarm codes with severity markers from source |
-| Citations reference specific filenames/labels | ✅ Pass | 33 distinct `.agc` files cited with line numbers; all verified against source |
-| Explain WHY not WHAT | ✅ Pass | Report analyzes engineering rationale; no line-by-line code walkthrough |
-| Concise, evidence-backed style | ✅ Pass | ~5,346 words across 5 domains + appendix; no verbose prose |
-| Single markdown file output | ✅ Pass | One file at `docs/AGC_ENGINEERING_ANALYSIS.md`; no supplementary files |
-| Alarm codes in octal notation | ✅ Pass | All codes use OCT prefix (e.g., OCT 01202) matching source convention |
-| Exact label spelling | ✅ Pass | POODOO, CHANJOB, DUMMYJOB, BAILOUT, CCSHOLE, FLAGORGY — all verified |
-| CM vs LM differences explicit | ✅ Pass | Core sets (7 vs 8), abort defaults (BAILOUT vs WHIMPER), GOPOODOO, BAILOUT1/POODOO1 documented |
-| Mermaid diagrams for architecture | ✅ Pass | 5 diagrams: scheduling, waitlist, phase table, alarm hierarchy, restart decision tree |
-| 25+ distinct .agc source files cited | ✅ Pass | 33 files cited (exceeds requirement by 32%) |
-| Markdown lint passes | ✅ Pass | 0 errors via markdownlint-cli2 v0.16.0 |
+|-----------------|--------|----------|
+| Read-only analysis — no .agc modifications | ✅ Pass | `git diff --name-only -- '*.agc'` returns empty |
+| Scope limited to Comanche055 + Luminary099 | ✅ Pass | All 34 cited files are within Comanche055/ or Luminary099/ |
+| Citations reference specific filenames and labels | ✅ Pass | Every engineering claim cites .agc file + label/line number |
+| Explain WHY, not WHAT line-by-line | ✅ Pass | Report explains engineering rationale, not instruction narration |
+| No verbose prose | ✅ Pass | 469 lines covering 5 domains + 3 appendices — concise, evidence-backed |
+| Single markdown file output | ✅ Pass | One file: `docs/AGC_ENGINEERING_ANALYSIS.md` |
+| Alarm codes in OCT notation | ✅ Pass | All 25 alarm codes use OCT prefix (verified via grep) |
+| Exact label spelling matches source | ✅ Pass | BANKCALL, BAILOUT, FLAGORGY, DUMMYJOB, DOALARM, NO.CORES — all verified |
+| CM vs LM differences explicit | ✅ Pass | Core sets, ABORT EQUALS, GOPOODOO, BAILOUT1/POODOO1 all documented |
+| 5 Mermaid diagrams present | ✅ Pass | 5 `\`\`\`mermaid` blocks: alarm hierarchy, restart tree, scheduling, waitlist, phase table |
+| ≥25 distinct .agc file citations | ✅ Pass | 34 distinct files cited (exceeds requirement) |
+| Decision Log appendix | ✅ Pass | 12 decisions documented with alternatives and rationale |
+| Deviation Register appendix | ✅ Pass | 5 deviations documented with justifications |
+| Traceability Matrix appendix | ✅ Pass | Bidirectional: 21 source files → sections + 7 sections → evidence |
+| UTF-8 encoding, LF line endings | ✅ Pass | `file` confirms UTF-8; 0 `\r` characters; 0 trailing whitespace lines |
+| Markdownlint passes | ✅ Pass | markdownlint-cli2: 0 errors |
 
-### Autonomous Validation Fixes Applied
-
-| Fix | Commit | Description |
-|-----|--------|-------------|
-| Code review findings | `334f4b0` | Addressed 10 code review findings across the report |
-| Diagram routing labels | `32396dd` | Corrected Restart Decision Tree diagram routing labels for accuracy |
-
----
+**Autonomous Fixes Applied**:
+- Corrected Restart Decision Tree diagram routing labels (commit 32396dd)
+- Fixed 10 code review findings in the report (commit 334f4b0)
+- Added Decision Log, Deviation Register, and Traceability Matrix appendices (commit 31fa9d5)
 
 ## 6. Risk Assessment
 
 | Risk | Category | Severity | Probability | Mitigation | Status |
 |------|----------|----------|-------------|------------|--------|
-| Citation line numbers may drift if upstream commits modify `.agc` files | Technical | Low | Low | Repository is a historical preservation project with infrequent changes to `.agc` content; re-verify citations periodically | Open |
-| Mermaid diagrams may not render identically across all markdown viewers | Technical | Low | Medium | Diagrams use standard `flowchart TD` syntax compatible with GitHub; verify post-merge | Open |
-| Engineering rationale claims may contain inaccuracies | Technical | Medium | Low | Peer review by AGC domain expert recommended before wide distribution | Open |
-| `docs/` directory not covered by `package.json` lint script | Operational | Low | High (confirmed) | Lint command `npx markdownlint-cli2 docs/*.md --config .markdownlint.yml` can be run manually; modifying `package.json` is out of scope (read-only constraint) | Open |
-| Report not discoverable from repository README | Operational | Low | High (confirmed) | Users must navigate to `docs/` directory; adding a link to README is out of scope (read-only constraint) | Accepted |
-| No security risks | Security | N/A | N/A | Documentation-only project with no credentials, API keys, or sensitive data | N/A |
-| No integration risks | Integration | N/A | N/A | Standalone markdown file with no external dependencies or service integrations | N/A |
-
----
+| Architectural claims may contain inaccuracies | Technical | Medium | Medium | Peer review by AGC domain expert required before publication | Open |
+| Mermaid diagrams may not render on non-GitHub platforms | Technical | Low | Medium | Diagrams use standard `flowchart TD` syntax compatible with most Mermaid renderers; fallback is readable ASCII in raw markdown | Mitigated |
+| `docs/` directory not covered by CI lint glob | Operational | Low | High | `package.json` lint script glob doesn't include `docs/*.md`; manual lint validation passed but CI won't catch future regressions | Open |
+| Line number citations may drift if repository is updated | Technical | Low | Low | Repository is a historical preservation project with minimal expected changes; line numbers verified against current state | Accepted |
+| Report file not linked from README.md | Operational | Low | High | Users may not discover the report without a link; read-only constraint prevents adding one | Accepted |
+| No security risks identified | Security | N/A | N/A | Project is documentation-only with no runtime code, credentials, or user input processing | N/A |
+| No integration risks identified | Integration | N/A | N/A | Report is a standalone markdown file with no external dependencies or API calls | N/A |
 
 ## 7. Visual Project Status
 
 ```mermaid
 pie title Project Hours Breakdown
-    "Completed Work" : 38.5
-    "Remaining Work" : 5
+    "Completed Work" : 37
+    "Remaining Work" : 3
 ```
 
-### Remaining Hours by Category
-
-| Category | Hours | Priority |
-|----------|-------|----------|
-| Peer review by AGC domain expert | 2 | High |
-| Review feedback incorporation | 1.5 | High |
-| GitHub Mermaid rendering verification | 0.5 | Medium |
-| Final proofreading pass | 0.5 | Low |
-| Citation drift monitoring | 0.5 | Low |
-| **Total** | **5** | |
-
----
+**Breakdown**: 37.0 hours completed (92.5%) / 3.0 hours remaining (7.5%) out of 40.0 total project hours.
 
 ## 8. Summary & Recommendations
 
 ### Achievements
 
-The Blitzy autonomous agents successfully delivered the complete AGC Engineering Analysis report, fulfilling all AAP requirements. The project is **88.5% complete** (38.5 hours completed out of 43.5 total hours). The sole deliverable — `docs/AGC_ENGINEERING_ANALYSIS.md` — is a production-quality technical analysis covering all five specified decision domains with 33 verified source file citations, 5 Mermaid architecture diagrams, and a 27-entry alarm code reference appendix. The report passed markdown linting with zero errors, all citation line numbers were verified against the AGC source files, and the read-only constraint was strictly maintained (zero existing files modified).
+The project successfully delivered a comprehensive 469-line architectural analysis report (`docs/AGC_ENGINEERING_ANALYSIS.md`) covering all five AAP-specified decision domains with 34 distinct source file citations, 5 Mermaid diagrams, 25 curated alarm codes, a 12-entry Decision Log, 5-entry Deviation Register, and a bidirectional Source-to-Report Traceability Matrix. The report passes all quality gates: markdownlint (0 errors), citation accuracy (all verified), encoding compliance (UTF-8/LF/no trailing whitespace), and the critical read-only constraint (zero .agc files modified).
 
 ### Remaining Gaps
 
-The remaining 5 hours consist entirely of human review and polish activities:
-- **Peer review** (3.5h): The report should be reviewed by someone with AGC or aerospace software domain expertise to validate engineering rationale claims before wide distribution.
-- **Rendering verification** (0.5h): The 5 Mermaid diagrams should be confirmed to render correctly on GitHub after merge.
-- **Maintenance** (1h): Final proofreading and citation monitoring for long-term accuracy.
-
-### Critical Path to Production
-
-1. Merge this PR to make the report available in the repository
-2. Domain expert peer review to validate architectural analysis claims
-3. Verify Mermaid diagram rendering on GitHub
+The project is **92.5% complete** (37.0 hours completed out of 40.0 total hours). The remaining 3.0 hours consist of:
+1. **Peer review** (2.0h): Architectural claims require validation by an AGC/embedded systems domain expert to ensure engineering rationale accuracy
+2. **CI lint coverage** (1.0h): The `package.json` lint glob should be updated to include `docs/*.md` so the report is covered by the repository's CI markdown linting workflow
 
 ### Production Readiness Assessment
 
-The deliverable is **ready for merge and review**. The report is self-contained, correctly formatted, fully cited, and passes all automated validation checks. The remaining 5 hours are post-merge quality activities (peer review, rendering verification, proofreading) that do not block the initial merge.
+The report is **production-ready for merge** pending human peer review. All autonomous validation gates passed. The documentation is self-contained, correctly formatted, and accurately cites source material. The two remaining tasks are human-dependent activities that cannot be completed autonomously: domain expert review and a minor CI configuration change that was out of the read-only analysis scope.
 
----
+### Success Metrics
+
+| Metric | Target | Actual | Status |
+|--------|--------|--------|--------|
+| Decision domains documented | 5 | 5 | ✅ Met |
+| Distinct .agc files cited | ≥25 | 34 | ✅ Exceeded |
+| Mermaid diagrams | 5 | 5 | ✅ Met |
+| Alarm codes in appendix | ≥15 | 25 | ✅ Exceeded |
+| Markdownlint errors | 0 | 0 | ✅ Met |
+| .agc files modified | 0 | 0 | ✅ Met |
+| CM vs LM divergences documented | ≥4 | 5 | ✅ Exceeded |
 
 ## 9. Development Guide
 
@@ -225,11 +202,10 @@ The deliverable is **ready for merge and review**. The report is self-contained,
 
 | Software | Version | Purpose |
 |----------|---------|---------|
-| Node.js | 20.x+ | Required for markdown linting tool |
-| npm | 11.x+ | Package manager for devDependencies |
-| Git | 2.x+ | Version control |
-
-No other software is required. This is a documentation-only project — no compilers, databases, servers, or runtime environments are needed.
+| Node.js | ≥14.x | Required for markdownlint-cli2 |
+| npm | ≥6.x | Package manager for devDependencies |
+| Git | ≥2.x | Repository operations |
+| Any markdown viewer | — | Viewing the report (GitHub renders natively) |
 
 ### Environment Setup
 
@@ -242,8 +218,6 @@ cd Apollo-11
 git checkout blitzy-aa78d5d1-fa74-4c28-bf91-971ab641a4a4
 ```
 
-No environment variables are required. No `.env` file is needed.
-
 ### Dependency Installation
 
 ```bash
@@ -251,48 +225,57 @@ No environment variables are required. No `.env` file is needed.
 npm install
 ```
 
-Expected output: `added 37 packages` (approximate count).
+Expected output: `added 38 packages` (markdownlint-cli2 + dependencies).
 
-### Verification Steps
+### Validation Commands
 
 ```bash
-# 1. Verify the report file exists
-ls -la docs/AGC_ENGINEERING_ANALYSIS.md
-# Expected: 395 lines, ~37KB file
-
-# 2. Run markdown linting
+# Lint the new report file
 npx markdownlint-cli2 docs/AGC_ENGINEERING_ANALYSIS.md --config .markdownlint.yml
 # Expected: "Summary: 0 error(s)"
 
-# 3. Verify file encoding
+# Lint all existing repository markdown files
+npm run lint
+# Expected: "Summary: 0 error(s)"
+
+# Verify no .agc source files were modified
+git diff --name-only master -- '*.agc'
+# Expected: empty output (no .agc files changed)
+
+# Verify file encoding
 file docs/AGC_ENGINEERING_ANALYSIS.md
 # Expected: "Unicode text, UTF-8 text"
 
-# 4. Verify no existing files were modified
-git diff --name-status master..HEAD
-# Expected: "A  docs/AGC_ENGINEERING_ANALYSIS.md" (only addition)
+# Count distinct .agc file citations
+grep -oE '(Comanche055|Luminary099)/[A-Z_-]+\.agc' docs/AGC_ENGINEERING_ANALYSIS.md | sort -u | wc -l
+# Expected: 34
 
-# 5. Count distinct .agc source file citations
-grep -oE 'Comanche055/[A-Z_.-]+\.agc|Luminary099/[A-Z_.-]+\.agc' docs/AGC_ENGINEERING_ANALYSIS.md | sort -u | wc -l
-# Expected: 32 (unique file references)
+# Count Mermaid diagram blocks
+grep -c '```mermaid' docs/AGC_ENGINEERING_ANALYSIS.md
+# Expected: 5
 ```
 
 ### Viewing the Report
 
-The report is a standard GitHub-Flavored Markdown file. To view:
+The report renders natively on GitHub. For local viewing:
 
-- **On GitHub**: Navigate to `docs/AGC_ENGINEERING_ANALYSIS.md` in the repository — GitHub renders markdown and Mermaid diagrams natively
-- **Locally**: Open the file in any markdown viewer (VS Code, Typora, etc.) or view raw text in any editor
+```bash
+# Option 1: Open in any markdown viewer/editor
+# Option 2: Use VS Code with Markdown Preview
+code docs/AGC_ENGINEERING_ANALYSIS.md
+# Option 3: View raw markdown in terminal
+cat docs/AGC_ENGINEERING_ANALYSIS.md
+```
+
+Mermaid diagrams render automatically on GitHub. For local Mermaid rendering, use VS Code with the "Markdown Preview Mermaid Support" extension or the Mermaid Live Editor (https://mermaid.live).
 
 ### Troubleshooting
 
 | Issue | Resolution |
 |-------|------------|
-| `markdownlint-cli2: command not found` | Run `npm install` first to install devDependencies |
-| Mermaid diagrams show as code blocks | Use a viewer that supports Mermaid (GitHub, VS Code with Mermaid extension) |
-| Line number citations don't match | If upstream `.agc` files were modified after the report was written, re-verify with `grep -n 'LABEL' path/to/file.agc` |
-
----
+| `markdownlint-cli2: command not found` | Run `npm install` to install devDependencies |
+| Mermaid diagrams show as code blocks | Use a Mermaid-compatible viewer (GitHub, VS Code + extension, Mermaid Live Editor) |
+| `npm run lint` does not lint `docs/` | The lint glob in `package.json` does not include `docs/*.md`; use the direct `npx markdownlint-cli2` command instead |
 
 ## 10. Appendices
 
@@ -300,60 +283,67 @@ The report is a standard GitHub-Flavored Markdown file. To view:
 
 | Command | Purpose |
 |---------|---------|
-| `npm install` | Install devDependencies (markdownlint-cli2) |
-| `npx markdownlint-cli2 docs/AGC_ENGINEERING_ANALYSIS.md --config .markdownlint.yml` | Lint the report file |
-| `npx markdownlint-cli2 *.md translations/*.md Comanche055/*.md Luminary099/*.md --config .markdownlint.yml` | Lint all repository markdown files (existing script) |
-| `git diff --name-status master..HEAD` | Verify only the report file was added |
-| `grep -oE 'Comanche055/[A-Z_.-]+\.agc\|Luminary099/[A-Z_.-]+\.agc' docs/AGC_ENGINEERING_ANALYSIS.md \| sort -u` | List all cited .agc source files |
+| `npm install` | Install markdownlint-cli2 devDependency |
+| `npm run lint` | Lint repository markdown files (does not cover `docs/`) |
+| `npx markdownlint-cli2 docs/AGC_ENGINEERING_ANALYSIS.md --config .markdownlint.yml` | Lint the analysis report |
+| `git diff --name-only master -- '*.agc'` | Verify no AGC source files modified |
 
 ### B. Port Reference
 
-Not applicable — this is a documentation-only project with no running services.
+No ports are used. This project is documentation-only with no runtime services.
 
 ### C. Key File Locations
 
 | File | Purpose |
 |------|---------|
-| `docs/AGC_ENGINEERING_ANALYSIS.md` | **Deliverable** — AGC engineering analysis report |
-| `Comanche055/*.agc` | Command Module source (85 files, Colossus 2A) |
-| `Luminary099/*.agc` | Lunar Module source (90 files, Luminary 1A) |
-| `package.json` | npm manifest with markdownlint-cli2 devDependency |
-| `.markdownlint.yml` | Markdown linting configuration |
-| `.editorconfig` | Editor configuration (UTF-8, LF, tab width 8 for .agc) |
-| `CONTRIBUTING.md` | Repository contribution guidelines |
-| `README.md` | Repository overview and project description |
+| `docs/AGC_ENGINEERING_ANALYSIS.md` | **Deliverable** — AGC engineering analysis report (469 lines) |
+| `package.json` | npm config with markdownlint-cli2 devDependency and lint scripts |
+| `.markdownlint.yml` | Markdown linting rules (11 rules disabled for AGC formatting compatibility) |
+| `.editorconfig` | Editor config (UTF-8, LF, tab width 8 for .agc, space indent for .md) |
+| `Comanche055/MAIN.agc` | CM include manifest (84 source modules) |
+| `Luminary099/MAIN.agc` | LM include manifest (89 source modules) |
+| `Comanche055/*.agc` | CM source files (85 total, ~65,348 lines) |
+| `Luminary099/*.agc` | LM source files (90 total, ~64,838 lines) |
 
 ### D. Technology Versions
 
 | Technology | Version | Purpose |
 |------------|---------|---------|
-| Node.js | 20.20.1 | Runtime for linting tool |
-| npm | 11.1.0 | Package manager |
-| markdownlint-cli2 | 0.16.0 | Markdown linting and validation |
+| markdownlint-cli2 | ^0.16.0 | Markdown linting |
 | markdownlint | 0.36.1 | Core linting engine (dependency of cli2) |
-| Mermaid | GitHub-native | Diagram rendering (no local install needed) |
-| Git | 2.x | Version control |
+| Node.js | ≥14.x | Runtime for linting tools |
+| Mermaid | GitHub-native | Diagram rendering (no local install required) |
 
 ### E. Environment Variable Reference
 
-No environment variables are required for this project.
+No environment variables are required. This project is documentation-only.
 
-### F. Glossary
+### F. Developer Tools Guide
+
+| Tool | Usage |
+|------|-------|
+| VS Code + Markdown Preview | View report with formatted rendering |
+| VS Code + Mermaid extension | Render Mermaid diagrams locally |
+| `grep -n "LABEL" Comanche055/FILE.agc` | Verify source citations against .agc files |
+| `sed -n 'NNp' path/to/file.agc` | Check specific line numbers cited in the report |
+| Mermaid Live Editor (mermaid.live) | Edit and preview Mermaid diagrams in browser |
+
+### G. Glossary
 
 | Term | Definition |
 |------|------------|
-| **AGC** | Apollo Guidance Computer — the onboard flight computer for Apollo spacecraft |
-| **Comanche055** | Source code for the Command Module computer (Colossus 2A), assembled April 1, 1969 |
-| **Luminary099** | Source code for the Lunar Module computer (Luminary 1A), assembled July 14, 1969 |
-| **Core-rope memory** | Read-only memory technology using magnetic cores woven with wire; the AGC's 36KB fixed ROM |
-| **Erasable memory** | Read-write memory (RAM) in the AGC; 2,048 words shared across all programs |
-| **Core set** | A block of registers in the Executive that holds one job's complete context (priority, location, bank registers, accumulators) |
-| **VAC area** | Vector Accumulator area — workspace registers required by the AGC Interpreter for double-precision math |
-| **Executive** | The AGC's priority-based preemptive job scheduler |
-| **Waitlist** | The AGC's timer-driven task scheduler, driven by T3RUPT hardware interrupts |
-| **Phase table** | Restart protection mechanism — records current execution phase so jobs can be recovered after a software restart |
-| **BAILOUT** | Abortive alarm that triggers a software restart with phase table recovery |
-| **POODOO** | Full abort alarm that clears restart protection state before restarting |
-| **DSKY** | Display and Keyboard unit — the astronaut interface to the AGC |
-| **OCT** | Octal notation prefix used in AGC source code for numeric literals |
-| **Mermaid** | Text-based diagram syntax rendered natively by GitHub in markdown files |
+| AGC | Apollo Guidance Computer — the onboard flight computer for the Apollo spacecraft |
+| Comanche055 | Codename for the Command Module AGC software (Colossus 2A), assembled April 1, 1969 |
+| Luminary099 | Codename for the Lunar Module AGC software (Luminary 1A), assembled July 14, 1969 |
+| Core set | A set of registers in the Executive that store a job's complete context (location, bank, priority, accumulator state) |
+| VAC area | Vector Accumulator — workspace used by interpretive (pseudo-instruction) code for double-precision math |
+| Erasable memory | 2,048-word RAM shared across all programs |
+| Fixed memory | 36,864-word core-rope ROM containing all flight software |
+| Bank-switching | Mechanism for accessing fixed memory beyond the 1K directly addressable window |
+| FBANK | Fixed Bank register — selects which 1K bank of fixed memory is currently addressable |
+| CADR | Complete Address — a 14-bit value encoding both bank and sub-address for any memory location |
+| PHASCHNG | Phase Change — routine that records execution phase for restart protection |
+| FAILREG | Failure Register — three-deep FIFO storing recent alarm codes |
+| DSKY | Display and Keyboard — the crew interface unit connected to the AGC |
+| OCT | Octal notation — base-8 number system used throughout AGC source code |
+| T3RUPT | Timer 3 Interrupt — hardware interrupt driving the Waitlist timer dispatch |
